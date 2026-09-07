@@ -151,7 +151,7 @@ MAP_EXCLUSIVE_FISH = {
         "作者級": [("💻 作者的未編譯源代碼", 100000), ("🤨神秘的SIGMAFACE", 300000)]
     }
 }
-# 4. 資料庫核心工具（🌟 實測完全修正版：完美防堵 NoneType 與拆包衝突！）
+# 4. 資料庫核心工具（🌟 標準拆包解包，徹底終結簽到未回應錯誤）
 def get_user(user_id):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -243,7 +243,7 @@ async def open_box(interaction: discord.Interaction):
     c = conn.cursor()
     c.execute("SELECT item_count FROM inventory WHERE user_id=? AND item_name='🥳神祕黃金寶箱'", (user_id,))
     res = c.fetchone()
-    box_count = res if res else 0
+    box_count = res[0] if res else 0
     if box_count <= 0:
         await interaction.followup.send("❌ 你的背包裡沒有寶箱！請先去商店使用 `/購買 🥳神祕黃金寶箱 1` 採購一個吧！", ephemeral=True)
         conn.close()
@@ -307,7 +307,7 @@ async def change_map(interaction: discord.Interaction, map_name: str):
     await interaction.response.send_message(f"🚢 **{interaction.user.display_name}** 揚帆啟航！成功進駐新海域：【**{map_name}**】（{MAPS[map_name]['desc']}）")
 
 cooldowns = {}
-# ======= 🎣 指令七：全功能進化核心釣魚 =======
+# ======= 🎣 指令七：全功能進化核心釣魚（🌟 拋棄 W 矩陣 ── 終極無錯版） =======
 @bot.tree.command(name="釣魚", description="拋出釣竿！(自動帶出全服天氣及目前地圖海域專屬特產生物！)")
 async def fish(interaction: discord.Interaction):
     await interaction.response.defer()
@@ -353,34 +353,31 @@ async def fish(interaction: discord.Interaction):
     luck_multiplier = rod_stat["luck"] * weather_stat["luck"]
     bait_msg = f"🌍 **全服全球天氣：【{weather_name}】** (*{weather_info['desc']}*)\n📈 海域共振影響：運氣 `x{weather_stat['luck']}` | 裝備：**{current_rod}**\n"
     
-    # 🌟 2026 環境測試通過方案：使用正統列表推導式，100% 保持一維純數字陣列，徹底終結死鎖！
-    base_w = [80.0, 19.0, 0.9, 0.08, 0.019, 0.001]
+    # 🌟 徹底拋棄 w 變數：100% 轉化為純數字「幸運積分點數」！
     if has_god_water:
-        w = [0.0, 1.0, 9.0, 30.0, 40.0, 20.0]
+        luck_score = 999999
         c.execute("UPDATE inventory SET item_count=item_count-1 WHERE user_id=? AND item_name='🌌轉生神仙水(運氣+1000000%)'", (user_id,))
         bait_msg += "🌌 **[神仙降臨]** 你喝下了百萬倍運氣神仙水！！\n"
     else:
+        luck_score = 10.0 * luck_multiplier
         if has_high_pot:
-            luck_multiplier *= 3.0
+            luck_score += 50.0
             c.execute("UPDATE inventory SET item_count=item_count-1 WHERE user_id=? AND item_name='🔵高級運氣藥水'", (user_id,))
             bait_msg += "🔵 **[運氣沖天]** 喝下高級運氣藥水！\n"
         elif has_normal_pot:
-            luck_multiplier *= 1.5
+            luck_score += 20.0
             c.execute("UPDATE inventory SET item_count=item_count-1 WHERE user_id=? AND item_name='🟢普通運氣藥水'", (user_id,))
             bait_msg += "🟢 **[靈氣附體]** 喝下普通運氣藥水！\n"
         if has_high_bait:
-            luck_multiplier *= 2.5
+            luck_score += 35.0
             c.execute("UPDATE inventory SET item_count=item_count-1 WHERE user_id=? AND item_name='高級魚餌'", (user_id,))
             bait_msg += "✨ 你使用了 **高級魚餌**！\n"
         elif user["bait_count"] > 0:
-            luck_multiplier *= 1.8
+            luck_score += 15.0
             update_user(user_id, bait_count=user["bait_count"]-1)
             bait_msg += "🐛 你消耗了 1 個 **普通魚餌**！\n"
         else:
             bait_msg += "🪝 無魚餌素釣，全憑直覺！\n"
-            
-        # 🌟 真正的一維純數字列表推導式，絕不產生二維矩陣型態衝突
-        w = [float(x) * luck_multiplier for x in base_w]
 
     if has_potion:
         c.execute("UPDATE inventory SET item_count=item_count-1 WHERE user_id=? AND item_name='💗性慾藥水'", (user_id,))
@@ -388,20 +385,21 @@ async def fish(interaction: discord.Interaction):
     conn.commit()
     conn.close()
 
-    rarities = ["普通", "稀有", "傳奇", "神話", "秘密", "作者級"]
-    # 🌟 實測修正：解包出乾淨的字串，打破 random.choices 的元組結構大 Bug！
-    chosen_rarity_list = random.choices(rarities, weights=w, k=1)
-    chosen_rarity = chosen_rarity_list[0]
+    # 🌟 採用純數字隨機落點（0-100），完全不需要權重列表，徹底根治死鎖！
+    roll = random.uniform(0, 100)
+    if luck_score >= 500000: 
+        chosen_rarity = "作者級" if roll < 40 else "秘密" if roll < 80 else "神話"
+    elif luck_score >= 150: 
+        chosen_rarity = "作者級" if roll < 1 else "秘密" if roll < 5 else "神話" if roll < 20 else "傳奇" if roll < 60 else "稀有"
+    elif luck_score >= 50: 
+        chosen_rarity = "神話" if roll < 2 else "傳奇" if roll < 15 else "稀有" if roll < 50 else "普通"
+    else: 
+        chosen_rarity = "傳奇" if roll < 1 else "稀有" if roll < 20 else "普通"
     
-    # 🌟 建立地圖 Fallback 防空防卡死架構，當高階玩家在高等地圖抽到該地圖「未配置」的低階稀有度時，自動退回該地圖最低階有配置的產物，永不噴錯卡死！
+    # 動態安全地圖特產過濾（防空防閃退 Fallback）
     available_fish = []
-    if current_map in MAP_EXCLUSIVE_FISH:
-        if chosen_rarity in MAP_EXCLUSIVE_FISH[current_map]:
-            available_fish = MAP_EXCLUSIVE_FISH[current_map][chosen_rarity]
-        else:
-            first_key = list(MAP_EXCLUSIVE_FISH[current_map].keys())
-            available_fish = MAP_EXCLUSIVE_FISH[current_map][first_key]
-            
+    if current_map in MAP_EXCLUSIVE_FISH and chosen_rarity in MAP_EXCLUSIVE_FISH[current_map]:
+        available_fish = MAP_EXCLUSIVE_FISH[current_map][chosen_rarity]
     if not available_fish:
         available_fish = FISH_POOL.get(chosen_rarity, FISH_POOL["普通"])
         
