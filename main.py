@@ -43,8 +43,8 @@ class MyBot(commands.Bot):
 bot = MyBot()
 DB_FILE = "fishing_game.db"
 
-# 🌟 官方支援群 ID 設定（請在此更換為你 Discord 伺服器的真實 ID）
-SUPPORT_GUILD_ID = 123456789012345678
+# 🌟 官方支援群 1.2 倍收益加成：已完美連結老哥的 Discord 伺服器！
+SUPPORT_GUILD_ID = 1546517053719060642
 
 # 2. RPG 資料庫初始化（🌟 擴充支援：last_daily 天氣鎖、enchant 魚竿附體屬性）
 def init_db():
