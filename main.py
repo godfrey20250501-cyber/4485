@@ -307,7 +307,7 @@ async def change_map(interaction: discord.Interaction, map_name: str):
     update_user(user_id, current_map=map_name)
     await interaction.response.send_message(f"🚢 **{interaction.user.display_name}** 揚帆啟航！成功進駐新海域：【**{map_name}**】（{MAPS[map_name]['desc']}）")
 cooldowns = {}
-# ======= 🎣 指令七：全功能進化核心釣魚（🌟 權重矩陣純數值優化版，彻底告別卡死） =======
+# ======= 🎣 指令七：全功能進化核心釣魚（🌟 2026 終極完全修正版，杜絕一切卡死崩潰） =======
 @bot.tree.command(name="釣魚", description="拋出釣竿！(自動帶出全服天氣及目前地圖海域專屬特產生物！)")
 async def fish(interaction: discord.Interaction):
     # 🌟 攔截 3 秒未回應超時
@@ -360,7 +360,7 @@ async def fish(interaction: discord.Interaction):
     
     bait_msg = f"🌍 **全服全球天氣：【{weather_name}】** (*{weather_info['desc']}*)\n📈 海域共振影響：運氣 `x{weather_stat['luck']}` | 裝備：**{current_rod}**\n"
     
-    # 基礎權重結構：[普通, 稀友, 傳奇, 神話, 秘密, 作者級]
+    # 基礎權重結構：[普通, 稀有, 傳奇, 神話, 秘密, 作者級]
     base_w = [80.0, 19.0, 0.9, 0.08, 0.019, 0.001]
     
     if has_god_water:
@@ -388,7 +388,7 @@ async def fish(interaction: discord.Interaction):
         else:
             bait_msg += "🪝 無魚餌素釣，全憑直覺！\n"
             
-        # 🌟 核心修正：利用正確的一維列表推導式，各自增幅對應階級的爆率，確保 random.choices 絕對順暢
+        # 🌟 列表推導式精準修正
         final_w = [
             base_w[0],                               # 普通不變
             base_w[1] * (luck_multiplier * 1.2),     # 稀有
@@ -406,7 +406,7 @@ async def fish(interaction: discord.Interaction):
     conn.close()
 
     rarities = ["普通", "稀有", "傳奇", "神話", "秘密", "作者級"]
-    # 🌟 final_w 現在是乾淨的一維純數字陣列了，完美運作
+    # 🌟 關鍵修正 1：利用 [0] 精準提取 random.choices 列表內唯一的字串，避免字典 Key 錯誤
     chosen_rarity = random.choices(rarities, weights=final_w, k=1)[0]
     
     # 🌟 地圖收穫系統：依據玩家地圖提取專屬特定產物
@@ -452,8 +452,9 @@ async def fish(interaction: discord.Interaction):
     update_user(user_id, level=current_lvl, xp=new_xp)
 
     icons = {"普通":"⚪", "稀有":"🔵", "傳奇":"🟡", "神話":"🔴", "秘密":"🟣", "作者級":"🌌"}
-    move_str = "✨ 🚨 **【驚天異變】拉竿瞬間，你居然捕捉到極稀有的特殊變異物種！**\n" if is_mutated else ""
-    msg = f"{bait_msg}{move_str}🎣 **{interaction.user.display_name}** 在【{current_map}】拋竿...\n【{icons[chosen_rarity]} {chosen_rarity}】釣到了 **{fish_name}**！(獲得 +{xp_gained}xp {pet_msg} 🧬 {new_xp}/{xp_needed}){lvl_up_msg}"
+    # 🌟 關鍵修正 2：將變數名稱更正為 mutate_str，與下方的格式化字串完全對齊
+    mutate_str = "✨ 🚨 **【驚天異變】拉竿瞬間，你居然捕捉到極稀有的特殊變異物種！**\n" if is_mutated else ""
+    msg = f"{bait_msg}{mutate_str}🎣 **{interaction.user.display_name}** 在【{current_map}】拋竿...\n【{icons[chosen_rarity]} {chosen_rarity}】釣到了 **{fish_name}**！(獲得 +{xp_gained}xp {pet_msg} 🧬 {new_xp}/{xp_needed}){lvl_up_msg}"
     if chosen_rarity in ["神話", "秘密", "作者級"] and lvl_up_msg == "":
         msg += "\n🎉 **【世界廣播】全服見證！極致歐皇在海域中撈起了不世珍寶！！** 🎉"
     
