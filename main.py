@@ -40,9 +40,8 @@ class MyBot(commands.Bot):
             print(f"指令同步提示: {e}")
 
 bot = MyBot()
-# 🌟 持久化硬碟路徑（如果是在本地電腦測試，可以改回 "fishing_game.db"）
-DB_FILE = "/data/fishing_game.db"
-os.makedirs(os.path.dirname(DB_FILE), exist_ok=True)
+# 🌟 修正點：直接改在當前目錄下建立，100% 繞過 Render 權限封鎖！
+DB_FILE = "fishing_game.db"
 
 # 2. RPG 資料庫初始化
 def init_db():
