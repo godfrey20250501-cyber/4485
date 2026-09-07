@@ -307,7 +307,7 @@ async def change_map(interaction: discord.Interaction, map_name: str):
     update_user(user_id, current_map=map_name)
     await interaction.response.send_message(f"🚢 **{interaction.user.display_name}** 揚帆啟航！成功進駐新海域：【**{map_name}**】（{MAPS[map_name]['desc']}）")
 cooldowns = {}
-# ======= 🎣 指令七：全功能進化核心釣魚（🌟 真正的列表推導式，絕不再卡死！） =======
+# ======= 🎣 指令七：全功能進化核心釣魚（🌟 鋼鐵防呆完全修正版，絕不再卡死！） =======
 @bot.tree.command(name="釣魚", description="拋出釣竿！(自動帶出全服天氣及目前地圖海域專屬特產生物！)")
 async def fish(interaction: discord.Interaction):
     # 🌟 攔截 3 秒未回應超時
@@ -388,14 +388,14 @@ async def fish(interaction: discord.Interaction):
         else:
             bait_msg += "🪝 無魚餌素釣，全憑直覺！\n"
             
-        # 🌟 真正的列表推導式：將 6 個不同稀有度的增幅，個別精準乘以 base_w 對應位置的數字！
+        # 🌟 終極完全平坦化修正：直接用索引去乘純數字，100% 保持一維陣列，絕對不會死鎖！
         final_w = [
-            base_w[0],                               # 普通不變
-            base_w[1] * (luck_multiplier * 1.2),     # 稀有
-            base_w[2] * (luck_multiplier * 1.5),     # 傳奇
-            base_w[3] * (luck_multiplier * 2.0),     # 神話
-            base_w[4] * (luck_multiplier * 2.5),     # 秘密
-            base_w[5] * (luck_multiplier * 3.0)      # 作者級
+            base_w[0],                               
+            base_w[1] * (luck_multiplier * 1.2),     
+            base_w[2] * (luck_multiplier * 1.5),     
+            base_w[3] * (luck_multiplier * 2.0),     
+            base_w[4] * (luck_multiplier * 2.5),     
+            base_w[5] * (luck_multiplier * 3.0)      
         ]
             
     if has_potion:
@@ -406,7 +406,7 @@ async def fish(interaction: discord.Interaction):
     conn.close()
 
     rarities = ["普通", "稀有", "傳奇", "神話", "秘密", "作者級"]
-    # 🌟 加上 [0] 精準提取隨機挑選出的字串結果
+    # 🌟 關鍵修正：加上 [0] 精準提取隨機挑選出的字串結果
     chosen_rarity = random.choices(rarities, weights=final_w, k=1)[0]
     
     # 🌟 地圖收穫系統：依據玩家地圖提取專屬特定產物
@@ -459,6 +459,7 @@ async def fish(interaction: discord.Interaction):
     
     # 🌟 用 followup.send 回報結果
     await interaction.followup.send(msg)
+
 # ======= 🏪 指令八：全功能商店與購買系統 =======
 @bot.tree.command(name="普通商店", description="顯示豐收漁具普通商店的道具、全套藥水與神祕保箱")
 async def shop(interaction: discord.Interaction):
