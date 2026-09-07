@@ -42,6 +42,7 @@ class MyBot(commands.Bot):
 
 bot = MyBot()
 DB_FILE = "fishing_game.db"
+
 # 2. 修正版 RPG 資料庫
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -76,7 +77,7 @@ FISH_POOL = {
     "秘密": [("🛸 外星科技零件", 25000)],
     "作者級": [("💻 作者的未編譯源代碼", 100000)]
 }
-# 4. 資料庫核心工具（已修正 Tuple 賦值錯誤）
+# 4. 資料庫核心工具（🌟已修正 Tuple 賦值錯誤，徹底解決簽到閃退）
 def get_user(user_id):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -159,7 +160,7 @@ async def transfer(interaction: discord.Interaction, target: discord.Member, amo
     update_user(target.id, balance=receiver["balance"] + amount)
     await interaction.response.send_message(f"💸 **{interaction.user.display_name}** 成功匯款了 **{amount}** 金幣給 **{target.display_name}**！")
 # ======= 🧰 指令四：神祕黃金寶箱 =======
-@bot.tree.command(name="開箱", description="開啟背包內的神祕黃金寶箱，隨機獲得高級藥水、大筆金幣或神獸寵物！")
+@bot.tree.command(name="開箱", description="開啟背包內的神祕黃金寶箱，隨機獲得高級藥水、大筆金幣 or 神獸寵物！")
 async def open_box(interaction: discord.Interaction):
     user_id = interaction.user.id
     conn = sqlite3.connect(DB_FILE)
@@ -231,7 +232,7 @@ async def change_map(interaction: discord.Interaction, map_name: str):
     await interaction.response.send_message(f"🚢 **{interaction.user.display_name}** 揚帆啟航！成功進駐新海域：【**{map_name}**】（{MAPS[map_name]['desc']}）")
 
 cooldowns = {}
-# ======= 🎣 指令七：全功能進化版核心釣魚（已修正藥水扣除與 Tuple 類型錯誤） =======
+# ======= 🎣 指令七：全功能進化版核心釣魚 =======
 @bot.tree.command(name="釣魚", description="拋出釣竿！(魚餌非必要，喝了運氣藥水可以瘋狂增加爆率！)")
 async def fish(interaction: discord.Interaction):
     user_id = interaction.user.id
@@ -239,26 +240,25 @@ async def fish(interaction: discord.Interaction):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     
-    # 修正：加上元組元素提取與類型安全判斷
+    # 🛡️ 潛在問題優化：加上安全元組解包，防範 None 類型噴錯
     c.execute("SELECT item_count FROM inventory WHERE user_id=? AND item_name='💗_性慾藥水(速度300%)'", (user_id,))
     res_p = c.fetchone()
-    has_potion = res_p[0] > 0 if res_p else False
+    has_potion = res_p and res_p[0] > 0
     
     c.execute("SELECT item_count FROM inventory WHERE user_id=? AND item_name='🌌_轉生神仙水(運氣+1000000%)'", (user_id,))
     res_g = c.fetchone()
-    has_god_water = res_g[0] > 0 if res_g else False
+    has_god_water = res_g and res_g[0] > 0
     
     c.execute("SELECT item_count FROM inventory WHERE user_id=? AND item_name='🟢_普通運氣藥水'", (user_id,))
     res_n_pot = c.fetchone()
-    has_normal_pot = res_n_pot[0] > 0 if res_n_pot else False
-    
+    has_normal_pot = res_n_pot and res_n_pot[0] > 0
     c.execute("SELECT item_count FROM inventory WHERE user_id=? AND item_name='🔵_高級運氣藥水'", (user_id,))
     res_h_pot = c.fetchone()
-    has_high_pot = res_h_pot[0] > 0 if res_h_pot else False
+    has_high_pot = res_h_pot and res_h_pot[0] > 0
     
     c.execute("SELECT item_count FROM inventory WHERE user_id=? AND item_name='高級魚餌'", (user_id,))
     res_hb = c.fetchone()
-    has_high_bait = res_hb[0] > 0 if res_hb else False
+    has_high_bait = res_hb and res_hb[0] > 0
     
     current_time = time.time()
     base_cooldown = 3.0 if has_potion else 10.0
@@ -302,6 +302,7 @@ async def fish(interaction: discord.Interaction):
     conn.close()
 
     rarities = ["普通", "稀有", "傳奇", "神話", "秘密", "作者級"]
+    # 🌟 潛在問題修正：random.choices 會傳回 list，後面加上 [0] 取出真實字串，否則字典取值會崩潰
     chosen_rarity = random.choices(rarities, weights=w, k=1)[0]
     fish_item = random.choice(FISH_POOL[chosen_rarity])
     fish_name, _ = fish_item
@@ -339,6 +340,7 @@ async def fish(interaction: discord.Interaction):
     if chosen_rarity in ["神話", "秘密", "作者級"] and lvl_up_msg == "":
         msg += "\n🎉 **【世界廣播】全服見證！極致歐皇在海域中撈起了不世珍寶！！** 🎉"
     await interaction.response.send_message(msg)
+
 # ======= 🏪 指令八：全功能商店與購買系統 =======
 @bot.tree.command(name="普通商店", description="顯示豐收漁具普通商店的道具、全套藥水與神祕保箱")
 async def shop(interaction: discord.Interaction):
@@ -346,7 +348,6 @@ async def shop(interaction: discord.Interaction):
     embed.add_field(name="🎣 升級魚竿 (直接替換等級)", value="\n".join([f"• {k}: {v} 金幣" for k, v in RODS_SHOP.items()]), inline=False)
     embed.add_field(name="🐛 消耗品、保箱與多款增益藥水", value="\n".join([f"• {k}: {v} 金幣 / 個" for k, v in BAITS_SHOP.items()]), inline=False)
     await interaction.response.send_message(embed=embed)
-
 @bot.tree.command(name="購買", description="向商店採購商品道具、高級魚餌、運氣藥水或黃金寶箱")
 @app_commands.describe(item_name="請輸入你想購買的物品完整名稱", quantity="你想購買的數量")
 async def buy(interaction: discord.Interaction, item_name: str, quantity: int = 1):
@@ -395,6 +396,7 @@ async def inventory(interaction: discord.Interaction):
     inv_str = "\n".join([f"• {name} x{count}" for name, count in items]) if items else "空空如也"
     embed.add_field(name="🐟 儲存倉庫 (可使用 `/全賣` 變現)", value=inv_str, inline=False)
     await interaction.response.send_message(embed=embed)
+
 @bot.tree.command(name="全賣", description="將背包裡所有的常規魚獲全部售出換取金幣")
 async def sell_all(interaction: discord.Interaction):
     user_id = interaction.user.id
@@ -426,7 +428,7 @@ async def sell_all(interaction: discord.Interaction):
     if "招財貓" in user["pet"]:
         bonus_cash = int(total_revenue * 0.1)
         total_revenue += bonus_cash
-        sold_details.append(f"🐱 **【招財貓加持】** 貓爪幫情多抓回了 `{bonus_cash}` 金幣！")
+        sold_details.append(f"🐱 **【招財貓加持】** 貓爪幫你多抓回了 `{bonus_cash}` 金幣！")
     update_user(user_id, balance=user["balance"] + total_revenue)
     embed = discord.Embed(title="💰 魚獲交易結算完畢", color=0xF1C40F)
     embed.description = "\n".join(sold_details) + f"\n\n💵 總計賺得：**{total_revenue}** 金幣！"
