@@ -72,7 +72,7 @@ ROD_STATS = {
     "量子魚竿": {"luck": 7.0, "speed_bonus": 5.0, "mutation": 0.60},
     "ADMIN魚桿": {"luck": 999.0, "speed_bonus": 8.5, "mutation": 1.00}
 }
-# 🌟 全球統一天氣池：定義全服同時間完全同步的天氣共振效果
+# 🌟 全球統一天氣池
 WEATHER_POOL = {
     "☀️ 晴空萬里": {
         "desc": "風平浪靜，陽光灑落海面，非常適合出海。",
@@ -149,7 +149,7 @@ MAP_EXCLUSIVE_FISH = {
         "作者級": [("💻 作者的未編譯源代碼", 100000), ("🤨神秘的SIGMAFACE", 300000)]
     }
 }
-# 4. 資料庫核心工具（完美拆解與防錯強化）
+# 4. 資料庫核心工具
 def get_user(user_id):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -237,9 +237,7 @@ async def transfer(interaction: discord.Interaction, target: discord.Member, amo
 # ======= 🧰 指令四：神祕黃金寶箱 =======
 @bot.tree.command(name="開箱", description="開啟背包內的神祕黃金寶箱，隨機獲得高級藥水、大筆金幣 or 神獸寵物！")
 async def open_box(interaction: discord.Interaction):
-    # 🌟 解決未回應問題：先發送 Defer
     await interaction.response.defer()
-    
     user_id = interaction.user.id
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -280,7 +278,8 @@ async def leaderboard(interaction: discord.Interaction):
     rows = c.fetchall()
     conn.close()
     embed = discord.Embed(title="🏆 歡樂釣魚場 - 榮譽天梯排行榜", color=0xF1C40F)
-    if not rows: embed.description = "目前排行榜上空空如也..."
+    if not rows:
+        embed.description = "目前排行榜上空空如也..."
     else:
         rank_str = ""
         for i, row in enumerate(rows):
@@ -308,10 +307,10 @@ async def change_map(interaction: discord.Interaction, map_name: str):
     update_user(user_id, current_map=map_name)
     await interaction.response.send_message(f"🚢 **{interaction.user.display_name}** 揚帆啟航！成功進駐新海域：【**{map_name}**】（{MAPS[map_name]['desc']}）")
 cooldowns = {}
-# ======= 🎣 指令七：全功能進化核心釣魚（🌟已整合 Defer 與資料庫合併批次讀取，徹底告別未回應） =======
+# ======= 🎣 指令七：全功能進化核心釣魚（🌟 Defer 緩衝與合併批次讀取版） =======
 @bot.tree.command(name="釣魚", description="拋出釣竿！(自動帶出全服天氣及目前地圖海域專屬特產生物！)")
 async def fish(interaction: discord.Interaction):
-    # 🌟 核心急救：一進指令馬上執行 defer 搶下 Discord 通訊權，防範未回應
+    # 🌟 攔截 3 秒未回應超時
     await interaction.response.defer()
     
     user_id = interaction.user.id
@@ -319,12 +318,12 @@ async def fish(interaction: discord.Interaction):
     current_map = user["current_map"]
     current_rod = user["rod"] if user["rod"] in ROD_STATS else "新手魚竿"
     
-    # 🌟 讀取全球完全同步的氣象站
+    # 🌟 讀取全球同步氣象站
     weather_name, weather_info = get_global_weather()
     weather_stat = weather_info["加成"].get(current_map, {"luck": 1.0, "speed": 0.0})
     rod_stat = ROD_STATS[current_rod]
     
-    # 🌟 優化：只開一次資料庫，用 IN 語法一口氣打包抓出全背包藥水，杜絕多重連線磁碟卡頓
+    # 一次開關資料庫，批次打包撈出全背包藥水，防堵未回應
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute(
@@ -339,7 +338,7 @@ async def fish(interaction: discord.Interaction):
     has_high_pot = inv_data.get('🔵高級運氣藥水', 0) > 0
     has_high_bait = inv_data.get('高級魚餌', 0) > 0
     
-    # 速度/冷卻時間動態結算
+    # 速度/冷卻時間結算（基礎 10 秒）
     current_time = time.time()
     base_cooldown = 10.0
     base_cooldown -= rod_stat["speed_bonus"]
@@ -351,13 +350,12 @@ async def fish(interaction: discord.Interaction):
         time_passed = current_time - cooldowns[user_id]
         if time_passed < base_cooldown:
             remaining = round(base_cooldown - time_passed, 1)
-            # 🌟 注意：有使用 defer 的指令，回傳必須使用 followup.send 喔！
             await interaction.followup.send(f"🚨 拋竿速度太快了！手拉得好酸...再等 {remaining} 秒。(當前冷卻: {round(base_cooldown, 1)}秒)", ephemeral=True)
             conn.close()
             return
     cooldowns[user_id] = current_time
     
-    # 運氣總值倍率疊加
+    # 🌟 幸運乘數計算
     luck_multiplier = rod_stat["luck"] * weather_stat["luck"]
     w = [80.0, 19.0, 0.9, 0.08, 0.019, 0.001]
     
@@ -394,27 +392,35 @@ async def fish(interaction: discord.Interaction):
     conn.commit()
     conn.close()
 
-    # 干涉權重爆率
-    w *= (luck_multiplier * 1.2)
-    w *= (luck_multiplier * 1.5)
-    w *= (luck_multiplier * 2.0)
-    w *= (luck_multiplier * 2.5)
-    w *= (luck_multiplier * 3.0)
+    # 🌟 關鍵邏輯修正：使用列表推導式，對 w 裡面的 6 個爆率元素個別進行乘法運算，徹底根除死鎖
+    w = [
+        w[0],                               # 普通不加成
+        w[1] * (luck_multiplier * 1.2),     # 稀有
+        w[2] * (luck_multiplier * 1.5),     # 傳奇
+        w[3] * (luck_multiplier * 2.0),     # 神話
+        w[4] * (luck_multiplier * 2.5),     # 秘密
+        w[5] * (luck_multiplier * 3.0)      # 作者級
+    ]
     
     rarities = ["普通", "稀有", "傳奇", "神話", "秘密", "作者級"]
     chosen_rarity = random.choices(rarities, weights=w, k=1)[0]
     
+    # 🌟 地圖收穫系統：依據玩家地圖提取專屬特定產物
     available_fish = list(FISH_POOL.get(chosen_rarity, FISH_POOL["普通"]))
     if current_map in MAP_EXCLUSIVE_FISH and chosen_rarity in MAP_EXCLUSIVE_FISH[current_map]:
         available_fish = MAP_EXCLUSIVE_FISH[current_map][chosen_rarity]
         
-    if not available_fish: available_fish = FISH_POOL.get(chosen_rarity, FISH_POOL["普通"])
+    if not available_fish: 
+        available_fish = FISH_POOL.get(chosen_rarity, FISH_POOL["普通"])
+        
     fish_item = random.choice(available_fish)
     fish_name, _ = fish_item
     
-    # 變異判定
+    # 🌟 變異判定
     is_mutated = random.random() < rod_stat["mutation"]
-    if is_mutated: fish_name = f"{fish_name} [✨變異體]"
+    if is_mutated: 
+        fish_name = f"{fish_name} [✨變異體]"
+        
     add_inventory(user_id, fish_name, 1)
 
     xp_gained = random.randint(15, 30)
@@ -427,7 +433,8 @@ async def fish(interaction: discord.Interaction):
         bonus_xp = int(xp_gained * 0.5)
         xp_gained += bonus_xp
         pet_msg = f"（🐉 小青龍賜予額外 +{bonus_xp}xp！）"
-    elif "招財貓" in user["pet"]: pet_msg = "（🐱 招財貓默默幫你累積財運...）"
+    elif "招財貓" in user["pet"]: 
+        pet_msg = "（🐱 招財貓默默幫你累積財運...）"
 
     new_xp = user["xp"] + xp_gained
     current_lvl = user["level"]
@@ -446,7 +453,7 @@ async def fish(interaction: discord.Interaction):
     if chosen_rarity in ["神話", "秘密", "作者級"] and lvl_up_msg == "":
         msg += "\n🎉 **【世界廣播】全服見證！極致歐皇在海域中撈起了不世珍寶！！** 🎉"
     
-    # 🌟 核心：有 defer 的地方改用 followup.send 發送結果！
+    # 🌟 用 followup.send 回報 Defer 後的結果
     await interaction.followup.send(msg)
 # ======= 🏪 指令八：全功能商店與購買系統 =======
 @bot.tree.command(name="普通商店", description="顯示豐收漁具普通商店的道具、全套藥水與神祕保箱")
@@ -483,7 +490,7 @@ async def buy(interaction: discord.Interaction, item_name: str, quantity: int = 
         add_inventory(user_id, item_name, quantity)
         await interaction.response.send_message(f"🛍️ 購買成功！你將 {quantity} 個 **{item_name}** 收納進背包囉！")
 
-# ======= 指令九：個人狀態與背包展示 =======
+# ======= 🎒 指令九：個人狀態與背包展示 =======
 @bot.tree.command(name="背包", description="查看個人的等級、當前神獸寵物、錢包餘額與魚獲")
 async def inventory(interaction: discord.Interaction):
     user_id = interaction.user.id
@@ -507,7 +514,6 @@ async def inventory(interaction: discord.Interaction):
 
 @bot.tree.command(name="全賣", description="將背包裡所有的常規魚獲全部售出換取金幣（變異體享 1.5 倍高價變現！）")
 async def sell_all(interaction: discord.Interaction):
-    # 🌟 解決未回應問題：全賣可能包含大量資料庫 UPDATE 迴圈，預先進行 Defer 處理
     await interaction.response.defer()
     
     user_id = interaction.user.id
