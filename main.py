@@ -121,7 +121,7 @@ ENCHANT_POOL = {
 
 FISH_POOL = {
     "普通": [("🐟 吳郭魚", 15), ("🐠 小丑魚", 20), ("👟 舊鞋子", 2)],
-    "稀有": [("🐡 黃金河豚", 200)]
+    "稀修": [("🐡 黃金河豚", 200)]
 }
 
 MAP_EXCLUSIVE_FISH = {
@@ -408,8 +408,7 @@ async def fish(interaction: discord.Interaction):
     if luck_score >= 500000: chosen_rarity = "作者級" if roll < 40 else "秘密" if roll < 80 else "神話"
     elif luck_score >= 150: chosen_rarity = "作者級" if roll < 1 else "秘密" if roll < 5 else "神話" if roll < 20 else "傳奇" if roll < 60 else "稀有"
     elif luck_score >= 50: chosen_rarity = "神話" if roll < 2 else "傳奇" if roll < 15 else "稀有" if roll < 50 else "普通"
-    else: chosen_rarity = "傳奇" if roll < 1 else "稀慢" if roll < 20 else "普通"
-    chosen_rarity = "稀有" if chosen_rarity == "稀慢" else chosen_rarity
+    else: chosen_rarity = "傳奇" if roll < 1 else "稀有" if roll < 20 else "普通"
 
     available_fish = []
     if current_map in MAP_EXCLUSIVE_FISH and chosen_rarity in MAP_EXCLUSIVE_FISH[current_map]:
@@ -548,9 +547,12 @@ async def sell_all(interaction: discord.Interaction):
         total_revenue += bonus_cash
         sold_details.append(f"🐱 【招財貓加持】 額外抓回了 {bonus_cash} 金幣！")
     update_user(user_id, balance=user["balance"] + total_revenue)
-embed = discord.Embed(title="💰 魚獲交易結算完畢", description="\n".join(sold_details) + f"\n\n💵 總計賺得：{total_revenue} 金幣！", color=0xF1C40F)
-await interaction.followup.send(embed=embed)
+    # 🌟 完美歸位縮排：徹底收進函數內部，防堵 Deploy 閃退！
+    # 🌟 完美歸位縮排：最前面「必須有 4 個空格」，讓它完全收進函數內部！
+    embed = discord.Embed(title="💰 魚獲交易結算完畢", description="\n".join(sold_details) + f"\n\n💵 總計賺得：{total_revenue} 金幣！", color=0xF1C40F)
+    await interaction.followup.send(embed=embed)
 
+# ─── 🛑 警告：以下這四行是全專案的最底層啟動區，最左邊「絕對不能有任何空格」！ ───
 init_db()
 keep_alive()
 DISCORD_CODE = os.getenv("DISCORD_TOKEN")
