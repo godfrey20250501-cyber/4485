@@ -350,7 +350,7 @@ async def fish(interaction: discord.Interaction):
             conn.close()
             return
     cooldowns[user_id] = current_time
-    luck_multiplier = rod_stat["luck"] * weather_stat["luck"]
+       luck_multiplier = rod_stat["luck"] * weather_stat["luck"]
     bait_msg = f"🌍 **全服全球天氣：【{weather_name}】** (*{weather_info['desc']}*)\n📈 海域共振影響：運氣 `x{weather_stat['luck']}` | 裝備：**{current_rod}**\n"
     
     # 🌟 徹底拋棄 w 變數：100% 轉化為純數字「幸運積分點數」！
@@ -385,7 +385,7 @@ async def fish(interaction: discord.Interaction):
     conn.commit()
     conn.close()
 
-    # 🌟 採用純數字隨機落點（0-100），完全不需要權重列表，徹底根治死鎖！
+    # 🌟 2026 終極安全機制：採用純數字隨機落點（0-100），完全不需要 random.choices，100% 阻斷卡死！
     roll = random.uniform(0, 100)
     if luck_score >= 500000: 
         chosen_rarity = "作者級" if roll < 40 else "秘密" if roll < 80 else "神話"
