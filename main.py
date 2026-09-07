@@ -58,11 +58,10 @@ def init_db():
     conn.close()
 
 # 3. 豪華版道具、地圖與魚池特產定義
-RODS_SHOP = {"初級魚竿": 200, "高級魚竿": 1000, "深海魚竿": 3500, "量子魚竿": 8000}
+RODS_SHOP = {"初級魚竿": 200, "高級魚竿": 1000, "深海魚竿": 3500, "量子魚竿": 8000, "ADMIN魚桿":500000}
 BAITS_SHOP = {
-    "普通魚餌": 15, "高級魚餌": 60, "🧰_神祕黃金寶箱": 500,
-    "🟢_普通運氣藥水": 100, "🔵_高級運氣藥水": 400, "💗_性慾藥水(速度300%)": 150, "🌌_轉生神仙水(運氣+1000000%)": 99999
-}
+    "普通魚餌": 15, "高級魚餌": 60, "🥳神祕黃金寶箱": 500,
+    "🟢普通運氣藥水": 100, "🔵高級運氣藥水": 400, "💗性慾藥水": 150, "🌌轉生神仙水(運氣+1000000%)": 99999}
 
 MAPS = {
     "小池塘": {"req_lvl": 0, "desc": "新手起步的溫馨小池塘"},
@@ -74,8 +73,8 @@ FISH_POOL = {
     "稀有": [("🦑 大王烏賊", 60), ("🦈 藍色鯊魚", 120), ("🦀 帝王蟹", 150), ("🐡 黃金河豚", 200)],
     "傳奇": [("🐳 藍鯨", 500), ("👑 黃金鯉魚", 800), ("🔱 海神三叉戟", 1200)],
     "神話": [("🐉 東方青龍", 5000), ("🌊 亞特蘭提斯之心", 8000), ("🧜‍♀️ 美人魚的眼淚", 7500)],
-    "秘密": [("🛸 外星科技零件", 25000)],
-    "作者級": [("💻 作者的未編譯源代碼", 100000)]
+    "秘密": [("🛸 外星科技零件", 25000), ("🏐一顆...排球?", 27000)],
+    "作者級": [("💻 作者的未編譯源代碼", 100000), ("🤨神秘的SIGMAFACE", 300000)]
 }
 # 4. 資料庫核心工具（🌟已修正 Tuple 賦值錯誤，徹底解決簽到閃退）
 def get_user(user_id):
@@ -183,11 +182,11 @@ async def open_box(interaction: discord.Interaction):
         update_user(user_id, pet=chosen_pet)
         await interaction.response.send_message(f"🌌 ✨ **【神光降臨！！】** **{interaction.user.display_name}** 打開黃金寶箱，居然奇蹟般孵化出極稀有寵物：**{chosen_pet}**！！")
     elif roll < 0.25:
-        add_inventory(user_id, "🔵_高級運氣藥水", 1)
-        await interaction.response.send_message(f"🧰 **{interaction.user.display_name}** 打開了黃金寶箱，獲得了：`🔵_高級運氣藥水` x1！")
+        add_inventory(user_id, "🔵高級運氣藥水", 1)
+        await interaction.response.send_message(f"🧰 **{interaction.user.display_name}** 打開了黃金寶箱，獲得了：`🔵高級運氣藥水` x1！")
     elif roll < 0.55:
-        add_inventory(user_id, "🟢_普通運氣藥水", 1)
-        await interaction.response.send_message(f"🧰 **{interaction.user.display_name}** 打開了黃金寶箱，獲得了：`🟢_普通運氣藥水` x1！")
+        add_inventory(user_id, "🟢普通運氣藥水", 1)
+        await interaction.response.send_message(f"🧰 **{interaction.user.display_name}** 打開了黃金寶箱，獲得了：`🟢普通運氣藥水` x1！")
     else:
         bonus_money = random.randint(150, 400)
         update_user(user_id, balance=user["balance"]+bonus_money, bait_count=user["bait_count"]+5)
