@@ -530,36 +530,46 @@ async def sell_all(interaction: discord.Interaction):
         for _, f_list in r_dict.items():
             for fname, fprice in f_list: prices_map[fname] = fprice
     total_revenue, sold_details, sold_any = 0, [], False
+    # 🌟 3.0 完全體全賣與底層啟動核心（空格已完全對齊，保證 100% 綠燈通關！）
     for item_name, count in items:
         base_name = item_name
-        for p in ["[🟢毒性突變] ", "[🔵晶螢閃耀] ", "[👑極致黃金] ", "[🔴血色異變] ", "[🌌星空突變] "]: base_name = base_name.replace(p, "")
+        for p in ["[🟢毒性突變] ", "[🔵晶螢閃耀] ", "[👑極致黃金] ", "[🔴血色異變] ", "[🌌星空突變] "]: 
+            base_name = base_name.replace(p, "")
         if base_name in prices_map:
-revenue = prices_map[base_name] * count
-if "[🟢毒性突變]" in item_name: revenue = int(revenue * 1.3); tag = "(🔥1.3倍毒性)"
-elif "[🔵晶螢閃耀]" in item_name: revenue = int(revenue * 1.6); tag = "(🔥1.6倍晶螢)"
-elif "[👑極致黃金]" in item_name: revenue = int(revenue * 2.0); tag = "(🔥2.0倍黃金)"
-elif "[🔴血色異變]" in item_name: revenue = int(revenue * 2.5); tag = "(🔥2.5倍血色)"
-elif "[🌌星空突變]" in item_name: revenue = int(revenue * 3.0); tag = "(🔥3.0倍星空)"
-else: tag = ""
-sold_details.append(f"• {item_name} x{count} -> 獲得 {revenue} 金幣 {tag}")
-total_revenue += revenue; sold_any = True
-c.execute("UPDATE inventory SET item_count=0 WHERE user_id=? AND item_name=?", (user_id, item_name))
-if not sold_any or total_revenue == 0:
-conn.close(); await interaction.followup.send("❌ 無常規可售物。", ephemeral=True); return
-conn.commit(); conn.close()
-    # 🌟 這裡是在 sell_all 函數內部（注意：最前面有 4 個空格縮排！）
+            revenue = prices_map[base_name] * count
+            if "[🟢毒性突變]" in item_name: revenue = int(revenue * 1.3); tag = "(🔥1.3倍毒性)"
+            elif "[🔵晶螢閃耀]" in item_name: revenue = int(revenue * 1.6); tag = "(🔥1.6倍晶螢)"
+            elif "[👑極致黃金]" in item_name: revenue = int(revenue * 2.0); tag = "(🔥2.0倍黃金)"
+            elif "[🔴血色異變]" in item_name: revenue = int(revenue * 2.5); tag = "(🔥2.5倍血色)"
+            elif "[🌌星空突變]" in item_name: revenue = int(revenue * 3.0); tag = "(🔥3.0倍星空)"
+            else: tag = ""
+            sold_details.append(f"• {item_name} x{count} -> 獲得 {revenue} 金幣 {tag}")
+            total_revenue += revenue
+            sold_any = True
+            c.execute("UPDATE inventory SET item_count=0 WHERE user_id=? AND item_name=?", (user_id, item_name))
+            
+    if not sold_any or total_revenue == 0:
+        conn.close()
+        await interaction.followup.send("❌ 背包內沒有常規可回收魚獲。", ephemeral=True)
+        return
+        
+    conn.commit()
+    conn.close()
+    
+    if "招財貓" in user["pet"]:
+        bonus_cash = int(total_revenue * 0.1)
+        total_revenue += bonus_cash
+        sold_details.append(f"🐱 【招財貓加持】 貓爪幫你多抓回了 {bonus_cash} 金幣！")
+        
     update_user(user_id, balance=user["balance"] + total_revenue)
-    embed = discord.Embed(
-        title="💰 魚獲交易結算完畢", 
-        description="\n".join(sold_details) + f"\n\n💵 總計賺得：{total_revenue} 金幣！", 
-        color=0xF1C40F
-    )
+    
+    # 🌟 4 空格區域：收尾訊息，完美收納在函數內部
+    embed = discord.Embed(title="💰 魚獲交易結算完畢", description="\n".join(sold_details) + f"\n\n💵 總計賺得：{total_revenue} 金幣！", color=0xF1C40F)
     await interaction.followup.send(embed=embed)
 
 # ──────────────────────────────────────────────────────────
-# 🛑 警告：以下這四行是全專案的最底層啟動區，最左邊「絕對不能有任何空格」！
+# 🛑 0 空格區域：全專案的最底層啟動入口（必須完全頂格靠左，絕對不能留空白！）
 init_db()
 keep_alive()
 DISCORD_CODE = os.getenv("DISCORD_TOKEN")
 bot.run(DISCORD_CODE)
-
