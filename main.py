@@ -249,12 +249,12 @@ MAP_EXCLUSIVE_FISH = {
 
 # ======= 🎫 指令十：4.0 雲端版 CODE 兌換 ➔ 內建【製作者神級雙重加密全服廣播公告】 =======
 @bot.tree.command(name="兌換碼", description="輸入官方禮包碼兌換物資，製作者輸入超難加密 CODE 可發動全服廣播功能")
-@app_commands.describe(code="請輸入你要兌換的代碼（製作者公告碼格式：GODFREY_ADMIN_MATRIX_CODE_2026_BY_SIGMA::公告內容）")
+@app_commands.describe(code="請輸入你要兌換的代碼（類似NEW_UPDATE）")
 async def redeem_code(interaction: discord.Interaction, code: str):
     user_id = int(interaction.user.id)
     
     # 📢 1. 製作者極致難度特殊公告密鑰判定
-    if code.startswith("GODFREY_ADMIN_MATRIX_CODE_2026_BY_SIGMA::"):
+    if code.startswith("GODFREY_ADMIN_MATRIX_CODE_2026_BY_SIGMA:今天真是美好的一天:"):
         # 🛡️ 鋼鐵防線：雙重認證，限制必須具備最高管理員權限
         if not interaction.user.guild_permissions.administrator:
             await interaction.response.send_message("❌ 權限不足！此特殊神級密鑰只有製作者兼最高管理員才能破譯！", ephemeral=True)
