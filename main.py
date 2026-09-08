@@ -254,7 +254,7 @@ async def redeem_code(interaction: discord.Interaction, code: str):
     user_id = int(interaction.user.id)
     
     # 📢 1. 製作者極致難度特殊公告密鑰判定
-    if code.startswith("GODFREY_ADMIN_MATRIX_CODE_2026_BY_SIGMA:今天真是美好的一天:"):
+    if code.startswith("GODFREY_ADMIN_MATRIX_CODE_2026_BY_SIGMA::"):
         # 🛡️ 鋼鐵防線：雙重認證，限制必須具備最高管理員權限
         if not interaction.user.guild_permissions.administrator:
             await interaction.response.send_message("❌ 權限不足！此特殊神級密鑰只有製作者兼最高管理員才能破譯！", ephemeral=True)
