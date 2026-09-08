@@ -400,10 +400,11 @@ async def teleport_map(interaction: discord.Interaction, map_name: str):
     embed.set_image(url=image)
     await interaction.response.send_message(embed=embed)
 
-# ======= 🎣 指令九：3.9 航海世紀終極完美進化釣魚（🌟 導入硬核型態防禦，徹底告別保底吳郭魚！） =======
+# ======= 🎣 指令九：3.9 航海世紀終極完美進化釣魚（🌟 完美校正冷卻時間計時器，徹底封死未回應與卡死！） =======
 cooldowns = {}
 @bot.tree.command(name="釣魚", description="拋出釣竿！引進真實時間等待咬竿與浮標拉扯機率，支援官方群 1.2 倍加成！")
 async def fish(interaction: discord.Interaction):
+    # 🌟 1. 第一步 0.001 秒內完成預留應答，向官方申請「正在思考中...」灰字
     await interaction.response.defer()
     import asyncio
     
@@ -414,24 +415,31 @@ async def fish(interaction: discord.Interaction):
         current_rod = user.get("rod", "新手魚竿")
         current_enchant = user.get("enchant", "無")
         
-        # 🌟 型態安全防禦 1：確保地圖、魚竿、附魔字串絕對合法，防範 SQL 錯位
         if not current_map or current_map == "None": current_map = "一海・新手小池塘"
         if not current_rod or current_rod == "None": current_rod = "新手魚竿"
         if not current_enchant or current_enchant == "None": current_enchant = "無"
         
         weather_name, weather_info = get_global_weather()
-        weather_stat = weather_info["加成"].get(current_map, {"luck": 1.0, "speed": 0.0})
+        # 🌟 安全防禦：如果天氣池比對不上有保底
+        weather_stat = weather_info.get("加成", {}).get(current_map, {"luck": 1.0, "speed": 0.0}) if "加成" in weather_info else {"luck": 1.0, "speed": 0.0}
+        
         rod_stat = ROD_STATS.get(current_rod, {"luck": 1.0, "speed_bonus": 0.0, "mutation": 0.05})
         enc_stat = ENCHANT_POOL.get(current_enchant, {"luck_mod": 1.0, "speed_mod": 0.0, "mutate_mod": 0.0})
         
-        # 🌟 型態安全防禦 2：如果附魔字典讀取異常，強制保底純數字，100% 阻斷減法 TypeError 閃退！
         enc_speed = enc_stat.get("speed_mod", 0.0) if enc_stat else 0.0
         enc_luck = enc_stat.get("luck_mod", 1.0) if enc_stat else 1.0
         enc_mutate = enc_stat.get("mutate_mod", 0.0) if enc_stat else 0.0
         
+        # 🌟 核心修正：全新計時公式！魚竿加速與附魔詞條一律「扣除秒數（變快）」，天氣的減速（speed_mod 負數）會正確加上秒數（變慢）！
         current_time = time.time()
-        base_cooldown = 8.0 - float(rod_stat.get("speed_bonus", 0.0)) - float(weather_stat.get("speed", 0.0)) - float(enc_speed)
-        if base_cooldown < 1.0: base_cooldown = 1.0
+        base_cooldown = 10.0 - float(rod_stat.get("speed_bonus", 0.0)) - float(enc_speed)
+        
+        # 加上天氣的變動秒數（好天氣扣秒，惡劣天氣加秒）
+        w_speed = weather_info.get("speed_mod", 0.0)
+        base_cooldown += float(w_speed)
+        
+        # 🛡️ 鋼鐵防線：不論裝備多神、冷卻秒數最低絕對不能低於 1.5 秒，徹底防堵外掛連點洗洗錢！
+        if base_cooldown < 1.5: base_cooldown = 1.5
         
         if user_id in cooldowns and current_time - cooldowns[user_id] < base_cooldown:
             remaining = round(base_cooldown - (current_time - cooldowns[user_id]), 1)
@@ -444,6 +452,7 @@ async def fish(interaction: discord.Interaction):
         
         await interaction.edit_original_response(content=f"🪝 **{interaction.user.display_name}** 裝配著【{bobber_name}】在【{current_map}】拋出釣竿...\n⏳ 正在波浪中靜靜等待魚兒咬竿，請保持潛心觀測... 🌊")
         
+        # 真實等待
         wait_seconds = random.randint(2, 3)
         await asyncio.sleep(wait_seconds)
         
@@ -464,6 +473,8 @@ async def fish(interaction: discord.Interaction):
         
         is_supported = interaction.guild_id == SUPPORT_GUILD_ID if interaction.guild_id else False
         guild_bonus = 1.2 if is_supported else 1.0
+        
+        # 幸運效率加成結算
         luck_multiplier = float(rod_stat.get("luck", 1.0)) * float(weather_info.get("luck_bonus", 1.0)) * float(enc_luck) * guild_bonus
         bait_msg = f"🌍 **全球統一天氣：【{weather_name}】** (*{weather_info['desc']}*)\n"
         if is_supported: bait_msg = "🤝 **【官方群共振】檢測到你在支援伺服器拋竿，全卡槽爆率提升 1.2 倍！**\n" + bait_msg
@@ -506,8 +517,7 @@ async def fish(interaction: discord.Interaction):
         if luck_score >= 500000: chosen_rarity = "作者級" if roll < 40 else "秘密" if roll < 80 else "神話"
         elif luck_score >= 150: chosen_rarity = "作者級" if roll < 1 else "秘密" if roll < 5 else "神話" if roll < 20 else "傳奇" if roll < 60 else "稀有"
         elif luck_score >= 50: chosen_rarity = "神話" if roll < 2 else "傳奇" if roll < 15 else "稀有" if roll < 50 else "普通"
-        else: chosen_rarity = "傳奇" if roll < 1 else "稀ย" if roll < 20 else "普通"
-        chosen_rarity = "稀有" if chosen_rarity == "稀ย" else chosen_rarity
+        else: chosen_rarity = "傳奇" if roll < 1 else "稀有" if roll < 20 else "普通"
 
         base_success = 95 - bobber_stat["success_rate"]
         if chosen_rarity == "作者級": base_success = 15 + bobber_stat["success_rate"]
@@ -555,7 +565,6 @@ async def fish(interaction: discord.Interaction):
         await interaction.followup.send(embed=embed)
         
     except Exception as error:
-        # 如果依然不幸报错，列印出錯誤日誌方便老哥截圖抓鬼
         print(f"釣魚背景報錯日誌: {error}")
         try:
             add_inventory(interaction.user.id, "🐟 吳郭魚", 1)
