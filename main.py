@@ -409,11 +409,10 @@ async def teleport_map(interaction: discord.Interaction, map_name: str):
     embed.set_image(url=image)
     await interaction.response.send_message(embed=embed)
 
-# ======= 🎣 指令九：3.9 航海世紀終極完美進化釣魚（🌟 完美校正冷卻時間計時器，徹底封死未回應與卡死！） =======
+# ======= 🎣 指令九：3.9.5 航海世紀終極釣魚（🌟 浮標全面改版為：商店購買與背包單次消耗制度！） =======
 cooldowns = {}
-@bot.tree.command(name="釣魚", description="拋出釣竿！引進真實時間等待咬竿與浮標拉扯機率，支援官方群 1.2 倍加成！")
+@bot.tree.command(name="釣魚", description="拋出釣竿！引進真實時間等待咬竿，自動裝配背包中最高階的浮標進行消耗加成！")
 async def fish(interaction: discord.Interaction):
-    # 🌟 1. 第一步 0.001 秒內完成預留應答，向官方申請「正在思考中...」灰字
     await interaction.response.defer()
     import asyncio
     
@@ -429,9 +428,7 @@ async def fish(interaction: discord.Interaction):
         if not current_enchant or current_enchant == "None": current_enchant = "無"
         
         weather_name, weather_info = get_global_weather()
-        # 🌟 安全防禦：如果天氣池比對不上有保底
-        weather_stat = weather_info.get("加成", {}).get(current_map, {"luck": 1.0, "speed": 0.0}) if "加成" in weather_info else {"luck": 1.0, "speed": 0.0}
-        
+        weather_stat = weather_info.get("加成", {}).get(current_map, {"luck": 1.0, "speed": 0.0})
         rod_stat = ROD_STATS.get(current_rod, {"luck": 1.0, "speed_bonus": 0.0, "mutation": 0.05})
         enc_stat = ENCHANT_POOL.get(current_enchant, {"luck_mod": 1.0, "speed_mod": 0.0, "mutate_mod": 0.0})
         
@@ -439,15 +436,11 @@ async def fish(interaction: discord.Interaction):
         enc_luck = enc_stat.get("luck_mod", 1.0) if enc_stat else 1.0
         enc_mutate = enc_stat.get("mutate_mod", 0.0) if enc_stat else 0.0
         
-        # 🌟 核心修正：全新計時公式！魚竿加速與附魔詞條一律「扣除秒數（變快）」，天氣的減速（speed_mod 負數）會正確加上秒數（變慢）！
+        # 冷卻計時器結算
         current_time = time.time()
         base_cooldown = 10.0 - float(rod_stat.get("speed_bonus", 0.0)) - float(enc_speed)
-        
-        # 加上天氣的變動秒數（好天氣扣秒，惡劣天氣加秒）
-        w_speed = weather_info.get("speed_mod", 0.0)
+        w_speed = weather_stat.get("speed", 0.0)
         base_cooldown += float(w_speed)
-        
-        # 🛡️ 鋼鐵防線：不論裝備多神、冷卻秒數最低絕對不能低於 1.5 秒，徹底防堵外掛連點洗洗錢！
         if base_cooldown < 1.5: base_cooldown = 1.5
         
         if user_id in cooldowns and current_time - cooldowns[user_id] < base_cooldown:
@@ -456,17 +449,30 @@ async def fish(interaction: discord.Interaction):
             return
         cooldowns[user_id] = current_time
 
-        bobber_name = random.choice(list(BOBBER_POOL.keys()))
+        # 🌟 3.9.5 智慧浮標加載：從背包讀取玩家購買的浮標儲備
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("SELECT item_name, item_count FROM inventory WHERE user_id=? AND item_name IN ('🔴 狂暴重力浮標', '🔵 藍海震盪浮標', '🟢 綠光電子浮標') AND item_count > 0", (user_id,))
+        player_bobbers = dict(c.fetchall())
+        
+        # 依照強度權限，自動挑選玩家背包裡最高階的浮標使用
+        if player_bobbers.get('🔴 狂暴重力浮標', 0) > 0:
+            bobber_name = '🔴 狂暴重力浮標'
+        elif player_bobbers.get('🔵 藍海震盪浮標', 0) > 0:
+            bobber_name = '🔵 藍海震盪浮標'
+        elif player_bobbers.get('🟢 綠光電子浮標', 0) > 0:
+            bobber_name = '🟢 綠光電子浮標'
+        else:
+            bobber_name = '⚪ 常規軟木浮標' # 沒購買的玩家，一律強制保底素釣軟木標
+            
         bobber_stat = BOBBER_POOL[bobber_name]
         
-        await interaction.edit_original_response(content=f"🪝 **{interaction.user.display_name}** 裝配著【{bobber_name}】在【{current_map}】拋出釣竿...\n⏳ 正在波浪中靜靜等待魚兒咬竿，請保持潛心觀測... 🌊")
+        await interaction.edit_original_response(content=f"🪝 **{interaction.user.display_name}** 裝配著背包裡的【**{bobber_name}**】在【{current_map}】拋出釣竿...\n⏳ 正在波浪中靜靜等待魚兒咬竿，請保持潛心觀測... 🌊")
         
-        # 真實等待
         wait_seconds = random.randint(2, 3)
         await asyncio.sleep(wait_seconds)
         
-        conn = sqlite3.connect(DB_FILE)
-        c = conn.cursor()
+        # 資料庫物資與消耗品加載
         c.execute("SELECT item_name, item_count FROM inventory WHERE user_id=? AND item_name IN ('💗性慾藥水', '🌌轉生神仙水', '🟢普通運氣藥水', '🔵高級運氣藥水', '⚡閃電速度藥水', '高級魚餌', '海藻餌', '磁鐵重餌', '🔋 彈性奈米反覆餌')", (user_id,))
         inv_data = dict(c.fetchall())
         
@@ -483,23 +489,22 @@ async def fish(interaction: discord.Interaction):
         is_supported = interaction.guild_id == SUPPORT_GUILD_ID if interaction.guild_id else False
         guild_bonus = 1.2 if is_supported else 1.0
         
-        # 幸運效率加成結算
         luck_multiplier = float(rod_stat.get("luck", 1.0)) * float(weather_info.get("luck_bonus", 1.0)) * float(enc_luck) * guild_bonus
         bait_msg = f"🌍 **全球統一天氣：【{weather_name}】** (*{weather_info['desc']}*)\n"
-        if is_supported: bait_msg = "🤝 **【官方群共振】檢測到你在支援伺服器拋竿，全卡槽爆率提升 1.2 倍！**\n" + bait_msg
+        if is_supported: bait_msg = "🤝 **【官方群共振】檢測到你在支援伺服器拋竿，全收益提升 1.2 倍！**\n" + bait_msg
         if current_enchant != "無": bait_msg += f"🔮 漁具灌注附魔：**【{current_enchant}】** 加持中\n"
         
+        # 扣除魚餌邏輯
         if has_nano_bait:
             luck_multiplier *= 2.0
             bait_msg += "🔋 **[神級奈米反覆餌] 裝備了彈性反覆餌，本竿不消耗任何材料，且幸運值x2.0！**\n"
         elif has_god_water:
             luck_multiplier *= 100.0
             c.execute("UPDATE inventory SET item_count=item_count-1 WHERE user_id=? AND item_name='🌌轉生神仙水'", (user_id,))
-            bait_msg += "🌌 **[神仙降臨]** 你喝下了百萬倍運氣神仙水！！\n"
         elif has_magnet:
             luck_multiplier *= 1.5
             c.execute("UPDATE inventory SET item_count=item_count-1 WHERE user_id=? AND item_name='磁鐵重餌'", (user_id,))
-            bait_msg += "🧲 **[磁力共振] 你使用了磁鐵重餌，深海科技零件與垃圾碎片爆率提升！**\n"
+            bait_msg += "🧲 **[磁力共振] 你使用了磁鐵重餌，碎片零件爆率提升！**\n"
         elif has_high_bait:
             luck_multiplier *= 3.0
             c.execute("UPDATE inventory SET item_count=item_count-1 WHERE user_id=? AND item_name='高級魚餌'", (user_id,))
@@ -518,6 +523,12 @@ async def fish(interaction: discord.Interaction):
         elif has_normal_pot: c.execute("UPDATE inventory SET item_count=item_count-1 WHERE user_id=? AND item_name='🟢普通運氣藥水'", (user_id,)); luck_multiplier *= 1.3
         if has_speed_pot: c.execute("UPDATE inventory SET item_count=item_count-1 WHERE user_id=? AND item_name='⚡閃電速度藥水'", (user_id,))
         if has_potion: c.execute("UPDATE inventory SET item_count=item_count-1 WHERE user_id=? AND item_name='💗性慾藥水'", (user_id,)); bait_msg = "🔥 **[速度狂暴]** 速度大增！\n" + bait_msg
+        
+        # 🌟 3.9.5 核心扣除點：如果使用的是高階購買浮標，在確定收竿扣款時，精準扣除背包數量 1 個！
+        if bobber_name != '⚪ 常規軟木浮標':
+            c.execute("UPDATE inventory SET item_count=item_count-1 WHERE user_id=? AND item_name=?", (user_id, bobber_name))
+            bait_msg += f"🚨 本竿自動消耗了 1 個 **{bobber_name}**！\n"
+            
         conn.commit()
         conn.close()
 
@@ -535,7 +546,7 @@ async def fish(interaction: discord.Interaction):
         elif chosen_rarity == "傳奇": base_success = 65 + bobber_stat["success_rate"]
         
         if random.uniform(0, 100) > base_success:
-            await interaction.followup.send(f"🦈 **{interaction.user.display_name} 拉扯失敗！** 一隻極其巨大的 **【{chosen_rarity}】** 級生物猛烈咬線，瞬間扯斷了你的魚線，吐信逃跑了...（拉竿成功率：`{int(base_success)}%`）")
+            await interaction.followup.send(f"🦈 **{interaction.user.display_name} 拉扯失敗！** 一隻極其巨大的 **【{chosen_rarity}】** 級生物猛烈咬線，扯斷了你的 【{bobber_name}】 吐信逃跑了...（拉竿成功率：`{int(base_success)}%`）")
             return
 
         available_fish = []
@@ -570,15 +581,22 @@ async def fish(interaction: discord.Interaction):
         conn.commit(); conn.close()
 
         icons = {"普通":"⚪", "稀有":"🔵", "傳奇":"🟡", "神話":"🔴", "秘密":"🟣", "作者級":"🌌"}
-        embed = discord.Embed(title=f"🎣 拉竿成功！ ── 【{icons[chosen_rarity]} {chosen_rarity}】", description=f"{bait_msg}🧬 順利捕捉：**{fish_name}**！ (成功率: `{int(base_success)}%`)\n🏆 獲得經驗：`+{xp_gained}xp` | 當前進度：`🧬 {new_xp}/{xp_needed} XP`{lvl_up_msg}", color=0x27AE60)
+               # 🌟 第一部分：4 空格縮排，精準將大魚的 Embed 結算卡片發送回頻道！
+        embed = discord.Embed(
+            title=f"🎣 拉竿成功！ ── 【{icons[chosen_rarity]} {chosen_rarity}】", 
+            description=f"{bait_msg}🧬 順利捕捉：**{fish_name}**！ (成功率: `{int(base_success)}%`)\n🏆 獲得經驗：`+{xp_gained}xp` | 當前進度：`🧬 {new_xp}/{xp_needed} XP`{lvl_up_msg}", 
+            color=0x27AE60
+        )
         await interaction.followup.send(embed=embed)
         
     except Exception as error:
         print(f"釣魚背景報錯日誌: {error}")
+                # 🌟 第三部分：8 空格與 12 空格精準巢狀縮排，徹底為釣魚指令完美收尾！
         try:
             add_inventory(interaction.user.id, "🐟 吳郭魚", 1)
             await interaction.followup.send(f"🎣 系統提示：海流產生輕微波盪，**{interaction.user.display_name}** 順利收竿，釣到了一隻 **🐟 吳郭魚**！(報錯類型: {error})")
-        except: pass
+        except:
+            pass
 # ======= 🏪 指令十：全球普通商店 =======
 @bot.tree.command(name="普通商店", description="顯示豐收漁具物資與神奇藥水")
 async def shop(interaction: discord.Interaction):
