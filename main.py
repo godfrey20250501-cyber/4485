@@ -16,7 +16,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "歡樂釣魚場 3.0 航海世紀已完美連線！"
+    return "歡樂釣魚場 3.9 深海與熔岩大世紀完美連線！"
 
 def run():
     app.run(host='0.0.0.0', port=8080)
@@ -36,7 +36,7 @@ class MyBot(commands.Bot):
     async def setup_hook(self):
         try:
             await self.tree.sync()
-            print("連線成功：歡樂釣魚場 3.0 全海域斜線指令已完全同步！")
+            print("連線成功：歡樂釣魚場 3.9 全新指令已完全同步！")
         except Exception as e:
             print(f"指令同步提示: {e}")
 
@@ -46,11 +46,10 @@ DB_FILE = "fishing_game.db"
 # 🌟 官方支援群 ID 設定（已完美綁定老哥的 Discord 伺服器！）
 SUPPORT_GUILD_ID = 1546517053719060642
 
-# 🌟 3.0 鋼鐵防線：自動熱修補舊資料庫欄位，100% 留住舊玩家的所有餘額與背包！
+# 2. RPG 3.9 資料庫初始化（🌟 鋼鐵防線：自動熱修補，100% 留住舊玩家的所有餘額與背包！）
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    # 基礎表建立
     c.execute('''CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY, balance INTEGER DEFAULT 100, rod TEXT DEFAULT '新手魚竿', bait_count INTEGER DEFAULT 5,
         level INTEGER DEFAULT 0, xp INTEGER DEFAULT 0, current_map TEXT DEFAULT '一海・新手小池塘', pet TEXT DEFAULT '無',
@@ -63,41 +62,40 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS redeem_codes (
         code_name TEXT PRIMARY KEY, prize_money INTEGER, prize_bait INTEGER
     )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS guilds (
+        guild_name TEXT PRIMARY KEY, leader_id INTEGER, vault INTEGER DEFAULT 0, current_boss TEXT DEFAULT '無', boss_hp INTEGER DEFAULT 0
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS guild_members (
+        user_id INTEGER PRIMARY KEY, guild_name TEXT
+    )''')
     conn.commit()
     
-    # 🛠️ 核心熱修補：如果資料庫是舊的，自動幫老玩家補上 3.0 欄位，不傷及舊有資料！
+    # 🛠️ 核心熱修補舊資料庫欄位
     alter_columns = [
-        ("last_daily", "TEXT DEFAULT '2000-01-01'"),
-        ("enchant", "TEXT DEFAULT '無'"),
-        ("bait_type", "TEXT DEFAULT '普通魚餌'"),
-        ("quest_type", "TEXT DEFAULT '無'"),
-        ("quest_target", "INTEGER DEFAULT 0"),
-        ("quest_progress", "INTEGER DEFAULT 0"),
-        ("quest_reward", "INTEGER DEFAULT 0")
+        ("last_daily", "TEXT DEFAULT '2000-01-01'"), ("enchant", "TEXT DEFAULT '無'"),
+        ("bait_type", "TEXT DEFAULT '普通魚餌'"), ("quest_type", "TEXT DEFAULT '無'"),
+        ("quest_target", "INTEGER DEFAULT 0"), ("quest_progress", "INTEGER DEFAULT 0"), ("quest_reward", "INTEGER DEFAULT 0")
     ]
     for col_name, col_type in alter_columns:
         try:
             c.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}")
             conn.commit()
-        except sqlite3.OperationalError:
-            pass  # 如果欄位早就存在（新玩家），自動跳過，絕不噴錯！
-
-    # 內建官方大更新補償兌換碼
+        except sqlite3.OperationalError: pass
+        
     try:
         c.execute("INSERT OR IGNORE INTO redeem_codes VALUES ('NEWUPDATE', 1500, 10)")
         c.execute("INSERT OR IGNORE INTO redeem_codes VALUES ('1UPDATE', 3000, 20)")
-        # 🎁 在這裡可以直接再加一組補償 CODE（例如：SORRY2026）
         c.execute("INSERT OR IGNORE INTO redeem_codes VALUES ('SORRY2026', 8000, 50)") 
         conn.commit()
     except: pass
     conn.close()
 
-# 3. 🏪 3.0 全球普通物資商店（基礎消耗品與藥水）
+# 3. 🏪 全球聯網普通商店物資
 BAITS_SHOP = {
     "普通魚餌": 15, "高級魚餌": 60, "海藻餌": 25, "磁鐵重餌": 45, "🔋 彈性奈米反覆餌": 4999,
     "🥳神祕黃金寶箱": 500, "🟢普通運氣藥水": 100, "🔵高級運氣藥水": 400, "⚡閃電速度藥水": 250, "💗性慾藥水": 150, "🌌轉生神仙水": 99999
 }
-# 🌟 3.0 全球統一天氣池
+# 🌟 全球統一天氣池
 WEATHER_POOL = {
     "☀️ 晴空萬里": {"desc": "風平浪靜，陽光灑落海面，非常適合出海。", "luck_bonus": 1.0, "speed_mod": 0.0},
     "🌧️ 狂風暴雨": {"desc": "大雨傾盆，海浪洶湧，魚群紛紛浮上水面呼吸！", "luck_bonus": 1.6, "speed_mod": -1.0},
@@ -113,19 +111,18 @@ def get_global_weather():
     random.seed()
     return w_name, w_info
 
-# 🖼️ 3.0 核心擴充：三大海域地圖、解鎖等級、傳送費用與專屬 NPC 漁具店
+# 🖼️ 3.9 航海核心：四大海域、解鎖等級、傳送過路費與駐島專屬 NPC 漁具店
 MAPS = {
-    "一海・新手小池塘": {"req_lvl": 0, "cost": 0, "npc": "👴 隔壁張老頭", "desc": "新手起步的溫馨小池塘，安全平靜。", "image": "https://imgur.com", "shop": {"初級魚竿": 200, "高級魚竿": 1000}},
-    "二海・黃金珊瑚礁": {"req_lvl": 80, "cost": 500, "npc": "🦈 魚人阿龍", "desc": "水深莫測的黃金海域，專產沙灘特產與神話眼淚。", "image": "https://imgur.com", "shop": {"深海魚竿": 3500, "珊瑚礁共振竿": 6000}},
-    "三海・亞特蘭提斯深淵": {"req_lvl": 160, "cost": 2500, "npc": "🔱 大祭司波賽頓", "desc": "極度危險的遠古禁地，充斥外星科技零件與作者級代碼。", "image": "https://imgur.com", "shop": {"量子魚竿": 8000, "ADMIN魚桿": 500000}}
+    "一海・新手小池塘": {"req_lvl": 0, "cost": 0, "npc": "👴 隔壁張老頭", "desc": "新手起步的溫馨池塘，平靜安全。", "image": "https://imgur.com", "shop": {"初級魚竿": 200, "高級魚竿": 1000}},
+    "二海・黃金珊瑚礁": {"req_lvl": 80, "cost": 500, "npc": "🦈 魚人阿龍", "desc": "高壓的水下珊瑚礁世界，魚獲斑斕色彩。", "image": "https://imgur.com", "shop": {"深海魚竿": 3500, "珊瑚礁共振竿": 6000}},
+    "三海_馬里亞娜海溝深淵": {"req_lvl": 160, "cost": 2500, "npc": "🔱 大祭司波賽頓", "desc": "漆黑萬丈的馬里亞娜海溝底部，充斥未知巨獸與零件。", "image": "https://imgur.com", "shop": {"量子魚竿": 8000, "ADMIN魚桿": 500000}}
 }
 
 ROD_STATS = {
     "新手魚竿": {"luck": 1.0, "speed_bonus": 0.0, "mutation": 0.05}, "初級魚竿": {"luck": 1.3, "speed_bonus": 0.5, "mutation": 0.10},
     "高級魚竿": {"luck": 2.0, "speed_bonus": 1.5, "mutation": 0.20}, "深海魚竿": {"luck": 3.5, "speed_bonus": 3.0, "mutation": 0.35},
     "珊瑚礁共振竿": {"luck": 5.0, "speed_bonus": 4.5, "mutation": 0.45}, "量子魚竿": {"luck": 7.0, "speed_bonus": 5.5, "mutation": 0.60},
-    "ADMIN魚桿": {"luck": 999.0, "speed_bonus": 8.5, "mutation": 1.00},
-    "🏆 任務大師榮譽紀念竿": {"luck": 8.8, "speed_bonus": 6.5, "mutation": 0.75} # 🌟 任務獲得限定竿！
+    "ADMIN魚桿": {"luck": 999.0, "speed_bonus": 8.5, "mutation": 1.00}, "🏆 任務大師榮譽紀念竿": {"luck": 8.8, "speed_bonus": 6.5, "mutation": 0.75}
 }
 
 ENCHANT_POOL = {
@@ -135,34 +132,39 @@ ENCHANT_POOL = {
     "🌌  sigma": {"desc": "全屬性終極洗鍊：運氣x2.5、冷卻-2秒、變異+40%", "luck_mod": 2.5, "speed_mod": 2.0, "mutate_mod": 0.40}
 }
 
-# 🔮 3.0 全新視覺：浮標狀態系統（隨機提供成功率加成）
 BOBBER_POOL = {
-    "⚪ 常規軟木浮標": {"success_rate": 0, "mutate_bonus": 0.0},
-    "🟢 綠光電子浮標": {"success_rate": 15, "mutate_bonus": 0.05},
-    "🔵 藍海震盪浮標": {"success_rate": 25, "mutate_bonus": 0.12},
-    "🔴 狂暴重力浮標": {"success_rate": 45, "mutate_bonus": 0.25}
-}
-FISH_POOL = {
-    "普通": [("🐟 吳郭魚", 15), ("🐠 小丑魚", 20), ("👟 舊鞋子", 2)],
-    "稀有": [("🐡 黃金河豚", 200)]
+    "⚪ 常規軟木浮標": {"success_rate": 0, "mutate_bonus": 0.0}, "🟢 綠光電子浮標": {"success_rate": 15, "mutate_bonus": 0.05},
+    "🔵 藍海震盪浮標": {"success_rate": 25, "mutate_bonus": 0.12}, "🔴 狂暴重力浮標": {"success_rate": 45, "mutate_bonus": 0.25}
 }
 
+FISH_POOL = {
+    "普通": [("🐟 吳郭魚", 15), ("🐠 小丑魚", 20), ("👟 舊鞋子", 2)], "稀有": [("🐡 黃金河豚", 200)]
+}
+
+# 🌟 3.9 核心隔離魚池：一海絕對釣不到二海，地幔只有熔岩！
 MAP_EXCLUSIVE_FISH = {
     "一海・新手小池塘": {
         "普通": [("🐟 吳郭魚", 15), ("🐠 小丑魚", 20), ("🐡 氣噗噗河豚", 25)],
         "稀有": [("🐡 黃金河豚", 200)], "傳奇": [("👑 黃金鯉魚", 800)]
     },
     "二海・黃金珊瑚礁": {
-        "普通": [("👟 舊鞋子", 2)],
+        "普通": [("🐚 珊瑚礁小蝦", 10), ("🐠 七彩霓虹魚", 45)],
         "稀有": [("🦑 大王烏賊", 60), ("🦈 藍色鯊魚", 120), ("🦀 帝王蟹", 150)],
-        "傳奇": [("🔱 海神三叉戟", 1200)], "秘密": [("🏐一顆...排球?", 27000)], "神話": [("🧜‍♀️ 美人魚的眼淚", 7500)]
+        "傳奇": [("🔱 海神三叉戟", 1200)], "神話": [("🧜‍♀️ 美人魚的眼淚", 7500)], "秘密": [("🏐一顆...排球?", 27000)]
     },
-    "三海・亞特蘭提斯深淵": {
-        "傳奇": [("🐳 藍鯨", 500)], "神話": [("🐉 東方青龍", 5000), ("🌊 亞特蘭提斯之心", 8000)],
-        "秘密": [("🛸 外星科技零件", 25000)], "作者級": [("💻 作者的未編譯源代碼", 100000), ("🤨神秘的SIGMAFACE", 300000)]
+    "三海_馬里亞娜海溝深淵": {
+        "普通": [("🐟 發光鮟鱇魚", 75), ("🧪 輻射基因流體", 110)],
+        "稀有": [("🐙 深淵巨型章魚", 280), ("🦈 遠古惡魔巨齒鯊", 650)],
+        "傳奇": [("🐳 藍鯨", 1500)], "秘密": [("🛸 外星科技零件", 25000)],
+        "神話": [("🐉 東方青龍", 35000)], "作者級": [("💻 作者的未編譯源代碼", 100000), ("🤨神秘的SIGMAFACE", 300000)]
+    },
+    "四海・地幔熔岩禁地": {
+        "傳奇": [("🌋 熔岩火靈魚", 3500)],
+        "神話": [("🔥 煉獄不死鳥之眼", 12000), ("💎 熔岩核心巨鑽", 25000)],
+        "秘密": [("🌋 古星核熱熔高壓液體", 55000)],
+        "作者級": [("🌌 SIGMA的熔岩超燃雪茄", 333333)]
     }
 }
-
 def get_user(user_id):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -195,26 +197,54 @@ def add_inventory(user_id, item_name, amount=1):
     conn.commit()
     conn.close()
 
-# ======= 📅 3.0 全新任務系統：每日告示板 =======
-@bot.tree.command(name="任務", description="查看今日公會接取的冒險委託日常任務進度與豐富賞金")
+# ======= 📖 指令一：使用教學 =======
+@bot.tree.command(name="釣魚說明", description="查看歡樂釣魚場 3.9 的大師指南")
+async def guide(interaction: discord.Interaction):
+    embed = discord.Embed(title="🎣 歡樂釣魚場 3.9 ── 航海大世紀指南", description="`──────────────────────────`", color=0x5865F2)
+    embed.add_field(name="🎮 冒險核心指令", value="`/釣魚` : 拋竿出海挑戰(具備真實等待)\n`/背包` : 查看大倉庫與載具裝備\n`/傳送地圖` : 金幣跨越海域傳送(需對應載具)", inline=False)
+    embed.add_field(name="🏰 公會與圖鑑", value="`/公會背包` : 查詢公會金庫與召喚魔王\n`/公會遠征` : 集體圍剿世界BOSS\n`/查看圖鑑` : 開闢四大海域生物進度", inline=False)
+    embed.set_footer(text="💡 提示：在官方支援群內拋竿，金幣經驗永久激增 1.2 倍！")
+    await interaction.response.send_message(embed=embed)
+
+# ======= 🌤️ 指令二：觀測天氣 =======
+@bot.tree.command(name="天氣", description="觀測當前全服統一的大氣觀測站與各地圖海域共振影響")
+async def current_weather_cmd(interaction: discord.Interaction):
+    w_name, w_info = get_global_weather()
+    embed = discord.Embed(title=f"🌤️ 全服統一氣象觀測站 ── 當前全球：【{w_name}】", description=f"*{w_info['desc']}*", color=0x3498DB)
+    for m_name in MAPS.keys():
+        embed.add_field(name=f"🚢 【{m_name}】海域影響", value=f"氣運倍率：`x{w_info['luck_bonus']}`\n收竿冷卻：`{w_info['speed_mod']} 秒`", inline=True)
+    await interaction.response.send_message(embed=embed)
+
+# ======= 📅 指令三：每日簽到時間鎖 =======
+@bot.tree.command(name="簽到", description="每日領取 200 金幣與 3 個普通魚餌補給！")
+async def daily(interaction: discord.Interaction):
+    user_id = interaction.user.id
+    user = get_user(user_id)
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    if user["last_daily"] == today_str:
+        await interaction.response.send_message("❌ 老哥，你今天已經簽到過了，明天再來吧！", ephemeral=True)
+        return
+    update_user(user_id, balance=user["balance"]+200, bait_count=user["bait_count"]+3, last_daily=today_str)
+    await interaction.response.send_message(f"🎁 **{interaction.user.display_name}** 簽到成功！獲得 `200` 金幣 與 `3` 個普通魚餌！")
+# ======= 📅 指令四：日常任務委託系統 =======
+@bot.tree.command(name="任務", description="查看今日公會接取的日常冒險進度與懸賞金幣")
 async def check_quest(interaction: discord.Interaction):
     user_id = interaction.user.id
     user = get_user(user_id)
-    embed = discord.Embed(title=f"📋 {interaction.user.display_name} 的今日日常任務板", color=0xF39C12)
-    
+    embed = discord.Embed(title=f"📋 {interaction.user.display_name} 的今日公會懸賞任務", color=0xF39C12)
     if user["quest_type"] == "無":
-        embed.description = "🔍 你目前沒有接取任何委託！\n請立刻輸入 `/接取任務` 來刷新今日公會懸賞！"
+        embed.description = "🔍 你目前身上空空如也！請輸入 `/接取任務` 來刷新今日公會日常！"
     else:
         status = "✅ 可回報" if user["quest_progress"] >= user["quest_target"] else "⏳ 進行中"
         embed.add_field(name=f"🎯 委託目標：【{user['quest_type']}】 ({status})", value=f"• 目前進度：`{user['quest_progress']} / {user['quest_target']}`\n• 達成賞金：`{user['quest_reward']} 🪙`", inline=False)
-        embed.set_footer(text="💡 達成後輸入 /回報任務 即可兌換大量金幣！累積完成任務還有機會解鎖限定神竿！")
     await interaction.response.send_message(embed=embed)
-@bot.tree.command(name="接取任務", description="向航海公會刷新接取今日日常任務")
+
+@bot.tree.command(name="接取任務", description="刷新並隨機接取一項今日公會懸賞日常")
 async def accept_quest(interaction: discord.Interaction):
     user_id = interaction.user.id
     user = get_user(user_id)
     if user["quest_type"] != "無":
-        await interaction.response.send_message("❌ 你身上已經有任務進行中了！請先完成或輸入 `/放棄任務`。", ephemeral=True)
+        await interaction.response.send_message("❌ 你身上已經有日常任務在進行中了！", ephemeral=True)
         return
     q_pool = [
         ("🎣 出海大豐收", 5, 450), # 釣魚 5 次
@@ -223,92 +253,157 @@ async def accept_quest(interaction: discord.Interaction):
     ]
     q_name, q_tar, q_rew = random.choice(q_pool)
     update_user(user_id, quest_type=q_name, quest_target=q_tar, quest_progress=0, quest_reward=q_rew)
-    await interaction.response.send_message(f"📋 成功接取今日委託！\n🎯 **【{q_name}】**：目標進度 `0 / {q_tar}`，完成後可獲得 `{q_rew}` 金幣！")
+    await interaction.response.send_message(f"📋 成功接取日常懸賞！🎯 **【{q_name}】**：進度 `0 / {q_tar}`，回報可得 `{q_rew}` 金幣！")
 
-@bot.tree.command(name="回報任務", description="完成公會每日委託後回報領取獎金")
+@bot.tree.command(name="回報任務", description="達成日常進度後回報領取日常獎金（有機率額外解鎖隱藏紀念神竿）")
 async def complete_quest(interaction: discord.Interaction):
     user_id = interaction.user.id
     user = get_user(user_id)
     if user["quest_type"] == "無":
-        await interaction.response.send_message("❌ 你目前沒有接取任何任務！", ephemeral=True)
+        await interaction.response.send_message("❌ 你目前身上沒有任務！", ephemeral=True)
         return
     if user["quest_progress"] < user["quest_target"]:
-        await interaction.response.send_message(f"❌ 任務尚未達成！目前進度：`{user['quest_progress']}/{user['quest_target']}`", ephemeral=True)
+        await interaction.response.send_message(f"❌ 懸賞尚未達成！進度：`{user['quest_progress']}/{user['quest_target']}`", ephemeral=True)
         return
-    # 隨機有 5% 機率直接獲贈任務大師榮譽紀念竿
     gift_msg = ""
     if random.random() < 0.05 and user["rod"] != "🏆 任務大師榮譽紀念竿":
         update_user(user_id, rod="🏆 任務大師榮譽紀念竿")
-        gift_msg = "\n🔥 **【神蹟降臨】公會長看賞識你的實力，額外賞賜【🏆 任務大師榮譽紀念竿】一根！**"
-        
+        gift_msg = "\n🔥 **【大師神蹟】公會長對你讚賞有加，特別賞賜限定【🏆 任務大師榮譽紀念竿】一根！**"
     update_user(user_id, balance=user["balance"]+user["quest_reward"], quest_type="無", quest_target=0, quest_progress=0, quest_reward=0)
-    await interaction.response.send_message(f"🎉 任務回報成功！獲得賞金 **`{user['quest_reward']}`** 金幣！{gift_msg}")
+    await interaction.response.send_message(f"🎉 日常任務回報完畢！獲得金幣 **`{user['quest_reward']}`** 點！{gift_msg}")
 
-# ======= 🗺️ 指令：金幣傳送海域 =======
-@bot.tree.command(name="傳送地圖", description="支付金幣揚帆啟航傳送至全新海域（一海0LV、二海80LV、三海160LV）")
-@app_commands.describe(map_name="目的地海域名稱")
-async def teleport_map(interaction: discord.Interaction, map_name: str):
-    if map_name not in MAPS:
-        await interaction.response.send_message(f"❌ 找不到這片海域！可用目的地：{', '.join(MAPS.keys())}", ephemeral=True)
+# ======= 💸 指令五：玩家金幣轉帳 =======
+@bot.tree.command(name="匯款", description="將金幣轉帳給伺服器內的其他玩家")
+@app_commands.describe(target="你想匯款給誰？", amount="你想轉帳的金幣數量")
+async def transfer(interaction: discord.Interaction, target: discord.Member, amount: int):
+    if amount <= 0 or target.id == interaction.user.id:
+        await interaction.response.send_message("❌ 轉帳金額或目標錯誤！", ephemeral=True)
         return
+    sender = get_user(interaction.user.id)
+    if sender["balance"] < amount:
+        await interaction.response.send_message("❌ 錢包餘額不足！", ephemeral=True)
+        return
+    receiver = get_user(target.id)
+    update_user(interaction.user.id, balance=sender["balance"] - amount)
+    update_user(target.id, balance=receiver["balance"] + amount)
+    await interaction.response.send_message(f"💸 **{interaction.user.display_name}** 成功轉帳 **{amount}** 金幣給 **{target.display_name}**！")
+
+# ======= 🧰 指令六：開啟黃金寶箱 =======
+@bot.tree.command(name="開箱", description="開啟背包內的神祕黃金寶箱，隨機獲得高級藥水、大筆金幣 or 神獸寵物！")
+async def open_box(interaction: discord.Interaction):
+    await interaction.response.defer()
     user_id = interaction.user.id
-    user = get_user(user_id)
-    m_data = MAPS[map_name]
-    if user["level"] < m_data["req_lvl"]:
-        await interaction.response.send_message(f"🔒 等級實力不足！前往【{map_name}】需要達到 `LV.{m_data['req_lvl']}`，你目前只有 `LV.{user['level']}`。", ephemeral=True)
-        return
-    if user["balance"] < m_data["cost"]:
-        await interaction.response.send_message(f"❌ 傳送費用不足！前往【{map_name}】需要 `{m_data['cost']}` 金幣，你目前只有 `{user['balance']}`。", ephemeral=True)
-        return
-    update_user(user_id, current_map=map_name, balance=user["balance"]-m_data["cost"])
-    embed = discord.Embed(title=f"🚢 船隻傳送成功 ── 抵達【{map_name}】", description=f"• 駐島島嶼 NPC：`{m_data['npc']}`\n• 傳送過路費：`-{m_data['cost']} 🪙`\n\n*{m_data['desc']}*", color=0x1ABC9C)
-    embed.set_image(url=m_data["image"])
-    await interaction.response.send_message(embed=embed)
-
-# ======= 🎫 指令：3.0 進化版 CODE 兌換與一鍵恢復全套庫存系統 =======
-@bot.tree.command(name="兌換碼", description="輸入官方禮包碼兌換金幣物資，或輸入補償碼一鍵恢復全套高階庫存物資！")
-@app_commands.describe(code="請輸入你要兌換的代碼")
-async def redeem_code(interaction: discord.Interaction, code: str):
-    user_id = interaction.user.id
-    code_upper = code.upper()
-    
-    # 🌟 神級補償兌換碼：全服玩家一鍵恢復/獲贈全套高階庫存！
-    if code_upper == "SORRY2026" or code_upper == "BACKUP":
-        user = get_user(user_id)
-        # 1. 補償 8000 金幣、儲備 30 個普通餌
-        update_user(user_id, balance=user["balance"]+800, bait_count=user["bait_count"]+30)
-        # 2. 一鍵將全套高階藥水、黃金寶箱、奈米反覆餌直接塞進玩家大倉庫！
-        add_inventory(user_id, "🔵高級運氣藥水", 5)
-        add_inventory(user_id, "🟢普通運氣藥水", 10)
-        add_inventory(user_id, "⚡閃電速度藥水", 5)
-        add_inventory(user_id, "🥳神祕黃金寶箱", 3)
-        add_inventory(user_id, "🔋 彈性奈米反覆餌", 1) # 直接保底贈送反覆使用餌！
-        
-        embed = discord.Embed(title="🌌 官方終極大補償 ── 庫存一鍵恢復成功！", description=f"親愛的 **{interaction.user.display_name}**，公會已將全套高階物資灌注回你的倉庫！", color=0x9B59B6)
-        embed.add_field(name="🎁 恢復物資明細", value="• 錢包補償：`+8000 🪙`\n• 儲備普通魚餌：`+30 個`\n• 🔵高級運氣藥水：`+5 個`\n• 🟢普通運氣藥水：`+10 個`\n• ⚡閃電速度藥水：`+5 個`\n• 🥳神祕黃金寶箱：`+3 個`\n• 🔋 彈性奈米反覆餌：`+1 個 (永久不消耗！)`", inline=False)
-        await interaction.response.send_message(embed=embed)
-        return
-
-    # 以下維持原本的常規 CODE 兌換邏輯
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("SELECT prize_money, prize_bait FROM redeem_codes WHERE code_name=?", (code_upper,))
+    c.execute("SELECT item_count FROM inventory WHERE user_id=? AND item_name='🥳神祕黃金寶箱'", (user_id,))
     res = c.fetchone()
-    conn.close()
-    
-    if not res:
-        await interaction.response.send_message("❌ 兌換碼不存在或已過期！請注意大小寫。", ephemeral=True)
+    box_count = res[0] if res else 0
+    if box_count <= 0:
+        await interaction.followup.send("❌ 背包倉庫裡沒有黃金寶箱！", ephemeral=True)
+        conn.close()
         return
-        
+    c.execute("UPDATE inventory SET item_count=item_count-1 WHERE user_id=? AND item_name='🥳神祕黃金寶箱'", (user_id,))
+    conn.commit()
+    conn.close()
+    roll = random.random()
     user = get_user(user_id)
-    money, baits = res
-    update_user(user_id, balance=user["balance"]+money, bait_count=user["bait_count"]+baits)
-    await interaction.response.send_message(f"🎫 禮包兌換成功！\n🎁 獲得獎勵：**`{money}`** 金幣 與 **`{baits}`** 個普通魚餌補給！")
+    if roll < 0.05:
+        chosen_pet = random.choice(["🐱 招財貓(金幣+10%)", "🦅 尋寶獵鷹(XP+30%)", "🐉 迷你小青龍(XP+50%)"])
+        update_user(user_id, pet=chosen_pet)
+        await interaction.followup.send(f"🌌 ✨ **【不世奇蹟】** **{interaction.user.display_name}** 成功孵化出神獸：**{chosen_pet}**！！")
+    elif roll < 0.25:
+        add_inventory(user_id, "🔵高級運氣藥水", 1)
+        await interaction.followup.send(f"🧰 成功開箱獲得：`🔵高級運氣藥水` x1！")
+    elif roll < 0.55:
+        add_inventory(user_id, "🟢普通運氣藥水", 1)
+        await interaction.followup.send(f"🧰 成功開箱獲得：`🟢普通運氣藥水` x1！")
+    else:
+        bonus_money = random.randint(150, 400)
+        update_user(user_id, balance=user["balance"]+bonus_money, bait_count=user["bait_count"]+5)
+        await interaction.followup.send(f"🧰 成功開箱獲得：`🪙 {bonus_money} 金幣` 與 `🐛 高級魚餌` x5！")
 
-# ======= 🎣 指令七：全功能進化核心釣魚（🌟 引入真實計時等待拉竿與浮標防空系統） =======
+# ======= 🏆 指令七：伺服器排行榜 =======
+@bot.tree.command(name="排行榜", description="查看當前伺服器中最強的遠航大師")
+async def leaderboard(interaction: discord.Interaction):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT user_id, level, balance FROM users ORDER BY level DESC, balance DESC LIMIT 10")
+    rows = c.fetchall()
+    conn.close()
+    embed = discord.Embed(title="🏆 歡樂釣魚場 - 遠航天梯榜", color=0xF1C40F)
+    if not rows: embed.description = "天梯榜上空空如也..."
+    else:
+        rank_str = ""
+        for i, row in enumerate(rows):
+            u_id, lvl, bal = row
+            member = interaction.guild.get_member(u_id) if interaction.guild else None
+            name = member.display_name if member else f"遠航大師({u_id})"
+            medal = "🥇" if i==0 else "🥈" if i==1 else "🥉" if i==2 else f"第 {i+1} 名"
+            rank_str += f"{medal} **{name}** ── `LV.{lvl}` | `錢包: {bal} 金幣`\n"
+        embed.description = rank_str
+    await interaction.response.send_message(embed=embed)
+# ======= 🗺️ 指令八：3.9 載具防禦金幣傳送海域系統 =======
+@bot.tree.command(name="傳送地圖", description="支付金幣揚帆啟航傳送至全新海域（需裝備對應下海載具，地幔需 LV.220）")
+@app_commands.describe(map_name="目的地海域名稱")
+async def teleport_map(interaction: discord.Interaction, map_name: str):
+    if map_name not in MAPS and map_name != "四海・地幔熔岩禁地":
+        await interaction.response.send_message(f"❌ 找不到這片海域！可用目的地：{', '.join(MAPS.keys())}、四海・地幔熔岩禁地", ephemeral=True)
+        return
+    user_id = interaction.user.id
+    user = get_user(user_id)
+    
+    # 針對動態地幔地圖做特殊費用判定
+    req_lvl = MAPS[map_name]["req_lvl"] if map_name in MAPS else 220
+    cost = MAPS[map_name]["cost"] if map_name in MAPS else 5000
+    npc = MAPS[map_name]["npc"] if map_name in MAPS else "👁️ 覺醒老哥本人"
+    desc = MAPS[map_name]["desc"] if map_name in MAPS else "鑽破地殼的終極地底世界！高溫高壓，此處出產地底極致高溫突變流體生物！"
+    image = MAPS[map_name]["image"] if map_name in MAPS else "https://imgur.com"
+
+    if user["level"] < req_lvl:
+        await interaction.response.send_message(f"🔒 等級實力不足！前往【{map_name}】需要達到 `LV.{req_lvl}`，你目前只有 `LV.{user['level']}`。", ephemeral=True)
+        return
+    if user["balance"] < cost:
+        await interaction.response.send_message(f"❌ 傳送費用不足！前往【{map_name}】需要 `{cost}` 金幣，你目前只有 `{user['balance']}` 🪙。", ephemeral=True)
+        return
+
+    # 🤿 3.9 核心防線：檢查玩家倉庫內是否真正購置並解鎖對應下海載具，沒載具 100% 絕對拒絕傳送！
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    
+    if map_name == "二海・黃金珊瑚礁":
+        c.execute("SELECT item_count FROM inventory WHERE user_id=? AND item_name='🤿 科技耐壓潛水服'", (user_id,))
+        has_suit = c.fetchone()
+        if not has_suit or has_suit[0] < 1:
+            await interaction.response.send_message("❌ 傳送失敗！二海完全位於高壓海中，你必須先輸入 `/購買載具 潛水服` 才能成功下海！", ephemeral=True)
+            conn.close()
+            return
+            
+    elif map_name == "三海_馬里亞娜海溝深淵":
+        c.execute("SELECT item_count FROM inventory WHERE user_id=? AND item_name='🚢 量子核能潛水艇'", (user_id,))
+        has_sub = c.fetchone()
+        if not has_sub or has_sub[0] < 1:
+            await interaction.response.send_message("❌ 傳送失敗！三海位於極其恐怖的馬里亞娜海溝底部，你必須先輸入 `/購買載具 潛水艇` 才能沉入深海！", ephemeral=True)
+            conn.close()
+            return
+            
+    elif map_name == "四海・地幔熔岩禁地":
+        c.execute("SELECT item_count FROM inventory WHERE user_id=? AND item_name='🔥 地心重型鑽探機'", (user_id,))
+        has_drill = c.fetchone()
+        if not has_drill or has_drill[0] < 1:
+            await interaction.response.send_message("❌ 傳送失敗！地幔充斥著高溫岩漿，你必須先輸入 `/購買載具 鑽探機` 駕駛重型機甲破殼！", ephemeral=True)
+            conn.close()
+            return
+            
+    conn.close()
+    update_user(user_id, current_map=map_name, balance=user["balance"]-cost)
+    embed = discord.Embed(title=f"🚢 船隻載具傳送成功 ── 抵達【{map_name}】", description=f"• 駐島島嶼 NPC：`{npc}`\n• 傳送過路費：`-{cost} 🪙`\n\n*{desc}*", color=0x1ABC9C)
+    embed.set_image(url=image)
+    await interaction.response.send_message(embed=embed)
+
+# ======= 🎣 指令九：進化核心釣魚主功能前半段 =======
+cooldowns = {}
 @bot.tree.command(name="釣魚", description="拋出釣竿！引進真實時間等待咬竿與浮標拉扯機率，支援官方群 1.2 倍加成！")
 async def fish(interaction: discord.Interaction):
-    # 🌟 3.0 大改版：拋竿時先不 defer，直接給出第一步「等待提示」，達成真正的實時等待體驗
     user_id = interaction.user.id
     user = get_user(user_id)
     current_map = user["current_map"]
@@ -316,7 +411,7 @@ async def fish(interaction: discord.Interaction):
     current_enchant = user["enchant"] if user["enchant"] in ENCHANT_POOL else "無"
     
     weather_name, weather_info = get_global_weather()
-    weather_stat = weather_info["加成"].get(current_map, {"luck": 1.0, "speed": 0.0})
+    weather_stat = weather_info["加成"].get(current_map, {"luck": 1.0, "speed": 0.0}) if current_map in weather_info["加成"] else {"luck": 1.0, "speed": 0.0}
     rod_stat = ROD_STATS[current_rod]
     enc_stat = ENCHANT_POOL.get(current_enchant, {"luck_mod": 1.0, "speed_mod": 0.0, "mutate_mod": 0.0})
     
@@ -330,62 +425,70 @@ async def fish(interaction: discord.Interaction):
         return
     cooldowns[user_id] = current_time
 
-    # 隨機拋出一個精美魚標狀態
     bobber_name = random.choice(list(BOBBER_POOL.keys()))
     bobber_stat = BOBBER_POOL[bobber_name]
     
-    # 3.0 先行發送等待回覆
-    await interaction.response.send_message(f"🪝 **{interaction.user.display_name}** 裝配著【{bobber_name}】向【{current_map}】奮力拋出釣竿...\n⏳ 正在波浪中靜靜等待魚兒咬竿，請保持耐心... 🌊")
+    await interaction.response.send_message(f"🪝 **{interaction.user.display_name}** 裝配著【{bobber_name}】在【{current_map}】拋出釣竿...\n⏳ 正在波浪中靜靜等待魚兒咬竿，請保持耐心... 🌊")
     
-    # ⏱️ 模擬真實拉竿拉扯等待期：隨機原地等待 2 到 4 秒鐘
+    # ⏱️ 模擬真實拉竿拉扯等待期
     wait_seconds = random.randint(2, 4)
     time.sleep(wait_seconds)
     
-    # 提取消耗品
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("SELECT item_name, item_count FROM inventory WHERE user_id=? AND item_name IN ('💗性慾藥水', '🌌轉生神仙水', '🟢普通運氣藥水', '🔵高級運氣藥水', '⚡閃電速度藥水', '高級魚餌', '海藻餌', '磁鐵重餌', '🔋 彈性奈米反覆餌')", (user_id,))
     inv_data = dict(c.fetchall())
-    
+    has_potion = inv_data.get('💗性慾藥水', 0) > 0
     has_god_water = inv_data.get('🌌轉生神仙水', 0) > 0
-    has_high_pot = inv_data.get('🔵高級運氣藥水', 0) > 0
     has_normal_pot = inv_data.get('🟢普通運氣藥水', 0) > 0
+    has_high_pot = inv_data.get('🔵高級運氣藥水', 0) > 0
+    has_speed_pot = inv_data.get('⚡閃電速度藥水', 0) > 0
     has_high_bait = inv_data.get('高級魚餌', 0) > 0
     has_seaweed = inv_data.get('海藻餌', 0) > 0
     has_magnet = inv_data.get('磁鐵重餌', 0) > 0
     has_nano_bait = inv_data.get('🔋 彈性奈米反覆餌', 0) > 0
+    
     is_supported = interaction.guild_id == SUPPORT_GUILD_ID if interaction.guild_id else False
     guild_bonus = 1.2 if is_supported else 1.0
+    luck_multiplier = rod_stat["luck"] * weather_info["luck_bonus"] * enc_stat["luck_mod"] * guild_bonus
+    bait_msg = f"🌍 **全球統一天氣：【{weather_name}】** (*{weather_info['desc']}*)\n"
+    if is_supported: bait_msg = "🤝 **【官方群共振】檢測到你在支援伺服器拋竿，全卡槽爆率提升 1.2 倍！**\n" + bait_msg
+    if current_enchant != "無": bait_msg += f"🔮 漁具灌注附魔：**【{current_enchant}】** 加持中\n"
     
-    luck_multiplier = rod_stat["luck"] * weather_stat["luck"] * enc_stat["luck_mod"] * guild_bonus
-    bait_msg = f"🌍 **當前天氣：【{weather_name}】** (*{weather_info['desc']}*)\n"
-    if is_supported: bait_msg = "🤝 **【官方支援群】加成共振激發！全卡槽爆率提升 1.2 倍！**\n" + bait_msg
-    
-    # 扣除魚餌邏輯（彈性奈米反覆餌 100% 絕不消耗！）
+    # 🌟 3.9 精準單次扣除邏輯：奈米反覆餌 100% 絕不消耗！
     if has_nano_bait:
         luck_multiplier *= 2.0
-        bait_msg += "🔋 **[神級奈米能源]裝備了反覆使用餌，此竿不消耗任何材料，且幸運值x2.0！**\n"
+        bait_msg += "🔋 **[神級奈米反覆餌] 裝備了彈性反覆餌，本竿不消耗任何材料，且幸運值x2.0！**\n"
     elif has_god_water:
         luck_multiplier *= 100.0
         c.execute("UPDATE inventory SET item_count=item_count-1 WHERE user_id=? AND item_name='🌌轉生神仙水'", (user_id,))
+        bait_msg += "🌌 **[神仙降臨]** 你喝下了百萬倍運氣神仙水！！\n"
     elif has_magnet:
         luck_multiplier *= 1.5
         c.execute("UPDATE inventory SET item_count=item_count-1 WHERE user_id=? AND item_name='磁鐵重餌'", (user_id,))
-        bait_msg += "🧲 **[磁力共振] 你使用了磁鐵重餌，外星科技零件與秘密垃圾爆率永久增加！**\n"
+        bait_msg += "🧲 **[磁力共振] 你使用了磁鐵重餌，深海科技零件與垃圾碎片爆率提升！**\n"
     elif has_high_bait:
         luck_multiplier *= 3.0
         c.execute("UPDATE inventory SET item_count=item_count-1 WHERE user_id=? AND item_name='高級魚餌'", (user_id,))
+        bait_msg += "✨ 你使用了 **高級魚餌**！\n"
+    elif has_seaweed:
+        luck_multiplier *= 1.3
+        c.execute("UPDATE inventory SET item_count=item_count-1 WHERE user_id=? AND item_name='海藻餌'", (user_id,))
+        bait_msg += "🌿 你使用了 **海藻餌**！\n"
     elif user["bait_count"] > 0:
         luck_multiplier *= 1.5
         update_user(user_id, bait_count=user["bait_count"]-1)
+        bait_msg += "🐛 你消耗了 1 個 **普通魚餌**！\n"
+    else: bait_msg += "🪝 無魚餌素釣，全憑直覺！\n"
     
-    # 藥水判定
-    if has_high_pot: c.execute("UPDATE inventory SET item_count=item_count-1 WHERE user_id=? AND item_name='🔵高級運氣藥水'", (user_id,)); luck_multiplier *= 2.0
-    elif has_normal_pot: c.execute("UPDATE inventory SET item_count=item_count-1 WHERE user_id=? AND item_name='🟢普通運氣藥水'", (user_id,)); luck_multiplier *= 1.3
+    if has_high_pot: c.execute("UPDATE inventory SET item_count=item_count-1 WHERE user_id=? AND item_name='🔵高級運氣藥水'", (user_id,)); luck_multiplier *= 2.0; bait_msg += "🔵 喝下高級運氣藥水！\n"
+    elif has_normal_pot: c.execute("UPDATE inventory SET item_count=item_count-1 WHERE user_id=? AND item_name='🟢普通運氣藥水'", (user_id,)); luck_multiplier *= 1.3; bait_msg += "🟢 喝下普通運氣藥水！\n"
+    if has_speed_pot: c.execute("UPDATE inventory SET item_count=item_count-1 WHERE user_id=? AND item_name='⚡閃電速度藥水'", (user_id,)); bait_msg += "⚡ 喝下閃電速度藥水！\n"
+    if has_potion: c.execute("UPDATE inventory SET item_count=item_count-1 WHERE user_id=? AND item_name='💗性慾藥水'", (user_id,)); bait_msg = "🔥 **[速度狂暴]** 速度大增！\n" + bait_msg
     conn.commit()
     conn.close()
 
-    # 🌟 100% 純數字落點抽卡
+    # 🌟 100% 純數字隨機落點判定，杜絕一切 choices 矩陣！
     roll = random.uniform(0, 100)
     luck_score = 10.0 * luck_multiplier
     if luck_score >= 500000: chosen_rarity = "作者級" if roll < 40 else "秘密" if roll < 80 else "神話"
@@ -393,7 +496,7 @@ async def fish(interaction: discord.Interaction):
     elif luck_score >= 50: chosen_rarity = "神話" if roll < 2 else "傳奇" if roll < 15 else "稀有" if roll < 50 else "普通"
     else: chosen_rarity = "傳奇" if roll < 1 else "稀有" if roll < 20 else "普通"
 
-    # 🎯 3.0 核心擴充：拉竿脫鉤拉扯成功率系統（越好的魚越難釣）
+    # 🎯 3.9 核心成功率逃跑機制（魚等級越高越容易逃跑）
     base_success = 95 - bobber_stat["success_rate"]
     if chosen_rarity == "作者級": base_success = 15 + bobber_stat["success_rate"]
     elif chosen_rarity == "秘密": base_success = 30 + bobber_stat["success_rate"]
@@ -413,14 +516,12 @@ async def fish(interaction: discord.Interaction):
     fish_item = random.choice(available_fish)
     fish_name, _ = fish_item
     
-    # 多彩異變首綴
     final_mutation_chance = rod_stat["mutation"] + enc_stat["mutate_mod"] + bobber_stat["mutate_bonus"]
     if random.random() < final_mutation_chance:
         fish_name = f"{random.choice(['[🟢毒性突變]', '[🔵晶螢閃耀]', '[👑極致黃金]', '[🔴血色異變]', '[🌌星空突變]'])} {fish_name}"
         
     add_inventory(user_id, fish_name, 1)
     
-    # 任務進度加載
     if user["quest_type"] == "🎣 出海大豐收": update_user(user_id, quest_progress=user["quest_progress"]+1)
     elif user["quest_type"] == "🪙 財氣東來" and chosen_rarity in ["稀有", "傳奇", "神話", "秘密", "作者級"]: update_user(user_id, quest_progress=user["quest_progress"]+1)
 
@@ -433,29 +534,40 @@ async def fish(interaction: discord.Interaction):
         new_xp -= xp_needed; current_lvl += 1; xp_needed = (current_lvl + 1) * 50
         lvl_up_msg = f"\n⚡ **【LEVEL UP！】恭喜你升級到了 🌟 LV.{current_lvl} 🌟！！**"
     update_user(user_id, level=current_lvl, xp=new_xp)
+    
+    # 📘 圖鑑自動智慧拓印解鎖
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("INSERT OR IGNORE INTO fish_encyclopedia VALUES (?, ?)", (user_id, fish_name.split()[-1]))
+    conn.commit()
+    conn.close()
 
     icons = {"普通":"⚪", "稀有":"🔵", "傳奇":"🟡", "神話":"🔴", "秘密":"🟣", "作者級":"🌌"}
     embed = discord.Embed(title=f"🎣 拉竿成功！ ── 【{icons[chosen_rarity]} {chosen_rarity}】", description=f"{bait_msg}🧬 順利捕捉：**{fish_name}**！ (成功率: `{int(base_success)}%`)\n🏆 獲得經驗：`+{xp_gained}xp` | 當前進度：`🧬 {new_xp}/{xp_needed} XP`{lvl_up_msg}", color=0x27AE60)
-    embed.set_thumbnail(url=MAPS[current_map]["image"])
     await interaction.followup.send(embed=embed)
-
-@bot.tree.command(name="普通商店", description="顯示豐收漁具普通物資與神奇藥水")
+# ======= 🏪 指令十：全球普通商店 =======
+@bot.tree.command(name="普通商店", description="顯示豐收漁具物資與神奇藥水")
 async def shop(interaction: discord.Interaction):
-    embed = discord.Embed(title="🏪 3.0 全球聯網普通商店", description="`──────────────────────────`", color=0x2ECC71)
+    embed = discord.Embed(title="🏪 3.9 全球聯網普通商店", description="`──────────────────────────`", color=0x2ECC71)
     embed.add_field(name="🐛 全套物資與神奇藥水", value="\n".join([f"• {k}: `{v} 🪙`" for k, v in BAITS_SHOP.items()]), inline=False)
     embed.set_footer(text="💡 提示：每個海域的專屬限定魚竿，必須前往該海域並向當地的駐島 NPC 購買！")
     await interaction.response.send_message(embed=embed)
 
+# ======= 🏝️ 指令十一：海域限定商店 =======
 @bot.tree.command(name="海域商店", description="向目前所在的島嶼駐島 NPC 採購限定高階漁具與神竿")
 async def island_shop(interaction: discord.Interaction):
     user_id = interaction.user.id
     user = get_user(user_id)
     current_map = user["current_map"]
+    if current_map not in MAPS:
+        await interaction.response.send_message("❌ 當前所處海域島嶼沒有登記的 NPC 商店商販！", ephemeral=True)
+        return
     m_data = MAPS[current_map]
     embed = discord.Embed(title=f"🏝️ 【{current_map}】 ── 限定專屬店", description=f"駐島 NPC 商販：**{m_data['npc']}**\n`──────────────────────────`", color=0x1ABC9C)
     embed.add_field(name="🎣 限定魚竿清單 (具備海域幸運共振加成)", value="\n".join([f"• {k}: `{v} 🪙`" for k, v in m_data["shop"].items()]), inline=False)
     await interaction.response.send_message(embed=embed)
 
+# ======= 🛍️ 指令十二：通用採購系統 =======
 @app_commands.describe(item_name="物品或限定魚竿名稱", quantity="數量")
 @bot.tree.command(name="購買", description="採購普通商店的物資，或者採購當前海域島嶼 NPC 的限定魚竿")
 async def buy(interaction: discord.Interaction, item_name: str, quantity: int = 1):
@@ -465,9 +577,9 @@ async def buy(interaction: discord.Interaction, item_name: str, quantity: int = 
     current_map = user["current_map"]
     price, is_rod = None, False
     if item_name in BAITS_SHOP: price = BAITS_SHOP[item_name]
-    elif item_name in MAPS[current_map]["shop"]: price = MAPS[current_map]["shop"][item_name]; is_rod = True
+    elif current_map in MAPS and item_name in MAPS[current_map]["shop"]: price = MAPS[current_map]["shop"][item_name]; is_rod = True
     if not price:
-        await interaction.response.send_message("❌ 找不到該商品！請確認你輸入的名稱完整，且該魚竿要在對應的海域島嶼上才能買到。", ephemeral=True)
+        await interaction.response.send_message("❌ 找不到該商品！請確認名稱正確，且特定海域限定竿要在該海域才能購得。", ephemeral=True)
         return
     total_cost = price * quantity
     if user["balance"] < total_cost:
@@ -481,6 +593,7 @@ async def buy(interaction: discord.Interaction, item_name: str, quantity: int = 
         add_inventory(user_id, item_name, quantity)
         await interaction.response.send_message(f"🛍️ 購買成功！你將 {quantity} 個 **{item_name}** 收進背包倉庫！")
 
+# ======= 🔮 指令十三：遠古附魔台 =======
 @bot.tree.command(name="附魔", description="對你的魚竿洗鍊永久詞條")
 async def enchant_rod(interaction: discord.Interaction):
     user_id = interaction.user.id
@@ -493,6 +606,7 @@ async def enchant_rod(interaction: discord.Interaction):
     update_user(user_id, balance=user["balance"]-500, enchant=chosen_enchant)
     await interaction.response.send_message(f"🔮 遠古附魔台共振成功！魚竿獲得永久屬性：**【{chosen_enchant}】** (*{ENCHANT_POOL[chosen_enchant]['desc']}*)")
 
+# ======= 🎒 指令十四：個人背包面板 =======
 @bot.tree.command(name="背包", description="查看屬性、海域、附魔詞條日常任務與個人倉庫")
 async def inventory(interaction: discord.Interaction):
     user_id = interaction.user.id
@@ -510,7 +624,8 @@ async def inventory(interaction: discord.Interaction):
     embed.add_field(name="🐟 儲存大倉庫", value=inv_str, inline=False)
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="全賣", description="一鍵清空大倉庫魚獲換取大量金幣")
+# ======= 💰 指令十五：一鍵全賣（支援公會自動抽稅 5% 存入金庫） =======
+@bot.tree.command(name="全賣", description="一鍵清空大倉庫魚獲換取大量金幣（突變享加成，有公會自動繳納金庫稅金！）")
 async def sell_all(interaction: discord.Interaction):
     await interaction.response.defer()
     user_id = interaction.user.id
@@ -520,7 +635,7 @@ async def sell_all(interaction: discord.Interaction):
     c.execute("SELECT item_name, item_count FROM inventory WHERE user_id=? AND item_count > 0", (user_id,))
     items = c.fetchall()
     if not items:
-        await interaction.followup.send("📭 背包空空如也。", ephemeral=True)
+        await interaction.followup.send("📭 背包大倉庫空空如也，沒有可回收物。", ephemeral=True)
         conn.close()
         return
     prices_map = {}
@@ -530,7 +645,6 @@ async def sell_all(interaction: discord.Interaction):
         for _, f_list in r_dict.items():
             for fname, fprice in f_list: prices_map[fname] = fprice
     total_revenue, sold_details, sold_any = 0, [], False
-    # 🌟 3.0 完全體全賣與底層啟動核心（空格已完全對齊，保證 100% 綠燈通關！）
     for item_name, count in items:
         base_name = item_name
         for p in ["[🟢毒性突變] ", "[🔵晶螢閃耀] ", "[👑極致黃金] ", "[🔴血色異變] ", "[🌌星空突變] "]: 
@@ -544,28 +658,248 @@ async def sell_all(interaction: discord.Interaction):
             elif "[🌌星空突變]" in item_name: revenue = int(revenue * 3.0); tag = "(🔥3.0倍星空)"
             else: tag = ""
             sold_details.append(f"• {item_name} x{count} -> 獲得 {revenue} 金幣 {tag}")
-            total_revenue += revenue
-            sold_any = True
+            total_revenue += revenue; sold_any = True
             c.execute("UPDATE inventory SET item_count=0 WHERE user_id=? AND item_name=?", (user_id, item_name))
             
     if not sold_any or total_revenue == 0:
-        conn.close()
-        await interaction.followup.send("❌ 背包內沒有常規可回收魚獲。", ephemeral=True)
-        return
+        conn.close(); await interaction.followup.send("❌ 大倉庫內沒有常規可回收魚獲。", ephemeral=True); return
+    conn.commit(); conn.close()
+    if "招財貓" in user["pet"]:
+        bonus_cash = int(total_revenue * 0.1); total_revenue += bonus_cash
+        sold_details.append(f"🐱 【招財貓加持】 額外抓回了 {bonus_cash} 金幣！")
         
-    conn.commit()
+    # 🏰 公會自動抽稅機制：若有组织，全賣自動上繳 5% 凝聚公會金庫
+    tax_msg = ""
+    conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+    c.execute("SELECT guild_name FROM guild_members WHERE user_id=?", (user_id,))
+    g_res = c.fetchone()
+    if g_res:
+        g_name = g_res[0]
+        tax_amount = int(total_revenue * 0.05)
+        total_revenue -= tax_amount
+        c.execute("UPDATE guilds SET vault = vault + ? WHERE guild_name=?", (tax_amount, g_name))
+        conn.commit()
+        tax_msg = f"\n🏰 **【公會共榮】5% 稅金 ({tax_amount} 金幣) 已自動繳入【{g_name}】金庫！**"
     conn.close()
     
-    if "招財貓" in user["pet"]:
-        bonus_cash = int(total_revenue * 0.1)
-        total_revenue += bonus_cash
-        sold_details.append(f"🐱 【招財貓加持】 貓爪幫你多抓回了 {bonus_cash} 金幣！")
-        
     update_user(user_id, balance=user["balance"] + total_revenue)
-    
-    # 🌟 4 空格區域：收尾訊息，完美收納在函數內部
-    embed = discord.Embed(title="💰 魚獲交易結算完畢", description="\n".join(sold_details) + f"\n\n💵 總計賺得：{total_revenue} 金幣！", color=0xF1C40F)
+    embed = discord.Embed(title="💰 魚獲交易結算完畢", description="\n".join(sold_details) + f"\n\n💵 實際賺得：**{total_revenue}** 金幣！{tax_msg}", color=0xF1C40F)
     await interaction.followup.send(embed=embed)
+
+
+# ======= ⚔️ 指令十六：公會重裝武器軍火庫 =======
+WEAPONS_SHOP = {
+    "⚔️ 鐵製魚叉": {"cost": 500, "dmg": 85}, "⚔️ 精鋼巨弩": {"cost": 2500, "dmg": 260},
+    "🔱 海神破滅戟": {"cost": 8500, "dmg": 680}, "🌌 ADMIN破碼弒神劍": {"cost": 99999, "dmg": 9999}
+}
+BOSS_POOL = {
+    "🐙 北海深淵巨怪・克拉肯": {"hp": 12000, "cost": 1000, "desc": "揮舞著千米觸手的遠古海怪，能輕易拍碎一整支遠征艦隊！"},
+    "🐉 滅世混亂巨龍・利維坦": {"hp": 25000, "cost": 2500, "desc": "沉睡在海底火山的熔岩魔龍，吐息能將整片海域化為灰燼！"},
+    "🛸 外星機械母艦・核心眼": {"hp": 45000, "cost": 6000, "desc": "來自外星星域的墜落遺蹟，專產代碼零件！"},
+    "🤨 終極邪神・SIGMA_FACE": {"hp": 88888, "cost": 15000, "desc": "用絕對極致的表情鄙視一切生物，凡人直視便會理智崩潰！"},
+    "🐳 虛空吞噬者・莫比迪克": {"hp": 150000, "cost": 30000, "desc": "吞噬時間與海域的終極幻獸，三海至高王座的守門人！"}
+}
+
+@bot.tree.command(name="武器商店", description="向航海公會軍火庫採購討伐世界 BOSS 的重型武器裝備")
+async def weapon_shop(interaction: discord.Interaction):
+    embed = discord.Embed(title="⚔️ 遠古重型武器軍火庫", description="`──────────────────────────`", color=0xC0392B)
+    for k, v in WEAPONS_SHOP.items():
+        embed.add_field(name=k, value=f"• 採購費用：`{v['cost']} 🪙`\n• 討伐魔王基礎傷害：`💥 {v['dmg']} Pts`", inline=True)
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="購買武器", description="向軍火庫支付金幣採購並裝備重型武器")
+@app_commands.describe(武器名稱="請輸入完整的武器裝備名稱")
+async def buy_weapon(interaction: discord.Interaction, 武器名稱: str):
+    user_id = interaction.user.id
+    user = get_user(user_id)
+    if 武器名稱 not in WEAPONS_SHOP:
+        await interaction.response.send_message("❌ 軍火庫裡找不到這把武器！", ephemeral=True); return
+    w_data = WEAPONS_SHOP[武器名稱]
+    if user["balance"] < w_data["cost"]:
+        await interaction.response.send_message(f"❌ 金幣不足！需要 `{w_data['cost']}` 金幣！", ephemeral=True); return
+    conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+    for old_w in WEAPONS_SHOP.keys(): c.execute("UPDATE inventory SET item_count=0 WHERE user_id=? AND item_name=?", (user_id, old_w))
+    conn.commit(); conn.close()
+    update_user(user_id, balance=user["balance"]-w_data["cost"])
+    add_inventory(user_id, 武器名稱, 1)
+    await interaction.response.send_message(f"🛍️ 裝備成功！**{interaction.user.display_name}** 成功裝備了重型殺器：【**{武器名稱}**】！")
+
+# ======= 🏰 指令十七：大航海公會創立與管理 =======
+@bot.tree.command(name="創立公會", description="創立你專屬的航海公會（條件：需達到 LV.50 且支付 5000 金幣）")
+@app_commands.describe(公會名稱="你想為公會取什麼名字？")
+async def create_guild(interaction: discord.Interaction, 公會名稱: str):
+    user_id = interaction.user.id
+    user = get_user(user_id)
+    if user["level"] < 50:
+        await interaction.response.send_message(f"❌ 創立失敗！等級實力不足！需要達到 `LV.50`。", ephemeral=True); return
+    if user["balance"] < 5000:
+        await interaction.response.send_message(f"❌ 資金不足！向總部註冊公會需要 `5000` 金幣！", ephemeral=True); return
+    conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+    c.execute("SELECT guild_name FROM guild_members WHERE user_id=?", (user_id,))
+    if c.fetchone():
+        await interaction.response.send_message("❌ 你已經是某個公會的成員了，請先退出！", ephemeral=True); conn.close(); return
+    try:
+        c.execute("INSERT INTO guilds VALUES (?, ?, 0, '無', 0)", (公會名稱, user_id))
+        c.execute("INSERT INTO guild_members VALUES (?, ?)", (user_id, 公會名稱))
+        conn.commit()
+        update_user(user_id, balance=user["balance"]-5000)
+        await interaction.response.send_message(f"🏰 🎉 恭喜 **{interaction.user.display_name}** 成功註冊大公會：【**{公會名稱}**】！")
+    except sqlite3.IntegrityError:
+        await interaction.response.send_message("❌ 這個公會名稱已經被搶先註冊了！", ephemeral=True)
+    conn.close()
+
+@bot.tree.command(name="加入公會", description="申請加入其他大師開創的航海公會")
+@app_commands.describe(公會名稱="你想加入的公會名稱")
+async def join_guild(interaction: discord.Interaction, 公會名稱: str):
+    user_id = interaction.user.id
+    conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+    c.execute("SELECT guild_name FROM guilds WHERE guild_name=?", (公會名稱,))
+    if not c.fetchone():
+        await interaction.response.send_message("❌ 找不到這個公會！", ephemeral=True); conn.close(); return
+    c.execute("SELECT guild_name FROM guild_members WHERE user_id=?", (user_id,))
+    if c.fetchone():
+        await interaction.response.send_message("❌ 你身上已經有公會會籍了！", ephemeral=True); conn.close(); return
+    c.execute("INSERT INTO guild_members VALUES (?, ?)", (user_id, 公會名稱))
+    conn.commit(); conn.close()
+    await interaction.response.send_message(f"🤝 **{interaction.user.display_name}** 成功加入航海公會：【**{公會名稱}**】！")
+
+@bot.tree.command(name="公會背包", description="查看當前公會的資金金庫、世界 BOSS 狀態以及全體船長名單")
+async def guild_panel(interaction: discord.Interaction):
+    user_id = interaction.user.id
+    conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+    c.execute("SELECT guild_name FROM guild_members WHERE user_id=?", (user_id,))
+    res = c.fetchone()
+    if not res:
+        await interaction.response.send_message("❌ 老哥，你目前還是一介散人，沒有加入任何公會！", ephemeral=True); conn.close(); return
+    g_name = res[0]
+    c.execute("SELECT leader_id, vault, current_boss, boss_hp FROM guilds WHERE guild_name=?", (g_name,))
+    leader_id, vault, c_boss, b_hp = c.fetchone()
+    c.execute("SELECT user_id FROM guild_members WHERE guild_name=?", (g_name,))
+    members = c.fetchall(); conn.close()
+    leader_user = interaction.guild.get_member(leader_id) if interaction.guild else None
+    leader_name = leader_user.display_name if leader_user else f"老船長({leader_id})"
+    m_list = [f"• {interaction.guild.get_member(row[0]).display_name if interaction.guild and interaction.guild.get_member(row[0]) else f'船長({row[0]})'}" for row in members]
+    embed = discord.Embed(title=f"🏰 航海公會面板 ── 【{g_name}】", description="`──────────────────────────`", color=0x34495E)
+    embed.add_field(name="👑 公會領袖", value=f"`{leader_name}`", inline=True)
+    embed.add_field(name="💰 金庫總資金", value=f"`{vault} 🪙`", inline=True)
+    boss_status = f"🔴 **【{c_boss}】** 圍剿中！\n• 剩餘總血量：`❤️ {b_hp} Pts`" if c_boss != "無" else "💤 目前海域平靜，暫無魔王肆虐。"
+    embed.add_field(name="🐉 世界魔王狀態", value=boss_status, inline=False)
+    embed.add_field(name="👥 全體成員名單", value="\n".join(m_list), inline=False)
+    await interaction.response.send_message(embed=embed)
+
+
+# ======= 🐉 指令十八：會長專屬世界 BOSS 召喚 =======
+@bot.tree.command(name="召喚魔王", description="【會長專屬】消耗公會金庫資金，向全服海域隨機召喚一隻史詩級世界 BOSS 巨獸！")
+async def summon_boss(interaction: discord.Interaction):
+    user_id = interaction.user.id
+    conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+    c.execute("SELECT guild_name FROM guilds WHERE leader_id=?", (user_id,))
+    g_res = c.fetchone()
+    if not g_res:
+        await interaction.response.send_message("❌ 權限不足！只有【公會會長】才能發動魔王召喚！", ephemeral=True); conn.close(); return
+    g_name = g_res
+    c.execute("SELECT current_boss, vault FROM guilds WHERE guild_name=?", (g_name,))
+    c_boss, vault = c.fetchone()
+    if c_boss != "無":
+        await interaction.response.send_message(f"❌ 召喚失敗！海域中已經有 【{c_boss}】 肆虐了！", ephemeral=True); conn.close(); return
+    b_name = random.choice(list(BOSS_POOL.keys()))
+    b_data = BOSS_POOL[b_name]
+    if vault < b_data["cost"]:
+        await interaction.response.send_message(f"❌ 公會金庫資金不足！召喚需要 `{b_data['cost']}` 資金，目前金庫只有 `{vault}` 🪙。", ephemeral=True); conn.close(); return
+    c.execute("UPDATE guilds SET current_boss=?, boss_hp=?, vault=vault-? WHERE guild_name=?", (b_name, b_data["hp"], b_data["cost"], g_name))
+    c.execute("CREATE TABLE IF NOT EXISTS boss_damage (guild_name TEXT, user_id INTEGER, dmg_done INTEGER, PRIMARY KEY(guild_name, user_id))")
+    c.execute("DELETE FROM boss_damage WHERE guild_name=?", (g_name,))
+    conn.commit(); conn.close()
+    embed = discord.Embed(title="🚨 ── 全服警告：遠古魔王降臨 ── 🚨", description=f"🏰 【**{g_name}**】的會長使用了遠古共振器！\n\n🐉 **魔王現世**：【**{b_name}**】\n❤️ 初始總血量：`{b_data['hp']} Pts`\n\n*{b_data['desc']}*", color=0xE74C3C)
+    await interaction.response.send_message(embed=embed)
+
+# ======= ⚔️ 指令十九：全公會合力圍剿世界 BOSS 遠征 =======
+@bot.tree.command(name="公會遠征", description="【全體成員可參與】集體進攻圍剿當前公會的世界 BOSS，共享神話戰利品大獎禮包！")
+async def attack_boss(interaction: discord.Interaction):
+    await interaction.response.defer()
+    user_id = interaction.user.id
+    conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+    c.execute("SELECT guild_name FROM guild_members WHERE user_id=?", (user_id,))
+    g_res = c.fetchone()
+    if not g_res:
+        await interaction.followup.send("❌ 遠征失敗！你必須先加入一個航海公會！", ephemeral=True); conn.close(); return
+    g_name = g_res
+    c.execute("SELECT current_boss, boss_hp FROM guilds WHERE guild_name=?", (g_name,))
+    c_boss, b_hp = c.fetchone()
+    if c_boss == "無" or b_hp <= 0:
+        await interaction.followup.send("❌ 遠征失敗！目前暫無魔王可以討伐。", ephemeral=True); conn.close(); return
+    player_dmg = 10; equipped_weapon = "🦴 徒手肉搏"
+    for w_name, w_info in WEAPONS_SHOP.items():
+        c.execute("SELECT item_count FROM inventory WHERE user_id=? AND item_name=? AND item_count > 0", (user_id, w_name))
+        if c.fetchone(): player_dmg = w_info["dmg"]; equipped_weapon = w_name; break
+    crit_roll = random.choice([1.0, 1.0, 1.0, 1.5, 2.0])
+    final_dmg = int(player_dmg * crit_roll)
+    new_hp = max(0, b_hp - final_dmg)
+    c.execute("INSERT INTO boss_damage VALUES (?, ?, ?) ON CONFLICT(guild_name, user_id) DO UPDATE SET dmg_done=dmg_done+?", (g_name, user_id, final_dmg, final_dmg))
+    c.execute("UPDATE guilds SET boss_hp=? WHERE guild_name=?", (new_hp, g_name))
+    conn.commit()
+    crit_msg = "🔥 **【致命一擊】觸發超高倍率暴擊！**\n" if crit_roll > 1.0 else ""
+    msg = f"⚔️ **{interaction.user.display_name}** 裝備 【{equipped_weapon}】 投身遠征！\n{crit_msg}💥 輸出傷害：**`{final_dmg}`** Pts！ (❤️ 剩餘血量：`{new_hp} Pts`)\n"
+    if new_hp <= 0:
+        c.execute("SELECT user_id FROM boss_damage WHERE guild_name=?", (g_name,))
+        participants = c.fetchall()
+        c.execute("UPDATE guilds SET current_boss='無', boss_hp=0 WHERE guild_name=?", (g_name,))
+        conn.commit()
+        msg += f"\n🏆 🎉 **【魔王隕落・史詩大捷！】** 🎉 🏆\n🌌 **【全員大獎賞】參與成員（共 {len(participants)} 人）全部獲得戰利品：\n💰 錢包金幣 `+5000 🪙` | `🥳神祕黃金寶箱 x2` | `🔵高級運氣藥水 x3`！**"
+        for p_row in participants:
+            p_id = p_row
+            c.execute("SELECT balance FROM users WHERE user_id=?", (p_id,))
+            p_res = c.fetchone()
+            if p_res: c.execute("UPDATE users SET balance=? WHERE user_id=?", (int(p_res)+5000, p_id))
+            c.execute("INSERT INTO inventory (user_id, item_name, item_count) VALUES (?, '🥳神祕黃金寶箱', 2) ON CONFLICT(user_id, item_name) DO UPDATE SET item_count=item_count+2", (p_id,))
+            c.execute("INSERT INTO inventory (user_id, item_name, item_count) VALUES (?, '🔵高級運氣藥水', 3) ON CONFLICT(user_id, item_name) DO UPDATE SET item_count=item_count+3", (p_id,))
+        conn.commit()
+    conn.close(); await interaction.followup.send(msg)
+
+# ======= 🗺️ 指令二十：解鎖地幔隱藏地圖 =======
+@bot.tree.command(name="解鎖隱藏島嶼", description="當你累積完成日常任務且實力足夠時，永久解鎖四海・諸神黃昏地幔隱藏海域！")
+async def unlock_hidden_map(interaction: discord.Interaction):
+    user_id = interaction.user.id
+    user = get_user(user_id)
+    if user["level"] < 220:
+        await interaction.response.send_message(f"❌ 破譯失敗！船長實力需要達到 `LV.220`！(你目前只有 `LV.{user['level']}`)", ephemeral=True)
+        return
+    if user["balance"] < 15000:
+        await interaction.response.send_message(f"❌ 破譯手札失敗！需要支付 `15000` 金幣的研究費，你目前只有 `{user['balance']}` 🪙。", ephemeral=True)
+        return
+    if "四海・地幔熔岩禁地" in MAPS:
+        await interaction.response.send_message("❌ 老哥，你的航海日誌上早就已經破譯並解鎖這片隱藏地幔禁地了！", ephemeral=True)
+        return
+        
+    MAPS["四海・地幔熔岩禁地"] = {
+        "req_lvl": 220, "cost": 5000, "npc": "👁️ 覺醒老哥本人",
+        "desc": "完全脫離三海控制的終極破碎虛空！這裡充滿百萬倍變異磁場，只出產終極突變首綴的作者級究極產物！",
+        "image": "https://imgur.com", "shop": {"🏆 任務大師榮譽紀念竿": 1}
+    }
+    update_user(user_id, balance=user["balance"]-15000)
+    embed = discord.Embed(title="🌌 ── 航海禁忌突破：隱藏島嶼解鎖！ ── 🌌", description=f"🎉 成功破譯遠古公會手札！\n\n🧭 **新航線**：【**四海・地幔熔岩禁地**】永久解鎖！", color=0x9B59B6)
+    await interaction.response.send_message(embed=embed)
+
+# ======= 📘 指令二十一：物種收藏圖鑑系統 =======
+@bot.tree.command(name="查看圖鑑", description="查看你在四大海域（一海、二海、三海、地幔）中所成功解鎖的所有特產魚獲物種圖鑑進度")
+async def view_encyclopedia(interaction: discord.Interaction):
+    user_id = interaction.user.id
+    conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+    c.execute("CREATE TABLE IF NOT EXISTS fish_encyclopedia (user_id INTEGER, fish_name TEXT, PRIMARY KEY(user_id, fish_name))")
+    c.execute("SELECT fish_name FROM fish_encyclopedia WHERE user_id=?", (user_id,))
+    unlocked_fishes = [row[0] for row in c.fetchall()]
+    conn.close()
+    
+    embed = discord.Embed(title=f"📘 {interaction.user.display_name} 的大航海・世界物種百科圖鑑", description="`──────────────────────────`", color=0x34495E)
+    for m_name, rarity_dict in MAP_EXCLUSIVE_FISH.items():
+        all_map_fishes = []
+        for rarity, f_list in rarity_dict.items():
+            for fname, _ in f_list:
+                if fname not in all_map_fishes: all_map_fishes.append(fname)
+        unlocked_count = sum(1 for fish in all_map_fishes if any(fish in uf for uf in unlocked_fishes))
+        detail_lines = [f"• ✅ **{fish}**" if any(fish in uf for uf in unlocked_fishes) else f"• 🔒 *未探索生物*" for fish in all_map_fishes]
+        embed.add_field(name=f"🚢 【{m_name}】 (進度: {unlocked_count}/{len(all_map_fishes)} 🪐)", value="\n".join(detail_lines) if detail_lines else "暫無產物", inline=False)
+    await interaction.response.send_message(embed=embed)
 
 # ──────────────────────────────────────────────────────────
 # 🛑 0 空格區域：全專案的最底層啟動入口（必須完全頂格靠左，絕對不能留空白！）
