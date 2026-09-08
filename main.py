@@ -46,6 +46,24 @@ DB_FILE = "fishing_game.db"
 # 🌟 官方支援群 ID 設定（已完美綁定老哥的 Discord 伺服器！）
 SUPPORT_GUILD_ID = 1546517053719060642
 
+
+
+# ======= 🧭 指令：四大海域地理隔離旅遊大百科 (4 空格精準縮排) =======
+@bot.tree.command(name="地圖說明", description="單純詢問與查詢特定海域的解鎖等級、所需載具與限定產物圖鑑")
+@app_commands.describe(海域名稱="請選擇你想單純查詢的海域：一海、二海、三海、地幔")
+async def map_guide(interaction: discord.Interaction, 海域名稱: str):
+    # 🌟 1. 核心大數據：將四個海域的所有「解鎖、載具、產物」全部攤平，單純提供玩家詢問！
+    guides = {
+        "一海": {
+            "title": "🚢 一海・新手小池塘 (0 LV 起航點)", "cost": "免費傳送 🪙", "vehicle": "🦴 徒手即可進入 (素釣起步)", "npc": "👴 隔壁張老頭 (初級/高級魚竿)",
+            "fish": "• 普通：🐟 吳郭魚、🐠 小丑魚、🐡 氣噗噗河豚\n• 稀有：🐡 黃金河豚\n• 傳奇：👑 黃金鯉魚 (解鎖二海的核心材料！)", "color": 0x3498DB
+        },
+        "二海": {
+            "title": "🤿 二海・黃金珊瑚礁 (80 LV 珊瑚島)", "cost": "500 金幣 / 次 🪙", "vehicle": "🤿 科技耐壓潛水服 (需上交 5 隻黃金鯉魚解鎖)", "npc": "🦈 魚人阿龍 (深海魚竿/珊瑚礁共振竿)",
+            "fish": "• 普通：🐚 珊瑚礁小蝦、🐠 七彩霓虹魚、👟 舊鞋子\n• 稀有： Squid 大王烏賊、🦈 藍色鯊魚、🦀 帝王蟹\n• 傳奇：🔱 海神三叉戟\n• 神話：🧜‍♀️ 美人魚的眼淚\n• 秘密：🏐 一顆...排球?", "color": 0x1ABC9C
+        }
+    }
+
 # 🌟 3.9 終極防線：開機自動補齊 fish_encyclopedia 與 guilds 核心表，徹底砸碎保底吳郭魚魔咒！
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -248,38 +266,51 @@ async def check_quest(interaction: discord.Interaction):
         embed.add_field(name=f"🎯 委託目標：【{user['quest_type']}】 ({status})", value=f"• 目前進度：`{user['quest_progress']} / {user['quest_target']}`\n• 達成賞金：`{user['quest_reward']} 🪙`", inline=False)
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="接取任務", description="刷新並隨機接取一項今日公會懸賞日常")
+
+
+@bot.tree.command(name="接取任務", description="向航海公會刷新並接取今日隨機日常任務（全宇宙擴充 20 大趣味懸賞！）")
 async def accept_quest(interaction: discord.Interaction):
     user_id = interaction.user.id
     user = get_user(user_id)
     if user["quest_type"] != "無":
-        await interaction.response.send_message("❌ 你身上已經有日常任務在進行中了！", ephemeral=True)
+        await interaction.response.send_message("❌ 你身上已經有任務進行中了！請先完成或回報。", ephemeral=True)
         return
+        
+    # 🌟 3.9.9 終極大改版：20 大隨機趣味任務池（格式：任務名稱, 目標次數, 賞金金幣）
     q_pool = [
-        ("🎣 出海大豐收", 5, 450), # 釣魚 5 次
-        ("🪙 財氣東來", 3, 300),   # 釣到稀有以上 3 次
-        ("🔮 附魔大師", 1, 200)    # 進行一次附魔
+        # 🎣 基礎垂釣類
+        ("🎣 出海大豐收", 5, 450),       # 釣魚 5 次
+        ("🪙 財氣東來", 3, 300),         # 釣到稀有以上 3 次
+        ("🔮 附魔大師", 1, 200),         # 進行 1 次附魔洗鍊
+        ("👟 垃圾清除計畫", 2, 250),     # 釣到舊鞋子 2 次
+        ("🛍️ 揮金如土", 2, 250),          # 在商店購買任意道具 2 次
+        # 🚢 載具與海域探險類
+        ("🦀 珊瑚礁採集", 3, 400),       # 在二海成功拉竿 3 次
+        ("🦈 捕鯊終結者", 1, 600),       # 在二海釣到藍色鯊魚 1 次
+        ("⚙️ 深海科技回收", 1, 800),     # 在三海釣到外星科技零件 1 次
+        ("🐋 尋找莫比迪克", 2, 700),     # 在三海成功拉竿 2 次
+        ("🔥 地幔熔岩煉獄", 1, 1200),    # 在地幔熔岩禁地成功拉竿 1 次
+        # ⚔️ 公會副本類
+        ("🦁 魔王討伐軍", 3, 500),       # 參與公會遠征進攻 BOSS 達 3 次
+        ("👑 會長的認可", 1, 400),       # 公會金庫獲得一次你全賣的抽稅貢獻
+        ("🔨 公會奠基者", 1, 300),       # 查詢一次 /公會背包 面板
+        ("📦 補給箱快遞", 1, 350),       # 使用 /開箱 指令打開一個黃金寶箱
+        ("💸 船長互助會", 1, 200),       # 使用 /匯款 指令轉帳給其他玩家一次
+        # 💎 極致歐皇類
+        ("🧬 驚天異變紀元", 1, 850),     # 釣到任意一款 [✨突變首綴] 魚獲 1 次
+        ("🟡 傳奇垂釣家", 1, 750),       # 成功釣到「傳奇」或以上稀有度的魚獲 1 次
+        ("🔴 諸神黃昏淚", 1, 1500),      # 成功釣到「神話」或以上稀有度的至高產物 1 次
+        ("🌌 終極星空共振", 1, 2000),    # 運氣爆發！釣到帶有 [🌌星空突變] 的終極魚獲 1 次
+        ("🪝 頂級浮標大師", 1, 500)       # 拋竿時裝配到「綠光/藍海/狂暴」高階浮標 1 次
     ]
+    
     q_name, q_tar, q_rew = random.choice(q_pool)
     update_user(user_id, quest_type=q_name, quest_target=q_tar, quest_progress=0, quest_reward=q_rew)
-    await interaction.response.send_message(f"📋 成功接取日常懸賞！🎯 **【{q_name}】**：進度 `0 / {q_tar}`，回報可得 `{q_rew}` 金幣！")
-
-@bot.tree.command(name="回報任務", description="達成日常進度後回報領取日常獎金（有機率額外解鎖隱藏紀念神竿）")
-async def complete_quest(interaction: discord.Interaction):
-    user_id = interaction.user.id
-    user = get_user(user_id)
-    if user["quest_type"] == "無":
-        await interaction.response.send_message("❌ 你目前身上沒有任務！", ephemeral=True)
-        return
-    if user["quest_progress"] < user["quest_target"]:
-        await interaction.response.send_message(f"❌ 懸賞尚未達成！進度：`{user['quest_progress']}/{user['quest_target']}`", ephemeral=True)
-        return
-    gift_msg = ""
-    if random.random() < 0.05 and user["rod"] != "🏆 任務大師榮譽紀念竿":
-        update_user(user_id, rod="🏆 任務大師榮譽紀念竿")
-        gift_msg = "\n🔥 **【大師神蹟】公會長對你讚賞有加，特別賞賜限定【🏆 任務大師榮譽紀念竿】一根！**"
-    update_user(user_id, balance=user["balance"]+user["quest_reward"], quest_type="無", quest_target=0, quest_progress=0, quest_reward=0)
-    await interaction.response.send_message(f"🎉 日常任務回報完畢！獲得金幣 **`{user['quest_reward']}`** 點！{gift_msg}")
+    
+    embed = discord.Embed(title="📋 航海公會 ── 今日日常懸賞令", description=f"船長 **{interaction.user.display_name}**，你已成功接取今日公會委託！", color=0xF39C12)
+    embed.add_field(name=f"🎯 委託目標：【{q_name}】", value=f"• 需要數量/次數：`{q_tar}` 次\n• 達成賞金獎勵：`{q_rew} 🪙` 金幣", inline=False)
+    embed.set_footer(text="💡 提示：達成進度後，手動輸入 /回報任務 即可提領金幣與抽取神竿！")
+    await interaction.response.send_message(embed=embed)
 
 # ======= 💸 指令五：玩家金幣轉帳 =======
 @bot.tree.command(name="匯款", description="將金幣轉帳給伺服器內的其他玩家")
@@ -563,9 +594,37 @@ async def fish(interaction: discord.Interaction):
             fish_name = f"{random.choice(['[🟢毒性突變]', '[🔵晶螢閃耀]', '[👑極致黃金]', '[🔴血色異變]', '[🌌星空突變]'])} {fish_name}"
             
         add_inventory(user_id, fish_name, 1)
-        if user.get("quest_type", "無") == "🎣 出海大豐收": update_user(user_id, quest_progress=user["quest_progress"]+1)
-        elif user.get("quest_type", "無") == "🪙 財氣東來" and chosen_rarity in ["稀有", "傳奇", "神話", "秘密", "作者級"]: update_user(user_id, quest_progress=user["quest_progress"]+1)
-
+                # 🌟 3.9.9 智慧追蹤：在拉竿成功的瞬間，自動過濾並累加 8 大垂釣與海域探險任務進度！
+        q_type = user.get("quest_type", "無")
+        q_prog = user.get("quest_progress", 0)
+        
+        if q_type != "無":
+            if q_type == "🎣 出海大豐收":
+                update_user(user_id, quest_progress=q_prog + 1)
+            elif q_type == "🪙 財氣東來" and chosen_rarity in ["稀有", "傳奇", "神話", "秘密", "作者級"]:
+                update_user(user_id, quest_progress=q_prog + 1)
+            elif q_type == "👟 垃圾清除計畫" and "舊鞋子" in fish_name:
+                update_user(user_id, quest_progress=q_prog + 1)
+            elif q_type == "🧬 驚天異變紀元" and any(p in fish_name for p in ["[🟢毒性]", "[🔵晶螢]", "[👑極致]", "[🔴血色]", "[🌌星空]"]):
+                update_user(user_id, quest_progress=q_prog + 1)
+            elif q_type == "🟡 傳奇垂釣家" and chosen_rarity in ["傳奇", "神話", "秘密", "作者級"]:
+                update_user(user_id, quest_progress=q_prog + 1)
+            elif q_type == "🔴 諸神黃昏淚" and chosen_rarity in ["神話", "秘密", "作者級"]:
+                update_user(user_id, quest_progress=q_prog + 1)
+            elif q_type == "🌌 終極星空共振" and "[🌌星空突變]" in fish_name:
+                update_user(user_id, quest_progress=q_prog + 1)
+            elif q_type == "🪝 頂級浮標大師" and bobber_name != '⚪ 常規軟木浮標':
+                update_user(user_id, quest_progress=q_prog + 1)
+            elif q_type == "🦀 珊瑚礁採集" and current_map == "二海・黃金珊瑚礁":
+                update_user(user_id, quest_progress=q_prog + 1)
+            elif q_type == "🦈 捕鯊終結者" and "藍色鯊魚" in fish_name:
+                update_user(user_id, quest_progress=q_prog + 1)
+            elif q_type == "⚙️ 深海科技回收" and "外星科技零件" in fish_name:
+                update_user(user_id, quest_progress=q_prog + 1)
+            elif q_type == "🐋 尋找莫比迪克" and current_map == "三海_馬里亞娜海溝深淵":
+                update_user(user_id, quest_progress=q_prog + 1)
+            elif q_type == "🔥 地幔熔岩煉獄" and current_map == "四海・地幔熔岩禁地":
+                update_user(user_id, quest_progress=q_prog + 1)
         xp_gained = int(random.randint(15, 30) * guild_bonus)
         new_xp = int(user.get("xp", 0)) + xp_gained
         current_lvl = int(user.get("level", 0))
