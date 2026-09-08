@@ -400,30 +400,37 @@ async def teleport_map(interaction: discord.Interaction, map_name: str):
     embed.set_image(url=image)
     await interaction.response.send_message(embed=embed)
 
-# ======= 🎣 指令九：3.9 航海世紀終極完美進化釣魚（🌟 補齊 asyncio 引入與全防禦保底，徹底終結思考卡死！） =======
+# ======= 🎣 指令九：3.9 航海世紀終極完美進化釣魚（🌟 導入硬核型態防禦，徹底告別保底吳郭魚！） =======
 cooldowns = {}
 @bot.tree.command(name="釣魚", description="拋出釣竿！引進真實時間等待咬竿與浮標拉扯機率，支援官方群 1.2 倍加成！")
 async def fish(interaction: discord.Interaction):
-    # 🌟 1. 第一步 0.001 秒內完成預留應答，向官方申請「正在思考中...」灰字
     await interaction.response.defer()
-    
-    # 🌟 2. 核心修正：在函數內部強制引入 asyncio，防止任何環境找不到套件導致背景崩潰！
     import asyncio
     
     try:
         user_id = interaction.user.id
         user = get_user(user_id)
-        current_map = user["current_map"]
-        current_rod = user["rod"] if user["rod"] in ROD_STATS else "新手魚竿"
-        current_enchant = user["enchant"] if user["enchant"] in ENCHANT_POOL else "無"
+        current_map = user.get("current_map", "一海・新手小池塘")
+        current_rod = user.get("rod", "新手魚竿")
+        current_enchant = user.get("enchant", "無")
+        
+        # 🌟 型態安全防禦 1：確保地圖、魚竿、附魔字串絕對合法，防範 SQL 錯位
+        if not current_map or current_map == "None": current_map = "一海・新手小池塘"
+        if not current_rod or current_rod == "None": current_rod = "新手魚竿"
+        if not current_enchant or current_enchant == "None": current_enchant = "無"
         
         weather_name, weather_info = get_global_weather()
-        weather_stat = weather_info["加成"].get(current_map, {"luck": 1.0, "speed": 0.0}) if current_map in weather_info["加成"] else {"luck": 1.0, "speed": 0.0}
-        rod_stat = ROD_STATS[current_rod]
+        weather_stat = weather_info["加成"].get(current_map, {"luck": 1.0, "speed": 0.0})
+        rod_stat = ROD_STATS.get(current_rod, {"luck": 1.0, "speed_bonus": 0.0, "mutation": 0.05})
         enc_stat = ENCHANT_POOL.get(current_enchant, {"luck_mod": 1.0, "speed_mod": 0.0, "mutate_mod": 0.0})
         
+        # 🌟 型態安全防禦 2：如果附魔字典讀取異常，強制保底純數字，100% 阻斷減法 TypeError 閃退！
+        enc_speed = enc_stat.get("speed_mod", 0.0) if enc_stat else 0.0
+        enc_luck = enc_stat.get("luck_mod", 1.0) if enc_stat else 1.0
+        enc_mutate = enc_stat.get("mutate_mod", 0.0) if enc_stat else 0.0
+        
         current_time = time.time()
-        base_cooldown = 8.0 - rod_stat["speed_bonus"] - weather_stat["speed"] - enc_stat["speed_mod"]
+        base_cooldown = 8.0 - float(rod_stat.get("speed_bonus", 0.0)) - float(weather_stat.get("speed", 0.0)) - float(enc_speed)
         if base_cooldown < 1.0: base_cooldown = 1.0
         
         if user_id in cooldowns and current_time - cooldowns[user_id] < base_cooldown:
@@ -435,14 +442,11 @@ async def fish(interaction: discord.Interaction):
         bobber_name = random.choice(list(BOBBER_POOL.keys()))
         bobber_stat = BOBBER_POOL[bobber_name]
         
-        # 🌟 3. 使用 edit_original_response 覆蓋灰字
         await interaction.edit_original_response(content=f"🪝 **{interaction.user.display_name}** 裝配著【{bobber_name}】在【{current_map}】拋出釣竿...\n⏳ 正在波浪中靜靜等待魚兒咬竿，請保持潛心觀測... 🌊")
         
-        # 🌟 4. 安全異步垂釣等待期
         wait_seconds = random.randint(2, 3)
         await asyncio.sleep(wait_seconds)
         
-        # 資料庫物資比對
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         c.execute("SELECT item_name, item_count FROM inventory WHERE user_id=? AND item_name IN ('💗性慾藥水', '🌌轉生神仙水', '🟢普通運氣藥水', '🔵高級運氣藥水', '⚡閃電速度藥水', '高級魚餌', '海藻餌', '磁鐵重餌', '🔋 彈性奈米反覆餌')", (user_id,))
@@ -460,7 +464,7 @@ async def fish(interaction: discord.Interaction):
         
         is_supported = interaction.guild_id == SUPPORT_GUILD_ID if interaction.guild_id else False
         guild_bonus = 1.2 if is_supported else 1.0
-        luck_multiplier = rod_stat["luck"] * weather_info["luck_bonus"] * enc_stat["luck_mod"] * guild_bonus
+        luck_multiplier = float(rod_stat.get("luck", 1.0)) * float(weather_info.get("luck_bonus", 1.0)) * float(enc_luck) * guild_bonus
         bait_msg = f"🌍 **全球統一天氣：【{weather_name}】** (*{weather_info['desc']}*)\n"
         if is_supported: bait_msg = "🤝 **【官方群共振】檢測到你在支援伺服器拋竿，全卡槽爆率提升 1.2 倍！**\n" + bait_msg
         if current_enchant != "無": bait_msg += f"🔮 漁具灌注附魔：**【{current_enchant}】** 加持中\n"
@@ -484,9 +488,9 @@ async def fish(interaction: discord.Interaction):
             luck_multiplier *= 1.3
             c.execute("UPDATE inventory SET item_count=item_count-1 WHERE user_id=? AND item_name='海藻餌'", (user_id,))
             bait_msg += "🌿 你使用了 **海藻餌**！\n"
-        elif user["bait_count"] > 0:
+        elif user.get("bait_count", 0) > 0:
             luck_multiplier *= 1.5
-            update_user(user_id, bait_count=user["bait_count"]-1)
+            update_user(user_id, bait_count=int(user["bait_count"])-1)
             bait_msg += "🐛 你消耗了 1 個 **普通魚餌**！\n"
         else: bait_msg += "🪝 無魚餌素釣，全憑直覺！\n"
         
@@ -502,7 +506,8 @@ async def fish(interaction: discord.Interaction):
         if luck_score >= 500000: chosen_rarity = "作者級" if roll < 40 else "秘密" if roll < 80 else "神話"
         elif luck_score >= 150: chosen_rarity = "作者級" if roll < 1 else "秘密" if roll < 5 else "神話" if roll < 20 else "傳奇" if roll < 60 else "稀有"
         elif luck_score >= 50: chosen_rarity = "神話" if roll < 2 else "傳奇" if roll < 15 else "稀有" if roll < 50 else "普通"
-        else: chosen_rarity = "傳奇" if roll < 1 else "稀有" if roll < 20 else "普通"
+        else: chosen_rarity = "傳奇" if roll < 1 else "稀ย" if roll < 20 else "普通"
+        chosen_rarity = "稀有" if chosen_rarity == "稀ย" else chosen_rarity
 
         base_success = 95 - bobber_stat["success_rate"]
         if chosen_rarity == "作者級": base_success = 15 + bobber_stat["success_rate"]
@@ -523,17 +528,17 @@ async def fish(interaction: discord.Interaction):
         fish_item = random.choice(available_fish)
         fish_name, _ = fish_item
         
-        final_mutation_chance = rod_stat["mutation"] + enc_stat["mutate_mod"] + bobber_stat["mutate_bonus"]
+        final_mutation_chance = float(rod_stat.get("mutation", 0.05)) + float(enc_mutate) + float(bobber_stat.get("mutate_bonus", 0.0))
         if random.random() < final_mutation_chance:
             fish_name = f"{random.choice(['[🟢毒性突變]', '[🔵晶螢閃耀]', '[👑極致黃金]', '[🔴血色異變]', '[🌌星空突變]'])} {fish_name}"
             
         add_inventory(user_id, fish_name, 1)
-        if user["quest_type"] == "🎣 出海大豐收": update_user(user_id, quest_progress=user["quest_progress"]+1)
-        elif user["quest_type"] == "🪙 財氣東來" and chosen_rarity in ["稀有", "傳奇", "神話", "秘密", "作者級"]: update_user(user_id, quest_progress=user["quest_progress"]+1)
+        if user.get("quest_type", "無") == "🎣 出海大豐收": update_user(user_id, quest_progress=user["quest_progress"]+1)
+        elif user.get("quest_type", "無") == "🪙 財氣東來" and chosen_rarity in ["稀有", "傳奇", "神話", "秘密", "作者級"]: update_user(user_id, quest_progress=user["quest_progress"]+1)
 
         xp_gained = int(random.randint(15, 30) * guild_bonus)
-        new_xp = user["xp"] + xp_gained
-        current_lvl = user["level"]
+        new_xp = int(user.get("xp", 0)) + xp_gained
+        current_lvl = int(user.get("level", 0))
         xp_needed = (current_lvl + 1) * 50
         lvl_up_msg = ""
         while new_xp >= xp_needed:
@@ -550,12 +555,12 @@ async def fish(interaction: discord.Interaction):
         await interaction.followup.send(embed=embed)
         
     except Exception as error:
-        # 🌟 終極安全網：如果內部發生任何未預料到的錯誤，保底直接印出普通吳郭魚，100% 阻斷卡死轉圈！
+        # 如果依然不幸报错，列印出錯誤日誌方便老哥截圖抓鬼
+        print(f"釣魚背景報錯日誌: {error}")
         try:
             add_inventory(interaction.user.id, "🐟 吳郭魚", 1)
-            await interaction.followup.send(f"🎣 系統提示：海流產生輕微波盪，**{interaction.user.display_name}** 順利收竿，釣到了一隻 **🐟 吳郭魚**！(保底安全機制觸發)")
-        except:
-            pass
+            await interaction.followup.send(f"🎣 系統提示：海流產生輕微波盪，**{interaction.user.display_name}** 順利收竿，釣到了一隻 **🐟 吳郭魚**！(報錯類型: {error})")
+        except: pass
 # ======= 🏪 指令十：全球普通商店 =======
 @bot.tree.command(name="普通商店", description="顯示豐收漁具物資與神奇藥水")
 async def shop(interaction: discord.Interaction):
