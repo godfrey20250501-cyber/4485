@@ -525,25 +525,31 @@ async def fish(interaction: discord.Interaction):
     if user["quest_type"] == "🎣 出海大豐收": update_user(user_id, quest_progress=user["quest_progress"]+1)
     elif user["quest_type"] == "🪙 財氣東來" and chosen_rarity in ["稀有", "傳奇", "神話", "秘密", "作者級"]: update_user(user_id, quest_progress=user["quest_progress"]+1)
 
+    # 🌟 2026 終極安全圖鑑拓印：直接存入完整魚名，100% 阻斷死迴圈與 5555 錯誤！
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("INSERT OR IGNORE INTO fish_encyclopedia VALUES (?, ?)", (user_id, fish_name))
+    conn.commit()
+    conn.close()
+
     xp_gained = int(random.randint(15, 30) * guild_bonus)
     new_xp = user["xp"] + xp_gained
     current_lvl = user["level"]
     xp_needed = (current_lvl + 1) * 50
     lvl_up_msg = ""
     while new_xp >= xp_needed:
-        new_xp -= xp_needed; current_lvl += 1; xp_needed = (current_lvl + 1) * 50
+        new_xp -= xp_needed
+        current_lvl += 1
+        xp_needed = (current_lvl + 1) * 50
         lvl_up_msg = f"\n⚡ **【LEVEL UP！】恭喜你升級到了 🌟 LV.{current_lvl} 🌟！！**"
     update_user(user_id, level=current_lvl, xp=new_xp)
-    
-    # 📘 圖鑑自動智慧拓印解鎖
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("INSERT OR IGNORE INTO fish_encyclopedia VALUES (?, ?)", (user_id, fish_name.split()[-1]))
-    conn.commit()
-    conn.close()
 
     icons = {"普通":"⚪", "稀有":"🔵", "傳奇":"🟡", "神話":"🔴", "秘密":"🟣", "作者級":"🌌"}
-    embed = discord.Embed(title=f"🎣 拉竿成功！ ── 【{icons[chosen_rarity]} {chosen_rarity}】", description=f"{bait_msg}🧬 順利捕捉：**{fish_name}**！ (成功率: `{int(base_success)}%`)\n🏆 獲得經驗：`+{xp_gained}xp` | 當前進度：`🧬 {new_xp}/{xp_needed} XP`{lvl_up_msg}", color=0x27AE60)
+    embed = discord.Embed(
+        title=f"🎣 拉竿成功！ ── 【{icons[chosen_rarity]} {chosen_rarity}】", 
+        description=f"{bait_msg}🧬 順利捕捉：**{fish_name}**！ (成功率: `{int(base_success)}%`)\n🏆 獲得經驗：`+{xp_gained}xp` | 當前進度：`🧬 {new_xp}/{xp_needed} XP`{lvl_up_msg}", 
+        color=0x27AE60
+    )
     await interaction.followup.send(embed=embed)
 # ======= 🏪 指令十：全球普通商店 =======
 @bot.tree.command(name="普通商店", description="顯示豐收漁具物資與神奇藥水")
