@@ -46,31 +46,40 @@ DB_FILE = "fishing_game.db"
 # 🌟 官方支援群 ID 設定（已完美綁定老哥的 Discord 伺服器！）
 SUPPORT_GUILD_ID = 1546517053719060642
 
-# 2. RPG 3.9 資料庫初始化（🌟 鋼鐵防線：自動熱修補，100% 留住舊玩家的所有餘額與背包！）
+# 🌟 3.9 終極防線：開機自動補齊 fish_encyclopedia 與 guilds 核心表，徹底砸碎保底吳郭魚魔咒！
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
+    # 1. 使用者主表
     c.execute('''CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY, balance INTEGER DEFAULT 100, rod TEXT DEFAULT '新手魚竿', bait_count INTEGER DEFAULT 5,
         level INTEGER DEFAULT 0, xp INTEGER DEFAULT 0, current_map TEXT DEFAULT '一海・新手小池塘', pet TEXT DEFAULT '無',
         last_daily TEXT DEFAULT '2000-01-01', enchant TEXT DEFAULT '無', bait_type TEXT DEFAULT '普通魚餌',
         quest_type TEXT DEFAULT '無', quest_target INTEGER DEFAULT 0, quest_progress INTEGER DEFAULT 0, quest_reward INTEGER DEFAULT 0
     )''')
+    # 2. 背包物資表
     c.execute('''CREATE TABLE IF NOT EXISTS inventory (
         user_id INTEGER, item_name TEXT, item_count INTEGER DEFAULT 0, PRIMARY KEY(user_id, item_name)
     )''')
+    # 3. 官方兌換碼表
     c.execute('''CREATE TABLE IF NOT EXISTS redeem_codes (
         code_name TEXT PRIMARY KEY, prize_money INTEGER, prize_bait INTEGER
     )''')
+    # 4. 🌟 進化版補齊：物種百科圖鑑表（徹底封死 no such table 報錯！）
+    c.execute('''CREATE TABLE IF NOT EXISTS fish_encyclopedia (
+        user_id INTEGER, fish_name TEXT, PRIMARY KEY(user_id, fish_name)
+    )''')
+    # 5. 🌟 進化版補齊：大航海公會表
     c.execute('''CREATE TABLE IF NOT EXISTS guilds (
         guild_name TEXT PRIMARY KEY, leader_id INTEGER, vault INTEGER DEFAULT 0, current_boss TEXT DEFAULT '無', boss_hp INTEGER DEFAULT 0
     )''')
+    # 6. 🌟 進化版補齊：公會成員對照表
     c.execute('''CREATE TABLE IF NOT EXISTS guild_members (
         user_id INTEGER PRIMARY KEY, guild_name TEXT
     )''')
     conn.commit()
     
-    # 🛠️ 核心熱修補舊資料庫欄位
+    # 🛠️ 舊資料庫欄位熱修補
     alter_columns = [
         ("last_daily", "TEXT DEFAULT '2000-01-01'"), ("enchant", "TEXT DEFAULT '無'"),
         ("bait_type", "TEXT DEFAULT '普通魚餌'"), ("quest_type", "TEXT DEFAULT '無'"),
