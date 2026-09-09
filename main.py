@@ -320,367 +320,15 @@ async def redeem_code(interaction: discord.Interaction, code: str):
     else:
         await interaction.response.send_message("❌ 兌換碼不存在、已過期，或特殊密鑰破譯失敗！", ephemeral=True)
 
-# ======= 📚 5.5.5 互動式 HELP 百科系統 =======
-
-HELP_DATA = {
-    "📈 經濟系統": {
-        "💰 金幣與交易": (
-            "💰 **金幣與交易**\n\n"
-            "• `/全賣`：將未鎖定的可交易魚獲一次出售。\n"
-            "• `/購買`：購買商店中的物品。\n"
-            "• 黃金之竿：出售收益具有特殊倍率加成。\n"
-            "• 加入公會後，`/全賣` 的部分收益會依規則進入公會金庫。\n\n"
-            "💡 **核心概念**\n"
-            "釣魚 → 獲得魚獲 → 出售 → 累積金幣 → 購買更強裝備。"
-        ),
-        "🏪 商店": (
-            "🏪 **全球商店系統**\n\n"
-            "• `/普通商店`：查看一般漁具、藥水與特殊物資。\n"
-            "• `/海域商店`：查看目前海域相關商品。\n"
-            "• `/購買`：直接購買指定商品。\n\n"
-            "💡 部分特殊物品會影響釣魚、運氣、速度或其他遊戲機制。"
-        ),
-        "🎰 大賭局": (
-            "🎰 **每週大賭局**\n\n"
-            "• `/大賭局`：進行每週豪賭。\n"
-            "• 第一輪免費。\n"
-            "• 第二輪開始需要金幣。\n"
-            "• 後續輪次成本會呈指數增加。\n"
-            "• Jackpot 機率會隨輪次提高，最高受到系統上限限制。\n"
-            "• 失敗時會有部分安慰金回饋。\n\n"
-            "⚠️ 高輪次成本極高，請自行評估資金風險。"
-        ),
-        "🏰 公會經濟": (
-            "🏰 **公會經濟系統**\n\n"
-            "• `/創立公會`：需要達到指定等級並支付創立費。\n"
-            "• `/加入公會`：加入現有公會。\n"
-            "• `/公會背包`：查看公會金庫與成員。\n"
-            "• `/全賣`：公會成員的出售收益會產生公會稅。\n"
-            "• 公會金庫可用於世界 BOSS 召喚。\n\n"
-            "💡 公會的核心玩法是「成員經濟 → 金庫 → BOSS → 團隊獎勵」。"
-        )
-    },
-
-    "⚔️ 戰鬥系統": {
-        "🐉 世界 BOSS": (
-            "🐉 **世界 BOSS**\n\n"
-            "公會會長可以使用：\n"
-            "• `/召喚魔王`\n\n"
-            "召喚後會出現史詩級世界魔王。\n"
-            "目前系統包含不同血量、召喚成本與設定的 BOSS。\n\n"
-            "💡 BOSS 不是單人內容，而是公會成員共同討伐。"
-        ),
-        "⚔️ 公會遠征": (
-            "⚔️ **公會遠征**\n\n"
-            "• `/公會遠征`：攻擊目前公會正在討伐的 BOSS。\n"
-            "• 不同武器具有不同基礎傷害。\n"
-            "• 攻擊可能觸發暴擊倍率。\n"
-            "• 所有參與 BOSS 討伐的成員都會被記錄。\n\n"
-            "🏆 BOSS 被擊殺後，參與成員可以取得團隊戰利品。"
-        ),
-        "🛡️ 戰鬥武器": (
-            "🛡️ **戰鬥武器系統**\n\n"
-            "• `/武器商店`：查看遠征武器。\n"
-            "• `/購買武器`：購買並裝備武器。\n\n"
-            "目前武器依照稀有度與定位具有不同傷害：\n"
-            "⚔️ 鐵製魚叉\n"
-            "⚔️ 精鋼巨弩\n"
-            "🔱 海神破滅戟\n"
-            "🌌 ADMIN破碼弒神劍\n\n"
-            "💡 武器主要服務於公會 BOSS 戰。"
-        ),
-        "🔥 傷害與暴擊": (
-            "🔥 **傷害系統**\n\n"
-            "基本流程：\n"
-            "玩家裝備 → 取得武器傷害 → 暴擊判定 → 計算最終傷害 → 扣除 BOSS HP。\n\n"
-            "暴擊可能產生：\n"
-            "• 普通傷害\n"
-            "• 1.5 倍傷害\n"
-            "• 2 倍傷害\n\n"
-            "💡 最終傷害會記錄到公會 BOSS 戰績中。"
-        )
-    },
-
-    "👤 玩家系統": {
-        "🎣 釣魚": (
-            "🎣 **核心釣魚系統**\n\n"
-            "• `/釣魚`：進行一次釣魚。\n"
-            "• 釣魚結果受到海域、魚竿、附魔、天氣等因素影響。\n"
-            "• 不同海域具有不同魚種。\n"
-            "• 部分魚獲具有突變/特殊倍率。\n"
-            "• 釣魚會消耗對應魚餌或特殊資源。\n\n"
-            "🌊 天氣會週期性改變，並影響釣魚環境。"
-        ),
-        "🎒 背包與裝備": (
-            "🎒 **背包 / 裝備**\n\n"
-            "• `/背包`：查看你的雲端倉庫。\n"
-            "• `/裝備`：使用互動式下拉選單切換裝備。\n"
-            "• 可以切換魚竿、載具與副手武器。\n"
-            "• 魚獲可以設定 ❤️ 最愛鎖定。\n\n"
-            "❤️ 被鎖定的物品會在 `/全賣` 時受到保護。"
-        ),
-        "📈 等級與轉生": (
-            "📈 **玩家成長**\n\n"
-            "玩家可以透過遊戲活動累積經驗並提升等級。\n\n"
-            "• 等級影響部分高階系統的解鎖。\n"
-            "• `/轉生`：達成指定條件後進行轉生。\n"
-            "• 轉生後會重置部分進度，但可以獲得新的血脈/種族方向。\n\n"
-            "💡 轉生是中後期玩家的重要成長系統。"
-        ),
-        "🧬 血脈與寵物": (
-            "🧬 **血脈 / 寵物系統**\n\n"
-            "玩家可以透過成長系統獲得特殊能力。\n\n"
-            "血脈可能影響：\n"
-            "• 🍀 運氣\n"
-            "• 💰 金幣倍率\n"
-            "• 🎣 釣魚能力\n\n"
-            "寵物則可以形成多寵物加成鏈，提供額外被動效果。"
-        ),
-        "💤 AFK 掛機": (
-            "💤 **AFK 掛機系統**\n\n"
-            "玩家長時間沒有使用指令後會進入 AFK 狀態。\n\n"
-            "• AFK 期間會自動進行低品質釣魚。\n"
-            "• AFK 會受到特殊運氣懲罰。\n"
-            "• 魚獲會暫存在雲端。\n"
-            "• AFK 保存時間可以透過特定遊戲進度提升。\n\n"
-            "💡 使用 Discord 指令重新互動後會離開 AFK 狀態。"
-        ),
-        "🎯 每日任務": (
-            "🎯 **每日懸賞任務**\n\n"
-            "• `/刷新任務`：刷新每日任務。\n"
-            "• `/接取任務`：選擇其中一項任務。\n"
-            "• `/任務進度`：查看目前任務進度。\n\n"
-            "任務具有 1⭐～5⭐ 不同難度。\n"
-            "高星任務通常具有更高的挑戰與獎勵。\n\n"
-            "🌟 任務獎勵包含金幣與特殊資源。"
-        ),
-        "📘 魚類圖鑑": (
-            "📘 **世界物種百科**\n\n"
-            "• `/查看圖鑑`：查看已解鎖的魚類。\n"
-            "• 圖鑑按照不同海域分類。\n"
-            "• 成功捕獲新的魚種後可以解鎖對應圖鑑紀錄。\n\n"
-            "🌊 目標：逐步完成四大海域的物種收藏。"
-        )
-    }
-}
-
-
-class HelpMainSelect(discord.ui.Select):
-    def __init__(self):
-        options = [
-            discord.SelectOption(
-                label="經濟系統",
-                value="📈 經濟系統",
-                emoji="📈",
-                description="金幣、商店、大賭局、公會經濟"
-            ),
-            discord.SelectOption(
-                label="戰鬥系統",
-                value="⚔️ 戰鬥系統",
-                emoji="⚔️",
-                description="世界 BOSS、武器、遠征、傷害"
-            ),
-            discord.SelectOption(
-                label="玩家系統",
-                value="👤 玩家系統",
-                emoji="👤",
-                description="釣魚、裝備、等級、任務、AFK"
-            )
-        ]
-
-        super().__init__(
-            placeholder="📚 選擇你想查看的遊戲系統...",
-            min_values=1,
-            max_values=1,
-            options=options
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        chosen_system = self.values[0]
-
-        await interaction.response.edit_message(
-            embed=create_help_category_embed(chosen_system),
-            view=HelpCategoryView(chosen_system)
-        )
-
-
-class HelpCategorySelect(discord.ui.Select):
-    def __init__(self, category):
-        self.category = category
-
-        options = []
-
-        for sub_name in HELP_DATA[category].keys():
-            options.append(
-                discord.SelectOption(
-                    label=sub_name[2:] if len(sub_name) > 2 else sub_name,
-                    value=sub_name,
-                    emoji=sub_name[0],
-                    description=f"查看{sub_name[2:] if len(sub_name) > 2 else sub_name}"
-                )
-            )
-
-        super().__init__(
-            placeholder=f"📂 在「{category[2:]}」中選擇細分類...",
-            min_values=1,
-            max_values=1,
-            options=options
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        chosen_sub = self.values[0]
-
-        embed = discord.Embed(
-            title=f"{self.category} ── {chosen_sub}",
-            description=HELP_DATA[self.category][chosen_sub],
-            color=0x3498DB
-        )
-
-        embed.set_footer(
-            text="🎣 歡樂釣魚場 5.5.5 ── 互動式百科"
-        )
-
-        await interaction.response.edit_message(
-            embed=embed,
-            view=HelpDetailView(self.category)
-        )
-
-
-class HelpMainView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=180)
-        self.add_item(HelpMainSelect())
-
-
-class HelpCategoryView(discord.ui.View):
-    def __init__(self, category):
-        super().__init__(timeout=180)
-        self.category = category
-
-        self.add_item(HelpCategorySelect(category))
-
-        back_button = discord.ui.Button(
-            label="↩ 返回主目錄",
-            style=discord.ButtonStyle.secondary
-        )
-
-        async def back_callback(interaction: discord.Interaction):
-            await interaction.response.edit_message(
-                embed=create_help_main_embed(),
-                view=HelpMainView()
-            )
-
-        back_button.callback = back_callback
-        self.add_item(back_button)
-
-
-class HelpDetailView(discord.ui.View):
-    def __init__(self, category):
-        super().__init__(timeout=180)
-
-        category_button = discord.ui.Button(
-            label="📂 返回分類",
-            style=discord.ButtonStyle.primary
-        )
-
-        async def category_callback(interaction: discord.Interaction):
-            await interaction.response.edit_message(
-                embed=create_help_category_embed(category),
-                view=HelpCategoryView(category)
-            )
-
-        category_button.callback = category_callback
-        self.add_item(category_button)
-
-        home_button = discord.ui.Button(
-            label="🏠 返回主目錄",
-            style=discord.ButtonStyle.secondary
-        )
-
-        async def home_callback(interaction: discord.Interaction):
-            await interaction.response.edit_message(
-                embed=create_help_main_embed(),
-                view=HelpMainView()
-            )
-
-        home_button.callback = home_callback
-        self.add_item(home_button)
-
-
-def create_help_main_embed():
-    embed = discord.Embed(
-        title="🎣 歡樂釣魚場 5.5.5 ── 全功能百科",
-        description=(
-            "## 🌌 歡迎來到諸神覺醒血脈紀元\n\n"
-            "這裡是遊戲完整互動式說明中心。\n\n"
-            "請使用下方選單選擇你想了解的系統：\n\n"
-            "📈 **經濟系統**\n"
-            "金幣、交易、商店、大賭局、公會金庫\n\n"
-            "⚔️ **戰鬥系統**\n"
-            "世界 BOSS、武器、遠征、傷害與暴擊\n\n"
-            "👤 **玩家系統**\n"
-            "釣魚、裝備、等級、血脈、任務、AFK、圖鑑"
-        ),
-        color=0x2ECC71
-    )
-
-    embed.add_field(
-        name="💡 使用方式",
-        value="選擇分類 → 選擇子系統 → 查看詳細說明",
-        inline=False
-    )
-
-    embed.set_footer(
-        text="🎣 歡樂釣魚場 5.5.5 ── HELP ONLINE"
-    )
-
-    return embed
-
-
-def create_help_category_embed(category):
-    sub_categories = list(HELP_DATA[category].keys())
-
-    description = (
-        f"## {category}\n\n"
-        "請從下方選單選擇想查看的細分類。\n\n"
-    )
-
-    for index, sub_name in enumerate(sub_categories, start=1):
-        description += f"`{index}.` {sub_name}\n"
-
-    embed = discord.Embed(
-        title=f"📚 {category}百科",
-        description=description,
-        color=0x3498DB
-    )
-
-    embed.set_footer(
-        text="↩ 可以隨時返回主目錄"
-    )
-
-    return embed
-
-
-@bot.tree.command(
-    name="help",
-    description="📚 開啟歡樂釣魚場 5.5.5 互動式遊戲百科"
-)
-async def help_command(interaction: discord.Interaction):
-    await interaction.response.send_message(
-        embed=create_help_main_embed(),
-        view=HelpMainView()
-    )
-
-
-@bot.tree.command(
-    name="幫助",
-    description="📚 開啟歡樂釣魚場 5.5.5 互動式遊戲百科"
-)
+# ======= 📋 指令：5.0 諸神黃昏黑曜石互動式幫助手冊 =======
+@bot.tree.command(name="幫助", description="【5.0 核心手冊】詳細查詢歡樂釣魚場全服 15 大限購神竿、10 大天氣加成與公會天梯機制")
 async def help_manual(interaction: discord.Interaction):
-    await interaction.response.send_message(
-        embed=create_help_main_embed(),
-        view=HelpMainView()
-    )
+    embed = discord.Embed(title="🎣 歡樂釣魚場 5.5 ── 諸神黃昏全功能大百科", description="`──────────────────────────`", color=0x2ECC71)
+    embed.add_field(name="🎮 1. 核心垂釣與裝備防呆", value="• `/釣魚` : 融入 10 大天氣與高階浮標單次消耗。最低冷卻防線 1.5 秒。\n• `/裝備` : 綠格子黑曜石面板，一鍵下拉選單秒切右手魚竿與副手武器。\n• `/背包` : 內建❤️下拉最愛防呆鎖的大倉庫。上鎖物資執行 `/全賣` 時 100% 絕對跳過保護！", inline=False)
+    embed.add_field(name="🎰 2. 三選一星級懸賞與掛機", value="• `/刷新任務` : 每日(24h)可刷新 3 個 **1⭐~5⭐ 星級委託**，雲端留存 12 小時任選其一。\n• `/大賭局` : 投入 5000 金幣對對碰幸運號碼，豪賭稀有、傳奇藥水寶箱！\n• `💤 自動 AFK 掛機` : 10分鐘未使用指令自動開啟！幸運-300%背景自動盲釣，未升級魚獲留存1h！", inline=False)
+    embed.add_field(name="🏰 3. 公會共榮與世界 BOSS 團戰", value="• `/創立公會` : 需達 LV.50 並支付 5000 金幣。\n• `/全賣` : 自動將收益之 5% 抽稅上繳公會雲端金庫，並**實時折算公會總天梯積分**！\n• `/公會排行榜` : 查看全服打海獸、釣魚、衝懸賞累加出來的**最強公會天梯榜**！", inline=False)
+    embed.set_footer(text="💡 提示：大倉庫資料廖已 24h 與 MongoDB 雲端保險箱鎖死，重啟伺服器絕對不回檔！")
+    await interaction.response.send_message(embed=embed)
 # ======= 📢 組七：管理員自訂公告區、與實體按鈕控制台綁定 =======
 class AnnounceSetupView(discord.ui.View):
     def __init__(self):
@@ -1177,7 +825,7 @@ async def fish(interaction: discord.Interaction):
             
         # 寫入雲端大倉庫
         add_inventory(user_id, fish_name, 1)
-        db["fish_encyclopedia"].update_one({"user_id": user_id, "fish_name": fish_name}, {"$set": {"unlocked_at": datetime.now().strftime("%Y-%m-%d")}}, upsert=True)
+        register_fish_discovery(user_id, fish_name)
         
         # 🌟 15 大日常星級任務進度全自動過濾計數
         q_type = user.get("quest_type", "無")
@@ -1605,47 +1253,594 @@ async def sell_all(interaction: discord.Interaction):
     embed = discord.Embed(title="💰 魚獲交易結算完畢", description="\n".join(sold_details) + f"\n\n💵 實際賺得：**{total_revenue}** 金幣！{tax_msg}", color=0xF1C40F)
     await interaction.followup.send(embed=embed)
 
-# ======= 📘 組十六：5.5.5 雲端物種收藏百科圖鑑（第 1321 ~ 1380 行） =======
-@bot.tree.command(name="查看圖鑑", description="查看你在四大海域中所成功解鎖的所有特產魚獲物種圖鑑進度")
+# ======= 📚 組十六：5.5.5 互動式世界圖鑑 + 交易所 =======
+# 魚類圖鑑規則：未發現時隱藏名稱、售價、稀有度、指定魚竿、指定魚餌、特殊條件。
+# 玩家第一次成功捕獲後，才會解鎖完整資料。
+
+ENCYCLOPEDIA_COL = db["fish_encyclopedia"]
+MARKET_COL = db["fish_market"]
+
+RARITY_ICONS = {
+    "普通": "⚪", "稀有": "🔵", "傳奇": "🟡",
+    "神話": "🔴", "秘密": "🟣", "作者級": "🌌"
+}
+
+# 交易所底價倍率：以魚類正常售價為基準。
+MARKET_FLOOR_MULTIPLIER = {
+    "普通": 2.5,
+    "稀有": 3.0,
+    "傳奇": 3.5,
+    "神話": 5.0,
+    "秘密": 5.5,
+    "作者級": 6.0,
+}
+MARKET_TAX_RATE = 0.10
+
+# 可在這裡為特殊魚指定額外情報；未設定的魚會自動使用安全預設值。
+# code 為「產出代碼」，用於任務、活動、管理員工具與交易所內部識別。
+FISH_INFO = {
+    "🐉 東方青龍": {
+        "code": "F031",
+        "bait": ["深海魚餌", "神話魚餌"],
+        "rods": ["暗夜之竿 (Nocturnal Rod)", "諸神黃昏湮滅劫桿"],
+        "conditions": ["三海・馬里亞娜海溝深淵", "高幸運／特殊天氣時更容易出現"],
+    },
+    "🔥 諸神湮滅核心 (Abyss Core)": {
+        "code": "F032",
+        "bait": ["神話魚餌"],
+        "rods": ["諸神黃昏湮滅劫桿"],
+        "conditions": ["三海・馬里亞娜海溝深淵", "極高幸運條件"],
+    },
+    "🌋 熔岩火靈魚": {
+        "code": "F040",
+        "bait": ["熔岩魚餌", "神話魚餌"],
+        "rods": ["🔥 地心熔岩流體竿", "諸神黃昏湮滅劫桿"],
+        "conditions": ["四海・地幔熔岩禁地"],
+    },
+}
+
+
+def build_fish_catalog():
+    """把目前 MAP_EXCLUSIVE_FISH / FISH_POOL 正規化成圖鑑資料。"""
+    catalog = {}
+    generated_index = 1
+
+    for rarity, fish_list in FISH_POOL.items():
+        for fish_name, price in fish_list:
+            if fish_name not in catalog:
+                catalog[fish_name] = {
+                    "code": f"F{generated_index:03d}",
+                    "name": fish_name,
+                    "rarity": rarity,
+                    "price": int(price),
+                    "maps": [],
+                }
+                generated_index += 1
+            if rarity not in catalog[fish_name].get("rarities", []):
+                catalog[fish_name].setdefault("rarities", []).append(rarity)
+
+    for map_name, rarity_dict in MAP_EXCLUSIVE_FISH.items():
+        for rarity, fish_list in rarity_dict.items():
+            for fish_name, price in fish_list:
+                if fish_name not in catalog:
+                    catalog[fish_name] = {
+                        "code": f"F{generated_index:03d}",
+                        "name": fish_name,
+                        "rarity": rarity,
+                        "price": int(price),
+                        "maps": [],
+                    }
+                    generated_index += 1
+                info = catalog[fish_name]
+                if map_name not in info["maps"]:
+                    info["maps"].append(map_name)
+                info.setdefault("rarities", [])
+                if rarity not in info["rarities"]:
+                    info["rarities"].append(rarity)
+                # MAP_EXCLUSIVE_FISH 的價格視為該地圖的正式售價來源。
+                info["price"] = int(price)
+
+    for fish_name, extra in FISH_INFO.items():
+        if fish_name in catalog:
+            catalog[fish_name].update({k: v for k, v in extra.items() if k != "code"})
+            catalog[fish_name]["code"] = extra["code"]
+
+    for fish_name, info in catalog.items():
+        info.setdefault("bait", ["普通魚餌"])
+        info.setdefault("rods", ["任意可用魚竿"])
+        info.setdefault("conditions", [])
+        info.setdefault("rarities", [info["rarity"]])
+        if not info["maps"]:
+            info["maps"] = ["一般魚池"]
+
+    return catalog
+
+
+def get_fish_catalog():
+    return build_fish_catalog()
+
+
+def get_fish_by_code(code):
+    for fish in get_fish_catalog().values():
+        if fish["code"].upper() == str(code).upper():
+            return fish
+    return None
+
+
+def is_fish_discovered(user_id, fish_name):
+    return ENCYCLOPEDIA_COL.find_one({"user_id": int(user_id), "fish_name": fish_name}) is not None
+
+
+def register_fish_discovery(user_id, fish_name):
+    """只記錄原始魚名；突變前綴不會污染圖鑑資料。"""
+    base_name = fish_name
+    mutation_prefixes = [
+        "[🟢毒性突變] ", "[🔵晶螢閃耀] ", "[👑極致黃金] ",
+        "[🔴血色異變] ", "[🌌星空突變] "
+    ]
+    for prefix in mutation_prefixes:
+        base_name = base_name.replace(prefix, "")
+
+    if base_name not in get_fish_catalog():
+        return
+
+    ENCYCLOPEDIA_COL.update_one(
+        {"user_id": int(user_id), "fish_name": base_name},
+        {"$set": {
+            "fish_name": base_name,
+            "discovered": True,
+            "unlocked_at": datetime.now().strftime("%Y-%m-%d"),
+        }},
+        upsert=True
+    )
+
+
+def fish_market_floor(fish_data):
+    multiplier = MARKET_FLOOR_MULTIPLIER.get(fish_data["rarity"], 2.5)
+    return int(fish_data["price"] * multiplier)
+
+
+def format_market_price(value):
+    return f"{int(value):,}"
+
+
+def create_encyclopedia_home_embed(user_id, display_name):
+    catalog = get_fish_catalog()
+    discovered = set(doc["fish_name"] for doc in ENCYCLOPEDIA_COL.find({"user_id": int(user_id)}))
+    total = len(catalog)
+    found = sum(1 for name in catalog if name in discovered)
+    return discord.Embed(
+        title=f"📚 {display_name} 的世界圖鑑",
+        description=(
+            f"探索進度：**{found}/{total}**\n\n"
+            "🐟 **魚類圖鑑**：依地圖、稀有度或搜尋查看。\n"
+            "🛠️ **工具圖鑑**：魚竿、魚餌、武器、載具、寵物、附魔、浮標。\n\n"
+            "🔒 尚未發現的魚會隱藏名稱、售價、稀有度、指定魚竿、指定魚餌與特殊條件。"
+        ),
+        color=0x34495E
+    )
+
+
+class EncyclopediaMainSelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label="🐟 魚類圖鑑", value="fish", description="地圖、稀有度、搜尋與發現進度"),
+            discord.SelectOption(label="🛠️ 工具圖鑑", value="tools", description="魚竿、魚餌、武器、載具等"),
+        ]
+        super().__init__(placeholder="選擇圖鑑大分類……", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        if self.values[0] == "fish":
+            await interaction.response.edit_message(embed=create_fish_index_embed(interaction.user.id), view=FishIndexView())
+        else:
+            await interaction.response.edit_message(embed=create_tool_index_embed(interaction.user.id), view=ToolIndexView())
+
+
+class EncyclopediaMainView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=300)
+        self.add_item(EncyclopediaMainSelect())
+
+
+class FishIndexSelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label="🗺️ 依地圖", value="map", description="查看指定海域的魚類"),
+            discord.SelectOption(label="⭐ 依稀有度", value="rarity", description="查看不同稀有度魚類"),
+            discord.SelectOption(label="📖 全部魚類", value="all", description="顯示所有魚類與解鎖狀態"),
+        ]
+        super().__init__(placeholder="選擇魚類分類方式……", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        choice = self.values[0]
+        if choice == "map":
+            await interaction.response.edit_message(embed=create_fish_map_embed(interaction.user.id), view=FishMapView())
+        elif choice == "rarity":
+            await interaction.response.edit_message(embed=create_fish_rarity_embed(interaction.user.id), view=FishRarityView())
+        else:
+            await interaction.response.edit_message(embed=create_fish_list_embed(interaction.user.id), view=FishListView())
+
+
+class FishIndexView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=300)
+        self.add_item(FishIndexSelect())
+        self.add_item(BackToEncyclopediaButton())
+        self.add_item(FishSearchButton())
+
+
+class FishListView(FishIndexView):
+    pass
+
+
+class FishMapView(FishIndexView):
+    pass
+
+
+class FishRarityView(FishIndexView):
+    pass
+
+
+class BackToEncyclopediaButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="返回圖鑑首頁", emoji="📚", style=discord.ButtonStyle.secondary, row=1)
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.edit_message(embed=create_encyclopedia_home_embed(interaction.user.id, interaction.user.display_name), view=EncyclopediaMainView())
+
+
+class FishSearchModal(discord.ui.Modal, title="🔎 搜尋魚類"):
+    keyword = discord.ui.TextInput(
+        label="輸入魚名或產出代碼",
+        placeholder="例如：青龍、鯊魚、F031",
+        required=True,
+        max_length=50
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.edit_message(
+            embed=create_fish_search_embed(interaction.user.id, str(self.keyword).strip()),
+            view=FishSearchResultView()
+        )
+
+
+class FishSearchButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="搜尋魚類", emoji="🔎", style=discord.ButtonStyle.primary, row=1)
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.send_modal(FishSearchModal())
+
+
+class FishSearchResultView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=300)
+        self.add_item(FishSearchButton())
+        self.add_item(BackToEncyclopediaButton())
+
+
+def fish_display_line(user_id, fish):
+    discovered = is_fish_discovered(user_id, fish["name"])
+    if not discovered:
+        return f"• 🔒 **未知生物** `{fish['code']}`"
+    return f"• {RARITY_ICONS.get(fish['rarity'], '⚪')} **{fish['name']}** `{fish['code']}` — `{format_market_price(fish['price'])} 🪙`"
+
+
+def create_fish_index_embed(user_id):
+    return discord.Embed(
+        title="🐟 魚類圖鑑",
+        description="依地圖、稀有度瀏覽，或使用 **🔎 搜尋魚類** 找到指定資料。\n\n🔒 尚未發現的魚：所有情報均隱藏。",
+        color=0x3498DB
+    )
+
+
+def create_fish_list_embed(user_id):
+    catalog = get_fish_catalog()
+    embed = discord.Embed(title="📖 全部魚類", description="已發現顯示完整資料；未發現僅顯示未知生物與代碼。", color=0x3498DB)
+    for rarity in ["普通", "稀有", "傳奇", "神話", "秘密", "作者級"]:
+        lines = [fish_display_line(user_id, fish) for fish in catalog.values() if fish["rarity"] == rarity]
+        if lines:
+            embed.add_field(name=f"{RARITY_ICONS.get(rarity, '⚪')} {rarity}", value="\n".join(lines[:20]), inline=False)
+    return embed
+
+
+def create_fish_map_embed(user_id):
+    catalog = get_fish_catalog()
+    embed = discord.Embed(title="🗺️ 魚類圖鑑・依地圖", description="選擇海域後查看該海域魚種。", color=0x1ABC9C)
+    for map_name in MAP_EXCLUSIVE_FISH.keys():
+        fishes = [fish for fish in catalog.values() if map_name in fish["maps"]]
+        lines = [fish_display_line(user_id, fish) for fish in fishes]
+        if lines:
+            embed.add_field(name=f"🚢 {map_name}", value="\n".join(lines[:20]), inline=False)
+    return embed
+
+
+def create_fish_rarity_embed(user_id):
+    catalog = get_fish_catalog()
+    embed = discord.Embed(title="⭐ 魚類圖鑑・依稀有度", description="按稀有度查看收藏進度。", color=0x9B59B6)
+    for rarity in ["普通", "稀有", "傳奇", "神話", "秘密", "作者級"]:
+        fishes = [fish for fish in catalog.values() if fish["rarity"] == rarity]
+        if fishes:
+            found = sum(1 for fish in fishes if is_fish_discovered(user_id, fish["name"]))
+            lines = [fish_display_line(user_id, fish) for fish in fishes[:20]]
+            embed.add_field(name=f"{RARITY_ICONS.get(rarity, '⚪')} {rarity} ({found}/{len(fishes)})", value="\n".join(lines), inline=False)
+    return embed
+
+
+def create_fish_search_embed(user_id, keyword):
+    catalog = get_fish_catalog()
+    key = keyword.lower()
+    results = []
+    for fish in catalog.values():
+        if key in fish["name"].lower() or key in fish["code"].lower():
+            results.append(fish)
+    embed = discord.Embed(title=f"🔎 搜尋結果：{keyword}", color=0x2980B9)
+    if not results:
+        embed.description = "❌ 找不到符合的魚類。"
+        return embed
+    lines = []
+    for fish in results[:25]:
+        if is_fish_discovered(user_id, fish["name"]):
+            lines.append(
+                f"**{fish['name']}** `{fish['code']}`\n"
+                f"稀有度：{RARITY_ICONS.get(fish['rarity'], '⚪')} {fish['rarity']} | 售價：`{format_market_price(fish['price'])} 🪙`"
+            )
+        else:
+            lines.append(f"🔒 **未知生物** `{fish['code']}`\n名稱、稀有度、售價與出現條件皆未解鎖。")
+    embed.description = "\n\n".join(lines)
+    return embed
+
+
+class ToolCategorySelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label="🎣 魚竿", value="rods", description="查看全部魚竿能力與取得方式"),
+            discord.SelectOption(label="🪱 魚餌", value="bait", description="查看魚餌與特殊效果"),
+            discord.SelectOption(label="🗡️ 武器", value="weapons", description="查看公會戰鬥武器"),
+            discord.SelectOption(label="🚗 載具", value="vehicles", description="查看載具"),
+            discord.SelectOption(label="🐾 寵物", value="pets", description="查看寵物效果"),
+            discord.SelectOption(label="✨ 附魔", value="enchant", description="查看附魔能力"),
+            discord.SelectOption(label="🎈 浮標", value="bobber", description="查看浮標效果"),
+        ]
+        super().__init__(placeholder="選擇工具圖鑑分類……", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        choice = self.values[0]
+        embed = create_tool_detail_embed(choice)
+        await interaction.response.edit_message(embed=embed, view=ToolIndexView())
+
+
+class ToolIndexView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=300)
+        self.add_item(ToolCategorySelect())
+        self.add_item(BackToEncyclopediaButton())
+
+
+def create_tool_index_embed(user_id):
+    return discord.Embed(
+        title="🛠️ 工具圖鑑",
+        description="選擇分類查看目前遊戲內裝備與道具資料。\n\n資料會直接讀取現有遊戲資料表，避免商店與圖鑑內容分離。",
+        color=0xE67E22
+    )
+
+
+def create_tool_detail_embed(category):
+    embed = discord.Embed(title="🛠️ 工具圖鑑", color=0xE67E22)
+    if category == "rods":
+        for name, data in ROD_STATS.items():
+            embed.add_field(name=f"🎣 {name}", value=f"🍀 Luck `{data.get('luck', 1)}`\n⚡ Speed `+{data.get('speed_bonus', 0)}`\n🧬 Mutation `{data.get('mutation', 0)}`\n{data.get('desc', '無')}", inline=True)
+    elif category == "bait":
+        lines = [f"• **{name}** — `{price:,} 🪙`" for name, price in BAITS_SHOP.items()]
+        embed.description = "\n".join(lines[:40]) or "目前沒有魚餌資料。"
+    elif category == "enchant":
+        lines = [f"• ✨ **{name}** — `{data}`" for name, data in ENCHANT_POOL.items()]
+        embed.description = "\n".join(lines) or "目前沒有附魔資料。"
+    elif category == "bobber":
+        lines = [f"• **{name}**\n成功率：`+{data.get('success_rate', 0)}%` | 異變：`+{data.get('mutate_bonus', 0)}`" for name, data in BOBBER_POOL.items()]
+        embed.description = "\n\n".join(lines) or "目前沒有浮標資料。"
+    elif category == "weapons":
+        lines = [f"• ⚔️ **{name}** — 傷害 `{data.get('dmg', 0)}`" for name, data in WEAPONS_SHOP.items()]
+        embed.description = "\n".join(lines) or "目前沒有武器資料。"
+    elif category == "vehicles":
+        embed.description = "🚗 載具資料沿用目前玩家裝備欄；若後續建立 VEHICLES_SHOP，可直接接入本圖鑑。"
+    elif category == "pets":
+        embed.description = "🐾 寵物效果沿用目前 get_player_modifiers() 與寵物資料；後續可建立 PET_STATS 進行完整圖鑑化。"
+    return embed
+
+
+@bot.tree.command(name="查看圖鑑", description="開啟互動式魚類與工具圖鑑")
 async def view_encyclopedia(interaction: discord.Interaction):
     user_id = int(interaction.user.id)
-    
-    # 🌟 從雲端 MongoDB 中極速撈出該船長名下解鎖的所有魚獲名冊
-    cursor = db["fish_encyclopedia"].find({"user_id": user_id})
-    unlocked_fishes = [doc["fish_name"] for doc in cursor]
-    
-    embed = discord.Embed(title=f"📘 {interaction.user.display_name} 的大航海・世界物種百科圖鑑", description="`──────────────────────────`", color=0x34495E)
-    
-    # 智慧遍歷一海到四海地幔的地理隔離魚池，實時走秒進行包含判定（Substring Matching）
-    for m_name, rarity_dict in MAP_EXCLUSIVE_FISH.items():
-        all_map_fishes = []
-        for rarity, f_list in rarity_dict.items():
-            for fname, _ in f_list:
-                if fname not in all_map_fishes:
-                    all_map_fishes.append(fname)
-                    
-        # 🟢 100% 正確的字串全封閉包含比對，0.001 秒秒噴進度
-        unlocked_count = sum(1 for fish in all_map_fishes if fish in unlocked_fishes)
-        
-        detail_lines = []
-        for fish in all_map_fishes:
-            if fish in unlocked_fishes:
-                detail_lines.append(f"• ✅ **{fish}**")
-            else:
-                detail_lines.append(f"• 🔒 *未探索生物*")
-                
+    await interaction.response.send_message(
+        embed=create_encyclopedia_home_embed(user_id, interaction.user.display_name),
+        view=EncyclopediaMainView()
+    )
+
+
+# ======= 🏪 5.5.5 官方交易所：玩家掛單 + 官方 10% 交易稅 =======
+def get_market_listings(limit=10, keyword=None):
+    query = {"status": "active", "quantity": {"$gt": 0}}
+    if keyword:
+        query["item_name"] = {"$regex": keyword, "$options": "i"}
+    return list(MARKET_COL.find(query).sort("created_at", -1).limit(limit))
+
+
+def create_market_embed(user_id, keyword=None):
+    listings = get_market_listings(10, keyword)
+    embed = discord.Embed(
+        title="🏪 歡樂交易所",
+        description="官方交易稅：**10%**\n魚類底價依稀有度套用 **2.5～6 倍正常售價**。",
+        color=0xF1C40F
+    )
+    if not listings:
+        embed.add_field(name="📭 市場目前沒有符合條件的掛單", value="可以稍後再來看看。", inline=False)
+        return embed
+
+    for listing in listings:
+        fish = get_fish_catalog().get(listing["item_name"])
+        if fish:
+            floor = fish_market_floor(fish)
+            rarity = fish["rarity"]
+        else:
+            floor = int(listing.get("floor_price", 0))
+            rarity = listing.get("rarity", "未知")
         embed.add_field(
-            name=f"🚢 【{m_name}】 (進度: {unlocked_count}/{len(all_map_fishes)} 🪐)", 
-            value="\n".join(detail_lines) if detail_lines else "暫無產物", 
-            inline=False
+            name=f"📦 {listing['item_name']}",
+            value=(
+                f"稀有度：{RARITY_ICONS.get(rarity, '⚪')} {rarity}\n"
+                f"數量：`{listing['quantity']}`\n"
+                f"單價：`{format_market_price(listing['unit_price'])} 🪙`\n"
+                f"官方底價：`{format_market_price(floor)} 🪙`\n"
+                f"掛單 ID：`{str(listing['_id'])[-8:]}`"
+            ),
+            inline=True
         )
-        
-    await interaction.response.send_message(embed=embed)
+    return embed
 
 
-# ──────────────────────────────────────────────────────────
-# 🛑 0 空格區域：5.5.5 全新雲端世界最底層啟動入口（完全頂格靠左，絕不留白！）
-init_db()
+class MarketSearchModal(discord.ui.Modal, title="🔎 搜尋交易商品"):
+    keyword = discord.ui.TextInput(label="商品名稱", placeholder="例如：青龍、鯊魚；留空則顯示市場", required=False, max_length=50)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        keyword = str(self.keyword).strip()
+        await interaction.response.edit_message(embed=create_market_embed(interaction.user.id, keyword or None), view=MarketView())
+
+
+class MarketSearchButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="搜尋", emoji="🔎", style=discord.ButtonStyle.primary)
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.send_modal(MarketSearchModal())
+
+
+class MarketRefreshButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="刷新", emoji="🔄", style=discord.ButtonStyle.secondary)
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.edit_message(embed=create_market_embed(interaction.user.id), view=MarketView())
+
+
+class MarketView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=300)
+        self.add_item(MarketSearchButton())
+        self.add_item(MarketRefreshButton())
+
+
+@bot.tree.command(name="交易所", description="查看玩家交易所掛單與市場價格")
+async def market_cmd(interaction: discord.Interaction):
+    await interaction.response.send_message(embed=create_market_embed(interaction.user.id), view=MarketView())
+
+
+@bot.tree.command(name="上架交易所", description="把已發現的魚類掛到官方交易所；價格不得低於官方底價")
+@app_commands.describe(fish_name="要出售的魚名", quantity="出售數量", unit_price="單條價格")
+async def market_list_cmd(interaction: discord.Interaction, fish_name: str, quantity: int, unit_price: int):
+    await interaction.response.defer(ephemeral=True)
+    user_id = int(interaction.user.id)
+    fish = get_fish_catalog().get(fish_name)
+    if not fish:
+        await interaction.followup.send("❌ 找不到這條魚，請使用 `/交易所` 搜尋或 `/查看圖鑑` 查詢。", ephemeral=True)
+        return
+    if not is_fish_discovered(user_id, fish_name):
+        await interaction.followup.send("❌ 你尚未發現這條魚，無法上架。", ephemeral=True)
+        return
+    if quantity <= 0 or quantity > 999:
+        await interaction.followup.send("❌ 數量必須介於 1～999。", ephemeral=True)
+        return
+    floor = fish_market_floor(fish)
+    if unit_price < floor:
+        await interaction.followup.send(f"❌ 價格低於官方底價！\n官方底價：`{floor:,} 🪙`（正常售價 × {MARKET_FLOOR_MULTIPLIER.get(fish['rarity'], 2.5):g}）", ephemeral=True)
+        return
+
+    item_doc = inventory_col.find_one({"user_id": user_id, "item_name": fish_name, "item_count": {"$gte": quantity}})
+    if not item_doc:
+        await interaction.followup.send("❌ 你的背包沒有足夠數量的這條魚。", ephemeral=True)
+        return
+
+    # 原子扣除庫存，避免同一條魚被重複掛單。
+    consumed = inventory_col.update_one(
+        {"_id": item_doc["_id"], "item_count": {"$gte": quantity}},
+        {"$inc": {"item_count": -quantity}}
+    )
+    if consumed.modified_count != 1:
+        await interaction.followup.send("❌ 上架失敗：庫存狀態已變更，請重新嘗試。", ephemeral=True)
+        return
+
+    result = MARKET_COL.insert_one({
+        "seller_id": user_id,
+        "item_name": fish_name,
+        "quantity": quantity,
+        "unit_price": int(unit_price),
+        "floor_price": floor,
+        "rarity": fish["rarity"],
+        "status": "active",
+        "created_at": datetime.now(),
+    })
+    await interaction.followup.send(
+        f"✅ 上架成功！\n📦 {fish_name} x{quantity}\n💰 單價：`{unit_price:,} 🪙`\n🏛️ 成交後官方抽取 10% 稅金。\n🆔 掛單：`{str(result.inserted_id)[-8:]}`",
+        ephemeral=True
+    )
+
+
+@bot.tree.command(name="購買交易品", description="依交易所掛單 ID 購買魚類商品")
+@app_commands.describe(listing_id="交易所顯示的掛單 ID 後 8 碼", quantity="購買數量")
+async def market_buy_cmd(interaction: discord.Interaction, listing_id: str, quantity: int):
+    await interaction.response.defer(ephemeral=True)
+    buyer_id = int(interaction.user.id)
+    if quantity <= 0 or quantity > 999:
+        await interaction.followup.send("❌ 數量必須介於 1～999。", ephemeral=True)
+        return
+
+    candidates = list(MARKET_COL.find({"status": "active", "quantity": {"$gt": 0}}).sort("created_at", -1).limit(200))
+    listing = next((x for x in candidates if str(x["_id"])[-8:] == listing_id), None)
+    if not listing:
+        await interaction.followup.send("❌ 找不到有效掛單，可能已售罄或已下架。", ephemeral=True)
+        return
+    if int(listing["seller_id"]) == buyer_id:
+        await interaction.followup.send("❌ 不能購買自己的掛單。", ephemeral=True)
+        return
+    if quantity > int(listing["quantity"]):
+        await interaction.followup.send(f"❌ 該掛單目前只有 `{listing['quantity']}` 件。", ephemeral=True)
+        return
+
+    total = int(listing["unit_price"]) * quantity
+    buyer = get_user(buyer_id)
+    if int(buyer.get("balance", 100)) < total:
+        await interaction.followup.send(f"❌ 金幣不足！需要 `{total:,} 🪙`。", ephemeral=True)
+        return
+
+    # 先原子扣除掛單數量；只有成功搶到庫存的玩家才能進入結算。
+    updated = MARKET_COL.update_one(
+        {"_id": listing["_id"], "status": "active", "quantity": {"$gte": quantity}},
+        {"$inc": {"quantity": -quantity}}
+    )
+    if updated.modified_count != 1:
+        await interaction.followup.send("❌ 這筆掛單剛剛已被其他玩家買走，請刷新交易所。", ephemeral=True)
+        return
+
+    seller_id = int(listing["seller_id"])
+    tax = int(total * MARKET_TAX_RATE)
+    seller_revenue = total - tax
+
+    # 玩家金幣與賣家收益同步結算；官方稅金不進玩家錢包。
+    update_user(buyer_id, balance=int(buyer.get("balance", 100)) - total)
+    seller = get_user(seller_id)
+    update_user(seller_id, balance=int(seller.get("balance", 100)) + seller_revenue)
+    add_inventory(buyer_id, listing["item_name"], quantity)
+
+    if int(listing["quantity"]) == quantity:
+        MARKET_COL.update_one({"_id": listing["_id"]}, {"$set": {"status": "sold"}})
+
+    await interaction.followup.send(
+        f"✅ 交易成功！\n📦 **{listing['item_name']}** x{quantity}\n"
+        f"💰 成交總價：`{total:,} 🪙`\n🏛️ 官方 10% 稅：`{tax:,} 🪙`\n"
+        f"💵 賣家實收：`{seller_revenue:,} 🪙`",
+        ephemeral=True
+    )
+b()
 keep_alive()
 DISCORD_CODE = os.getenv("DISCORD_TOKEN")
 bot.run(DISCORD_CODE)
