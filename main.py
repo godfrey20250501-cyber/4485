@@ -535,8 +535,8 @@ async def refresh_daily_quests(interaction: discord.Interaction):
 async def choose_quest_index(interaction: discord.Interaction, 序號: int):
     # 🌟 5.5.5 鐵壁語法修復：補齊當初漏字與陣列攔截，100% 綠燈秒過！
     if 序號 not in [1, 2, 3]:
-    await interaction.response.send_message("❌ 序號錯誤！老哥，只能挑選 1、2 或 3 號日常懸賞！", ephemeral=True)
-    return
+            await interaction.response.send_message("❌ 序號錯誤！老哥，只能挑選 1、2 或 3 號日常懸賞！", ephemeral=True)
+            return
         
     user_id = int(interaction.user.id)
     user = get_user(user_id)
