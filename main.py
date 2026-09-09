@@ -859,6 +859,160 @@ async def fish(interaction: discord.Interaction):
             add_inventory(interaction.user.id, "🐟 吳郭魚", 1)
             await interaction.followup.send(f"🎣 系統提示：海流產生輕微波盪，**{interaction.user.display_name}** 順利收竿，釣到了一隻 **🐟 吳郭魚**！(報錯類型: {error})")
         except: pass
+
+# ======= 🎒 組十三·五：Fisch 風格玩家背包面板 =======
+def format_compact_gold(value):
+    value = int(value)
+    if value >= 1_000_000_000:
+        return f"{value / 1_000_000_000:.1f}B"
+    if value >= 1_000_000:
+        return f"{value / 1_000_000:.1f}M"
+    if value >= 1_000:
+        return f"{value / 1_000:.1f}k"
+    return str(value)
+
+
+def get_backpack_items(user_id):
+    cursor = inventory_col.find(
+        {"user_id": int(user_id), "item_count": {"$gt": 0}},
+        {"item_name": 1, "item_count": 1, "is_favorite": 1, "_id": 0}
+    ).sort("item_name", 1)
+    return list(cursor)
+
+
+def classify_inventory_item(item_name):
+    equip_words = [
+        "魚竿", "魚叉", "巨弩", "破滅戟", "弒神劍", "潛水服", "潛水艇", "鑽探機", "Rod"
+    ]
+    if any(word in item_name for word in equip_words):
+        return "equipment"
+    if item_name.startswith(("🐟", "🐠", "🦈", "🐡", "🦑", "🦀", "🐙", "🐋", "🐬", "🐳", "🪼", "👟", "🐉", "🔥", "🌋", "🌌", "[")):
+        return "fish"
+    if any(word in item_name for word in ["魚餌", "餌", "浮標", "藥水", "寶箱", "禮包", "晶石"]):
+        return "consumable"
+    return "other"
+
+
+def create_backpack_embed(user_id, display_name):
+    user = get_user(user_id)
+    mods = get_player_modifiers(user_id)
+    items = get_backpack_items(user_id)
+
+    level = int(user.get("level", 0))
+    xp = int(user.get("xp", 0))
+    xp_need = (level + 1) * 50
+    balance = int(user.get("balance", 100))
+    current_rod = user.get("rod") or "新手魚竿"
+    current_map = user.get("current_map") or "一海・新手小池塘"
+    enchant = user.get("enchant") or "無"
+    bait_type = user.get("bait_type") or "無 (徒手肉搏)"
+    pet = user.get("pet") or "無 (徒手素釣)"
+    race_display = mods.get("race_display", "👤 常規人類 V1")
+    pet_chain = mods.get("pet_chain", "無裝備寵物")
+
+    fish_lines = []
+    consumable_lines = []
+    equipment_lines = []
+    other_lines = []
+
+    for item in items:
+        name = str(item.get("item_name", "未知物品"))
+        count = int(item.get("item_count", 0))
+        favorite = " ❤️" if int(item.get("is_favorite", 0)) == 1 else ""
+        line = f"• {name} ×`{count}`{favorite}"
+        group = classify_inventory_item(name)
+        if group == "fish":
+            fish_lines.append(line)
+        elif group == "consumable":
+            consumable_lines.append(line)
+        elif group == "equipment":
+            equipment_lines.append(line)
+        else:
+            other_lines.append(line)
+
+    total_count = sum(int(item.get("item_count", 0)) for item in items)
+
+    embed = discord.Embed(
+        title=f"🎒 ── {display_name} 的黑曜石背包 ── 🎒",
+        description=(
+            f"💰 錢包：**`{format_compact_gold(balance)} 🪙`** 　"
+            f"📦 物品總數：**`{total_count}`**\n"
+            "`────────────────────────────────`"
+        ),
+        color=0x34495E
+    )
+
+    embed.add_field(
+        name="📊 船長狀態",
+        value=(
+            f"🌟 等級：**LV.{level}**\n"
+            f"✨ 經驗：`{xp}/{xp_need}`\n"
+            f"🧬 血脈：**{race_display}**\n"
+            f"🍀 綜合幸運：`x{mods.get('luck_multiplier', 1.0):.2f}`\n"
+            f"💸 金幣倍率：`x{mods.get('money_multiplier', 1.0):.2f}`"
+        ),
+        inline=True
+    )
+    embed.add_field(
+        name="🎣 當前裝備",
+        value=(
+            f"🎣 魚竿：**{current_rod}**\n"
+            f"✨ 附魔：**{enchant}**\n"
+            f"🪱 魚餌：**{bait_type}**\n"
+            f"🚢 載具／副裝：**{pet}**"
+        ),
+        inline=True
+    )
+    embed.add_field(
+        name="🐾 寵物裝備鏈",
+        value=f"`[{pet_chain}]`",
+        inline=False
+    )
+
+    def add_inventory_section(title, lines, empty_text):
+        if not lines:
+            embed.add_field(name=title, value=empty_text, inline=False)
+            return
+        # Discord Embed field value 最多 1024 字元，超過時只切本頁顯示，避免指令直接報錯。
+        text = "\n".join(lines)
+        if len(text) > 1000:
+            text = text[:997] + "..."
+        embed.add_field(name=title, value=text, inline=False)
+
+    add_inventory_section("🐟 魚獲", fish_lines, "目前沒有魚獲。")
+    add_inventory_section("🧪 消耗品／道具", consumable_lines, "目前沒有消耗品。")
+    add_inventory_section("🛠️ 裝備", equipment_lines, "目前沒有額外裝備。")
+    if other_lines:
+        add_inventory_section("📦 其他物資", other_lines, "目前沒有其他物資。")
+
+    embed.set_footer(text="❤️ 被鎖定的最愛物資會在 /全賣 時自動跳過。下方選單可直接切換裝備與保護鎖。")
+    return embed
+
+
+class BackpackView(discord.ui.View):
+    def __init__(self, user_id):
+        super().__init__(timeout=180)
+        items = get_backpack_items(user_id)
+        user_items = {str(item["item_name"]): int(item.get("item_count", 0)) for item in items}
+        self.add_item(EquipmentSelect(user_items))
+        self.add_item(FavoriteFishSelect(user_items))
+
+
+@bot.tree.command(name="背包", description="查看玩家黑曜石背包、屬性、裝備與最愛保護鎖")
+async def backpack_cmd(interaction: discord.Interaction):
+    user_id = int(interaction.user.id)
+    afk_count = process_afk_fishing(user_id)
+    user = get_user(user_id)
+    update_user(user_id, name=interaction.user.display_name, last_active_time=time.time())
+
+    embed = create_backpack_embed(user_id, interaction.user.display_name)
+    if afk_count > 0:
+        embed.description += f"\n💤 本次回歸已結算掛機殘留：**`{afk_count}`** 條。"
+    await interaction.response.send_message(
+        embed=embed,
+        view=BackpackView(user_id)
+    )
+
 # ======= 🦾 組十四：黑曜石主副手裝備選單、與背包下掛喜愛鎖控制類別 =======
 class EquipmentSelect(discord.ui.Select):
     def __init__(self, user_items):
@@ -1840,7 +1994,6 @@ async def market_buy_cmd(interaction: discord.Interaction, listing_id: str, quan
         f"💵 賣家實收：`{seller_revenue:,} 🪙`",
         ephemeral=True
     )
-b()
 keep_alive()
 DISCORD_CODE = os.getenv("DISCORD_TOKEN")
 bot.run(DISCORD_CODE)
