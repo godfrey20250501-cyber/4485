@@ -320,15 +320,367 @@ async def redeem_code(interaction: discord.Interaction, code: str):
     else:
         await interaction.response.send_message("❌ 兌換碼不存在、已過期，或特殊密鑰破譯失敗！", ephemeral=True)
 
-# ======= 📋 指令：5.0 諸神黃昏黑曜石互動式幫助手冊 =======
-@bot.tree.command(name="幫助", description="【5.0 核心手冊】詳細查詢歡樂釣魚場全服 15 大限購神竿、10 大天氣加成與公會天梯機制")
+# ======= 📚 5.5.5 互動式 HELP 百科系統 =======
+
+HELP_DATA = {
+    "📈 經濟系統": {
+        "💰 金幣與交易": (
+            "💰 **金幣與交易**\n\n"
+            "• `/全賣`：將未鎖定的可交易魚獲一次出售。\n"
+            "• `/購買`：購買商店中的物品。\n"
+            "• 黃金之竿：出售收益具有特殊倍率加成。\n"
+            "• 加入公會後，`/全賣` 的部分收益會依規則進入公會金庫。\n\n"
+            "💡 **核心概念**\n"
+            "釣魚 → 獲得魚獲 → 出售 → 累積金幣 → 購買更強裝備。"
+        ),
+        "🏪 商店": (
+            "🏪 **全球商店系統**\n\n"
+            "• `/普通商店`：查看一般漁具、藥水與特殊物資。\n"
+            "• `/海域商店`：查看目前海域相關商品。\n"
+            "• `/購買`：直接購買指定商品。\n\n"
+            "💡 部分特殊物品會影響釣魚、運氣、速度或其他遊戲機制。"
+        ),
+        "🎰 大賭局": (
+            "🎰 **每週大賭局**\n\n"
+            "• `/大賭局`：進行每週豪賭。\n"
+            "• 第一輪免費。\n"
+            "• 第二輪開始需要金幣。\n"
+            "• 後續輪次成本會呈指數增加。\n"
+            "• Jackpot 機率會隨輪次提高，最高受到系統上限限制。\n"
+            "• 失敗時會有部分安慰金回饋。\n\n"
+            "⚠️ 高輪次成本極高，請自行評估資金風險。"
+        ),
+        "🏰 公會經濟": (
+            "🏰 **公會經濟系統**\n\n"
+            "• `/創立公會`：需要達到指定等級並支付創立費。\n"
+            "• `/加入公會`：加入現有公會。\n"
+            "• `/公會背包`：查看公會金庫與成員。\n"
+            "• `/全賣`：公會成員的出售收益會產生公會稅。\n"
+            "• 公會金庫可用於世界 BOSS 召喚。\n\n"
+            "💡 公會的核心玩法是「成員經濟 → 金庫 → BOSS → 團隊獎勵」。"
+        )
+    },
+
+    "⚔️ 戰鬥系統": {
+        "🐉 世界 BOSS": (
+            "🐉 **世界 BOSS**\n\n"
+            "公會會長可以使用：\n"
+            "• `/召喚魔王`\n\n"
+            "召喚後會出現史詩級世界魔王。\n"
+            "目前系統包含不同血量、召喚成本與設定的 BOSS。\n\n"
+            "💡 BOSS 不是單人內容，而是公會成員共同討伐。"
+        ),
+        "⚔️ 公會遠征": (
+            "⚔️ **公會遠征**\n\n"
+            "• `/公會遠征`：攻擊目前公會正在討伐的 BOSS。\n"
+            "• 不同武器具有不同基礎傷害。\n"
+            "• 攻擊可能觸發暴擊倍率。\n"
+            "• 所有參與 BOSS 討伐的成員都會被記錄。\n\n"
+            "🏆 BOSS 被擊殺後，參與成員可以取得團隊戰利品。"
+        ),
+        "🛡️ 戰鬥武器": (
+            "🛡️ **戰鬥武器系統**\n\n"
+            "• `/武器商店`：查看遠征武器。\n"
+            "• `/購買武器`：購買並裝備武器。\n\n"
+            "目前武器依照稀有度與定位具有不同傷害：\n"
+            "⚔️ 鐵製魚叉\n"
+            "⚔️ 精鋼巨弩\n"
+            "🔱 海神破滅戟\n"
+            "🌌 ADMIN破碼弒神劍\n\n"
+            "💡 武器主要服務於公會 BOSS 戰。"
+        ),
+        "🔥 傷害與暴擊": (
+            "🔥 **傷害系統**\n\n"
+            "基本流程：\n"
+            "玩家裝備 → 取得武器傷害 → 暴擊判定 → 計算最終傷害 → 扣除 BOSS HP。\n\n"
+            "暴擊可能產生：\n"
+            "• 普通傷害\n"
+            "• 1.5 倍傷害\n"
+            "• 2 倍傷害\n\n"
+            "💡 最終傷害會記錄到公會 BOSS 戰績中。"
+        )
+    },
+
+    "👤 玩家系統": {
+        "🎣 釣魚": (
+            "🎣 **核心釣魚系統**\n\n"
+            "• `/釣魚`：進行一次釣魚。\n"
+            "• 釣魚結果受到海域、魚竿、附魔、天氣等因素影響。\n"
+            "• 不同海域具有不同魚種。\n"
+            "• 部分魚獲具有突變/特殊倍率。\n"
+            "• 釣魚會消耗對應魚餌或特殊資源。\n\n"
+            "🌊 天氣會週期性改變，並影響釣魚環境。"
+        ),
+        "🎒 背包與裝備": (
+            "🎒 **背包 / 裝備**\n\n"
+            "• `/背包`：查看你的雲端倉庫。\n"
+            "• `/裝備`：使用互動式下拉選單切換裝備。\n"
+            "• 可以切換魚竿、載具與副手武器。\n"
+            "• 魚獲可以設定 ❤️ 最愛鎖定。\n\n"
+            "❤️ 被鎖定的物品會在 `/全賣` 時受到保護。"
+        ),
+        "📈 等級與轉生": (
+            "📈 **玩家成長**\n\n"
+            "玩家可以透過遊戲活動累積經驗並提升等級。\n\n"
+            "• 等級影響部分高階系統的解鎖。\n"
+            "• `/轉生`：達成指定條件後進行轉生。\n"
+            "• 轉生後會重置部分進度，但可以獲得新的血脈/種族方向。\n\n"
+            "💡 轉生是中後期玩家的重要成長系統。"
+        ),
+        "🧬 血脈與寵物": (
+            "🧬 **血脈 / 寵物系統**\n\n"
+            "玩家可以透過成長系統獲得特殊能力。\n\n"
+            "血脈可能影響：\n"
+            "• 🍀 運氣\n"
+            "• 💰 金幣倍率\n"
+            "• 🎣 釣魚能力\n\n"
+            "寵物則可以形成多寵物加成鏈，提供額外被動效果。"
+        ),
+        "💤 AFK 掛機": (
+            "💤 **AFK 掛機系統**\n\n"
+            "玩家長時間沒有使用指令後會進入 AFK 狀態。\n\n"
+            "• AFK 期間會自動進行低品質釣魚。\n"
+            "• AFK 會受到特殊運氣懲罰。\n"
+            "• 魚獲會暫存在雲端。\n"
+            "• AFK 保存時間可以透過特定遊戲進度提升。\n\n"
+            "💡 使用 Discord 指令重新互動後會離開 AFK 狀態。"
+        ),
+        "🎯 每日任務": (
+            "🎯 **每日懸賞任務**\n\n"
+            "• `/刷新任務`：刷新每日任務。\n"
+            "• `/接取任務`：選擇其中一項任務。\n"
+            "• `/任務進度`：查看目前任務進度。\n\n"
+            "任務具有 1⭐～5⭐ 不同難度。\n"
+            "高星任務通常具有更高的挑戰與獎勵。\n\n"
+            "🌟 任務獎勵包含金幣與特殊資源。"
+        ),
+        "📘 魚類圖鑑": (
+            "📘 **世界物種百科**\n\n"
+            "• `/查看圖鑑`：查看已解鎖的魚類。\n"
+            "• 圖鑑按照不同海域分類。\n"
+            "• 成功捕獲新的魚種後可以解鎖對應圖鑑紀錄。\n\n"
+            "🌊 目標：逐步完成四大海域的物種收藏。"
+        )
+    }
+}
+
+
+class HelpMainSelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(
+                label="經濟系統",
+                value="📈 經濟系統",
+                emoji="📈",
+                description="金幣、商店、大賭局、公會經濟"
+            ),
+            discord.SelectOption(
+                label="戰鬥系統",
+                value="⚔️ 戰鬥系統",
+                emoji="⚔️",
+                description="世界 BOSS、武器、遠征、傷害"
+            ),
+            discord.SelectOption(
+                label="玩家系統",
+                value="👤 玩家系統",
+                emoji="👤",
+                description="釣魚、裝備、等級、任務、AFK"
+            )
+        ]
+
+        super().__init__(
+            placeholder="📚 選擇你想查看的遊戲系統...",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        chosen_system = self.values[0]
+
+        await interaction.response.edit_message(
+            embed=create_help_category_embed(chosen_system),
+            view=HelpCategoryView(chosen_system)
+        )
+
+
+class HelpCategorySelect(discord.ui.Select):
+    def __init__(self, category):
+        self.category = category
+
+        options = []
+
+        for sub_name in HELP_DATA[category].keys():
+            options.append(
+                discord.SelectOption(
+                    label=sub_name[2:] if len(sub_name) > 2 else sub_name,
+                    value=sub_name,
+                    emoji=sub_name[0],
+                    description=f"查看{sub_name[2:] if len(sub_name) > 2 else sub_name}"
+                )
+            )
+
+        super().__init__(
+            placeholder=f"📂 在「{category[2:]}」中選擇細分類...",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        chosen_sub = self.values[0]
+
+        embed = discord.Embed(
+            title=f"{self.category} ── {chosen_sub}",
+            description=HELP_DATA[self.category][chosen_sub],
+            color=0x3498DB
+        )
+
+        embed.set_footer(
+            text="🎣 歡樂釣魚場 5.5.5 ── 互動式百科"
+        )
+
+        await interaction.response.edit_message(
+            embed=embed,
+            view=HelpDetailView(self.category)
+        )
+
+
+class HelpMainView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=180)
+        self.add_item(HelpMainSelect())
+
+
+class HelpCategoryView(discord.ui.View):
+    def __init__(self, category):
+        super().__init__(timeout=180)
+        self.category = category
+
+        self.add_item(HelpCategorySelect(category))
+
+        back_button = discord.ui.Button(
+            label="↩ 返回主目錄",
+            style=discord.ButtonStyle.secondary
+        )
+
+        async def back_callback(interaction: discord.Interaction):
+            await interaction.response.edit_message(
+                embed=create_help_main_embed(),
+                view=HelpMainView()
+            )
+
+        back_button.callback = back_callback
+        self.add_item(back_button)
+
+
+class HelpDetailView(discord.ui.View):
+    def __init__(self, category):
+        super().__init__(timeout=180)
+
+        category_button = discord.ui.Button(
+            label="📂 返回分類",
+            style=discord.ButtonStyle.primary
+        )
+
+        async def category_callback(interaction: discord.Interaction):
+            await interaction.response.edit_message(
+                embed=create_help_category_embed(category),
+                view=HelpCategoryView(category)
+            )
+
+        category_button.callback = category_callback
+        self.add_item(category_button)
+
+        home_button = discord.ui.Button(
+            label="🏠 返回主目錄",
+            style=discord.ButtonStyle.secondary
+        )
+
+        async def home_callback(interaction: discord.Interaction):
+            await interaction.response.edit_message(
+                embed=create_help_main_embed(),
+                view=HelpMainView()
+            )
+
+        home_button.callback = home_callback
+        self.add_item(home_button)
+
+
+def create_help_main_embed():
+    embed = discord.Embed(
+        title="🎣 歡樂釣魚場 5.5.5 ── 全功能百科",
+        description=(
+            "## 🌌 歡迎來到諸神覺醒血脈紀元\n\n"
+            "這裡是遊戲完整互動式說明中心。\n\n"
+            "請使用下方選單選擇你想了解的系統：\n\n"
+            "📈 **經濟系統**\n"
+            "金幣、交易、商店、大賭局、公會金庫\n\n"
+            "⚔️ **戰鬥系統**\n"
+            "世界 BOSS、武器、遠征、傷害與暴擊\n\n"
+            "👤 **玩家系統**\n"
+            "釣魚、裝備、等級、血脈、任務、AFK、圖鑑"
+        ),
+        color=0x2ECC71
+    )
+
+    embed.add_field(
+        name="💡 使用方式",
+        value="選擇分類 → 選擇子系統 → 查看詳細說明",
+        inline=False
+    )
+
+    embed.set_footer(
+        text="🎣 歡樂釣魚場 5.5.5 ── HELP ONLINE"
+    )
+
+    return embed
+
+
+def create_help_category_embed(category):
+    sub_categories = list(HELP_DATA[category].keys())
+
+    description = (
+        f"## {category}\n\n"
+        "請從下方選單選擇想查看的細分類。\n\n"
+    )
+
+    for index, sub_name in enumerate(sub_categories, start=1):
+        description += f"`{index}.` {sub_name}\n"
+
+    embed = discord.Embed(
+        title=f"📚 {category}百科",
+        description=description,
+        color=0x3498DB
+    )
+
+    embed.set_footer(
+        text="↩ 可以隨時返回主目錄"
+    )
+
+    return embed
+
+
+@bot.tree.command(
+    name="help",
+    description="📚 開啟歡樂釣魚場 5.5.5 互動式遊戲百科"
+)
+async def help_command(interaction: discord.Interaction):
+    await interaction.response.send_message(
+        embed=create_help_main_embed(),
+        view=HelpMainView()
+    )
+
+
+@bot.tree.command(
+    name="幫助",
+    description="📚 開啟歡樂釣魚場 5.5.5 互動式遊戲百科"
+)
 async def help_manual(interaction: discord.Interaction):
-    embed = discord.Embed(title="🎣 歡樂釣魚場 5.5 ── 諸神黃昏全功能大百科", description="`──────────────────────────`", color=0x2ECC71)
-    embed.add_field(name="🎮 1. 核心垂釣與裝備防呆", value="• `/釣魚` : 融入 10 大天氣與高階浮標單次消耗。最低冷卻防線 1.5 秒。\n• `/裝備` : 綠格子黑曜石面板，一鍵下拉選單秒切右手魚竿與副手武器。\n• `/背包` : 內建❤️下拉最愛防呆鎖的大倉庫。上鎖物資執行 `/全賣` 時 100% 絕對跳過保護！", inline=False)
-    embed.add_field(name="🎰 2. 三選一星級懸賞與掛機", value="• `/刷新任務` : 每日(24h)可刷新 3 個 **1⭐~5⭐ 星級委託**，雲端留存 12 小時任選其一。\n• `/大賭局` : 投入 5000 金幣對對碰幸運號碼，豪賭稀有、傳奇藥水寶箱！\n• `💤 自動 AFK 掛機` : 10分鐘未使用指令自動開啟！幸運-300%背景自動盲釣，未升級魚獲留存1h！", inline=False)
-    embed.add_field(name="🏰 3. 公會共榮與世界 BOSS 團戰", value="• `/創立公會` : 需達 LV.50 並支付 5000 金幣。\n• `/全賣` : 自動將收益之 5% 抽稅上繳公會雲端金庫，並**實時折算公會總天梯積分**！\n• `/公會排行榜` : 查看全服打海獸、釣魚、衝懸賞累加出來的**最強公會天梯榜**！", inline=False)
-    embed.set_footer(text="💡 提示：大倉庫資料廖已 24h 與 MongoDB 雲端保險箱鎖死，重啟伺服器絕對不回檔！")
-    await interaction.response.send_message(embed=embed)
+    await interaction.response.send_message(
+        embed=create_help_main_embed(),
+        view=HelpMainView()
+    )
 # ======= 📢 組七：管理員自訂公告區、與實體按鈕控制台綁定 =======
 class AnnounceSetupView(discord.ui.View):
     def __init__(self):
