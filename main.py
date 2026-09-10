@@ -127,6 +127,31 @@ def get_fish_inventory_count(user_id):
 def get_inventory_capacity_remaining(user_id):
     return max(0, FISH_BACKPACK_LIMIT - get_fish_inventory_count(user_id))
 
+MUTATION_PREFIXES = [
+    "[🟢毒性突變] ", "[🔵晶螢閃耀] ", "[👑極致黃金] ",
+    "[🔴血色異變] ", "[🌌星空突變] "
+]
+AFK_PREFIX = "[💤掛機殘留] "
+
+def normalize_fish_name(item_name):
+    """移除掛機／突變前綴，得到可查價格、圖鑑的基礎魚名。"""
+    name = str(item_name)
+    if name.startswith(AFK_PREFIX):
+        name = name[len(AFK_PREFIX):]
+    changed = True
+    while changed:
+        changed = False
+        for prefix in MUTATION_PREFIXES:
+            if name.startswith(prefix):
+                name = name[len(prefix):]
+                changed = True
+                break
+    return name
+
+def is_potion_or_consumable(item_name):
+    name = str(item_name)
+    return any(word in name for word in ["藥水", "寶箱", "禮包", "魚餌", "餌", "浮標", "晶石"])
+
 def add_inventory(user_id, item_name, amount=1):
     user_id = int(user_id)
     amount = int(amount)
@@ -139,12 +164,8 @@ def add_inventory(user_id, item_name, amount=1):
             return 0
     inventory_col.update_one(
         {"user_id": user_id, "item_name": item_name},
-        {"$inc": {"item_count": add_amount}},
+        {"$inc": {"item_count": add_amount}, "$setOnInsert": {"is_favorite": 0}},
         upsert=True
-    )
-    inventory_col.update_one(
-        {"user_id": user_id, "item_name": item_name, "is_favorite": {"$exists": False}},
-        {"$set": {"is_favorite": 0}}
     )
     return add_amount
 # ======= 🏪 組三：全球普通商店物資庫與 10 大極端天氣池定義（第 186 ~ 275 行） =======
@@ -280,7 +301,7 @@ MAP_EXCLUSIVE_FISH = {
 }
 # ======= 🎫 組六：製作者特殊公告 CODE 破譯、與全服動態幫助手冊 =======
 @bot.tree.command(name="兌換碼", description="輸入官方禮包碼兌換物資，製作者輸入超難加密 CODE 可發動全服智慧公告廣播功能")
-@app_commands.describe(code="請輸入你要兌換的代碼")
+@app_commands.describe(code="請輸入你要兌換的代碼（製作者公告碼格式：GODFREY_ADMIN_MATRIX_CODE_2026_BY_SIGMA::公告內容）")
 async def redeem_code(interaction: discord.Interaction, code: str):
     user_id = int(interaction.user.id)
     
@@ -362,7 +383,8 @@ HELP_SECTIONS = {
         "🔎 背包可用搜尋欄快速找魚，並以 `💖` 標記最愛。"
     ),
     "💰 交易與經濟": (
-        "`/全賣`：出售未鎖定的魚獲，執行前會先跳出警告確認。\n"
+        "`/全賣`：出售未鎖定的魚獲（包含掛機魚），執行前會先跳出警告確認。\n"
+        "`/出售掛機魚`：只出售 💤 掛機殘留魚獲，並提供獨立警告確認。\n"
         "`/交易所`：玩家固定價格掛單，官方成交稅 10%。\n"
         "`/上架交易所`：上架前必須再次確認，避免誤賣。\n"
         "`/拍賣場`：玩家競標制，最高出價者得標。"
@@ -645,26 +667,41 @@ async def choose_quest_index(interaction: discord.Interaction, 序號: int):
 
 # ======= 💤 組十：10 分鐘未使用自動切入 AFK 掛機、及 1hr 雲端大倉庫覆蓋防爆 =======
 def process_afk_fishing(user_id):
+    """結算掛機魚貨。一次聚合寫入，避免最多 120 次 MongoDB round-trip。"""
     user = get_user(user_id)
     now = time.time()
-    last_active = user.get("last_active_time", now)
-    
-    if now - last_active >= 600:
-        elapsed_seconds = now - last_active
-        fish_caught = int(elapsed_seconds / 30)
-        if fish_caught > 0:
-            max_hours = int(user.get("afk_save_hours", 1))
-            allowed_max_fish = max_hours * 120  
-            final_fish_count = min(fish_caught, allowed_max_fish)
-            
-            afk_pool = [("🐟 吳郭魚", 1), ("🐠 小丑魚", 1), ("👟 舊鞋子", 1)]
-            for _ in range(final_fish_count):
-                chosen_f, _ = random.choice(afk_pool)
-                add_inventory(user_id, f"[💤掛機殘留] {chosen_f}", 1)
-                
-            users_col.update_one({"user_id": user_id}, {"$set": {"last_active_time": now}})
-            return final_fish_count
-    return 0
+    last_active = float(user.get("last_active_time", now))
+    if now - last_active < 600:
+        return 0
+
+    elapsed_seconds = max(0, now - last_active)
+    fish_caught = int(elapsed_seconds / 30)
+    if fish_caught <= 0:
+        users_col.update_one({"user_id": int(user_id)}, {"$set": {"last_active_time": now}})
+        return 0
+
+    max_hours = max(1, int(user.get("afk_save_hours", 1)))
+    allowed_max_fish = max_hours * 120
+    requested = min(fish_caught, allowed_max_fish)
+    capacity = get_inventory_capacity_remaining(user_id)
+    final_fish_count = min(requested, capacity)
+
+    afk_pool = ["🐟 吳郭魚", "🐠 小丑魚", "👟 舊鞋子"]
+    counts = {}
+    for _ in range(final_fish_count):
+        chosen_f = random.choice(afk_pool)
+        key = f"{AFK_PREFIX}{chosen_f}"
+        counts[key] = counts.get(key, 0) + 1
+
+    for item_name, amount in counts.items():
+        inventory_col.update_one(
+            {"user_id": int(user_id), "item_name": item_name},
+            {"$inc": {"item_count": int(amount)}, "$setOnInsert": {"is_favorite": 0}},
+            upsert=True
+        )
+
+    users_col.update_one({"user_id": int(user_id)}, {"$set": {"last_active_time": now}})
+    return final_fish_count
 
 @bot.tree.command(name="任務進度", description="查詢目前身上接取的日常星級任務進度")
 async def check_quest_flow(interaction: discord.Interaction):
@@ -1086,24 +1123,79 @@ def create_backpack_embed(user_id, display_name):
     return embed
 
 
+class BackpackSearchFavoriteSelect(discord.ui.Select):
+    def __init__(self, user_id, fish_items):
+        self.user_id = int(user_id)
+        options = []
+        for item in fish_items[:25]:
+            name = str(item.get("item_name", ""))
+            fav = int(item.get("is_favorite", 0)) == 1
+            options.append(discord.SelectOption(
+                label=name[:100], value=name,
+                description=("解除 💖 保護" if fav else "標記 💖 最愛") + f"｜x{int(item.get('item_count', 0))}",
+                emoji="💖" if fav else "🐟"
+            ))
+        if not options:
+            options.append(discord.SelectOption(label="沒有搜尋結果", value="__NO_RESULT__", description="請重新搜尋", emoji="📭"))
+        super().__init__(placeholder="💖 在搜尋結果中標記／解除最愛", min_values=1, max_values=1, options=options, row=2)
+
+    async def callback(self, interaction: discord.Interaction):
+        if int(interaction.user.id) != self.user_id:
+            await interaction.response.send_message("❌ 這不是你的搜尋結果。", ephemeral=True)
+            return
+        name = self.values[0]
+        if name == "__NO_RESULT__":
+            await interaction.response.send_message("❌ 沒有可標記的魚。", ephemeral=True)
+            return
+        doc = inventory_col.find_one({"user_id": self.user_id, "item_name": name, "item_count": {"$gt": 0}})
+        if not doc:
+            await interaction.response.send_message("❌ 魚獲已不存在，請重新搜尋。", ephemeral=True)
+            return
+        old = int(doc.get("is_favorite", 0))
+        new = 0 if old else 1
+        result = inventory_col.update_one({"_id": doc["_id"]}, {"$set": {"is_favorite": new}})
+        if result.modified_count != 1:
+            await interaction.response.send_message("❌ 更新失敗，請重新搜尋。", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            (f"💖 已標記【{name}】為最愛，售賣與上架時會受到保護。" if new else f"🔓 已解除【{name}】的最愛保護。"),
+            ephemeral=True
+        )
+
+
+class BackpackSearchResultView(discord.ui.View):
+    def __init__(self, user_id, fish_items):
+        super().__init__(timeout=300)
+        self.add_item(BackpackSearchFavoriteSelect(user_id, fish_items))
+        self.add_item(BackpackFishSearchButton())
+
+
 class BackpackFishSearchModal(discord.ui.Modal, title="🔎 搜尋背包中的魚"):
     keyword = discord.ui.TextInput(label="魚名關鍵字", placeholder="例如：青龍、鯊魚、黃金", required=True, max_length=40)
 
     async def on_submit(self, interaction: discord.Interaction):
         keyword = str(self.keyword).strip().lower()
         user_id = int(interaction.user.id)
-        fish_items = [item for item in get_backpack_items(user_id) if is_inventory_fish(item.get("item_name", "")) and keyword in str(item.get("item_name", "")).lower()]
-        embed = discord.Embed(title=f"🔎 {interaction.user.display_name} 的魚獲搜尋", description=f"關鍵字：`{keyword}`\n📦 魚獲容量：`{get_fish_inventory_count(user_id)}/{FISH_BACKPACK_LIMIT}`", color=0x3498DB)
+        fish_items = [
+            item for item in get_backpack_items(user_id)
+            if is_inventory_fish(item.get("item_name", ""))
+            and keyword in normalize_fish_name(item.get("item_name", "")).lower()
+        ]
+        embed = discord.Embed(
+            title=f"🔎 {interaction.user.display_name} 的魚獲搜尋",
+            description=f"關鍵字：`{keyword}`\n📦 魚獲容量：`{get_fish_inventory_count(user_id)}/{FISH_BACKPACK_LIMIT}`",
+            color=0x3498DB
+        )
         if fish_items:
             lines = []
-            for item in fish_items:
+            for item in fish_items[:25]:
                 fav = " 💖" if int(item.get("is_favorite", 0)) == 1 else ""
                 lines.append(f"• {item['item_name']} ×`{int(item.get('item_count', 0))}`{fav}")
             embed.add_field(name="🐟 搜尋結果", value="\n".join(lines)[:1000], inline=False)
         else:
             embed.add_field(name="🐟 搜尋結果", value="找不到符合關鍵字的魚獲。", inline=False)
-        embed.set_footer(text="💖 可在背包主頁使用最愛選單標記／解除保護")
-        await interaction.response.edit_message(embed=embed, view=BackpackView(user_id))
+        embed.set_footer(text="💖 下方選單可直接標記／解除最愛")
+        await interaction.response.edit_message(embed=embed, view=BackpackSearchResultView(user_id, fish_items))
 
 class BackpackFishSearchButton(discord.ui.Button):
     def __init__(self):
@@ -1119,22 +1211,19 @@ class BackpackView(discord.ui.View):
         user_items = {str(item["item_name"]): int(item.get("item_count", 0)) for item in items}
         self.add_item(BackpackFishSearchButton())
         self.add_item(EquipmentSelect(user_items))
-        self.add_item(FavoriteFishSelect(user_items))
+        self.add_item(FavoriteFishSelect(user_id, [item for item in items if is_inventory_fish(item.get("item_name", ""))]))
 
 @bot.tree.command(name="背包", description="查看玩家黑曜石背包、屬性、裝備與最愛保護鎖")
 async def backpack_cmd(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
     user_id = int(interaction.user.id)
     afk_count = process_afk_fishing(user_id)
-    user = get_user(user_id)
     update_user(user_id, name=interaction.user.display_name, last_active_time=time.time())
 
     embed = create_backpack_embed(user_id, interaction.user.display_name)
     if afk_count > 0:
-        embed.description += f"\n💤 本次回歸已結算掛機殘留：**`{afk_count}`** 條。"
-    await interaction.response.send_message(
-        embed=embed,
-        view=BackpackView(user_id)
-    )
+        embed.description += f"\n💤 本次回歸已結算掛機殘留：**`{afk_count}`** 條，可在搜尋／最愛選單管理。"
+    await interaction.followup.send(embed=embed, view=BackpackView(user_id), ephemeral=True)
 
 # ======= 🦾 組十四：黑曜石主副手裝備選單、與背包下掛喜愛鎖控制類別 =======
 class EquipmentSelect(discord.ui.Select):
@@ -1179,34 +1268,67 @@ class EquipmentView(discord.ui.View):
         self.add_item(EquipmentSelect(user_items))
 
 class FavoriteFishSelect(discord.ui.Select):
-    def __init__(self, user_items):
+    def __init__(self, user_id, fish_items=None):
+        self.user_id = int(user_id)
+        if fish_items is None:
+            fish_items = [item for item in get_backpack_items(self.user_id) if is_inventory_fish(item.get("item_name", ""))]
         options = []
-        for item_name, item_count in user_items.items():
-            if item_count > 0 and not any(v in item_name for v in ["魚竿", "魚叉", "巨弩", "戟", "劍", "潛水", "鑽探", "Rod"]):
-                if len(options) < 25:
-                    options.append(discord.SelectOption(label=f"{item_name} (x{item_count})", value=item_name, description="一鍵點擊：[❤️ 上鎖保護 / 🔓 解除保護鎖]", emoji="🐟"))
+        for item in fish_items:
+            item_name = str(item.get("item_name", ""))
+            item_count = int(item.get("item_count", 0))
+            if item_count <= 0:
+                continue
+            favorite = int(item.get("is_favorite", 0)) == 1
+            status = "已標記 💖" if favorite else "目前未標記"
+            options.append(discord.SelectOption(
+                label=item_name[:100], value=item_name,
+                description=f"{status}｜數量 {item_count}",
+                emoji="💖" if favorite else "🐟"
+            ))
+            if len(options) >= 25:
+                break
         if not options:
-            options.append(discord.SelectOption(label="大倉庫目前無可用魚獲", description="老哥，你倉庫裡沒有可以標記最愛的物資物資"))
-        super().__init__(placeholder="💖 點擊選單標記最愛魚獲：全賣時會自動跳過保護鎖...", min_values=1, max_values=1, options=options)
+            options.append(discord.SelectOption(label="目前沒有可標記的魚", value="__NO_FISH__", description="先釣到魚再來標記 💖", emoji="📭"))
+        super().__init__(placeholder="💖 選擇魚獲：標記／解除最愛保護", min_values=1, max_values=1, options=options, row=2)
 
     async def callback(self, interaction: discord.Interaction):
-        user_id = int(interaction.user.id)
+        if int(interaction.user.id) != self.user_id:
+            await interaction.response.send_message("❌ 這不是你的背包控制台。", ephemeral=True)
+            return
         chosen_fish = self.values[0]
-        if chosen_fish == "大倉庫目前無可用魚獲":
-            await interaction.response.send_message("❌ 背包內沒有可用魚獲可以鎖定！", ephemeral=True); return
-        
-        is_fav = inventory_col.find_one({"user_id": user_id, "item_name": chosen_fish})
-        current_fav = int(is_fav.get("is_favorite", 0)) if is_fav else 0
-        new_fav = 1 if current_fav == 0 else 0
-        inventory_col.update_one({"user_id": user_id, "item_name": chosen_fish}, {"$set": {"is_favorite": new_fav}})
-        
-        msg = f"💖 **【最愛標記成功】** 【{chosen_fish}】已打上防呆鋼印！執行 `/全賣` 時將**絕對跳過保護**！" if new_fav == 1 else f"🔓 **【保護安全解除】** 【{chosen_fish}】已回到常規名冊，現在可以全賣變現了。"
-        await interaction.response.send_message(msg, ephemeral=True)
+        if chosen_fish == "__NO_FISH__":
+            await interaction.response.send_message("❌ 背包內目前沒有可以標記的魚獲。", ephemeral=True)
+            return
+
+        doc = inventory_col.find_one({
+            "user_id": self.user_id, "item_name": chosen_fish, "item_count": {"$gt": 0}
+        })
+        if not doc or not is_inventory_fish(chosen_fish):
+            await interaction.response.send_message("❌ 這筆魚獲已不存在，請重新整理背包。", ephemeral=True)
+            return
+
+        current_fav = int(doc.get("is_favorite", 0))
+        new_fav = 0 if current_fav == 1 else 1
+        result = inventory_col.update_one(
+            {"_id": doc["_id"], "item_count": {"$gt": 0}},
+            {"$set": {"is_favorite": new_fav}}
+        )
+        if result.modified_count != 1:
+            await interaction.response.send_message("❌ 最愛狀態更新失敗，請重新整理背包後再試。", ephemeral=True)
+            return
+
+        action = "💖 最愛標記成功" if new_fav else "🔓 最愛保護解除"
+        action_desc = "之後 `/全賣` 與上架交易行時會被保護。" if new_fav else "現在可以正常出售或上架。"
+        await interaction.response.edit_message(
+            embed=create_backpack_embed(self.user_id, interaction.user.display_name),
+            view=BackpackView(self.user_id)
+        )
+        await interaction.followup.send(f"{action}！【{chosen_fish}】{action_desc}", ephemeral=True)
 
 class FavoriteFishView(discord.ui.View):
-    def __init__(self, user_items):
+    def __init__(self, user_id):
         super().__init__(timeout=60)
-        self.add_item(FavoriteFishSelect(user_items))
+        self.add_item(FavoriteFishSelect(user_id))
 class EquipmentCategorySelect(discord.ui.Select):
     def __init__(self, user_id, category, label, emoji):
         self.user_id = int(user_id)
@@ -1552,6 +1674,7 @@ class SellAllConfirmView(discord.ui.View):
 
 @bot.tree.command(name="全賣", description="出售未鎖定的魚獲，執行前會顯示警告確認")
 async def sell_all(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
     user_id = int(interaction.user.id)
     sale_items = list(inventory_col.find({
         "user_id": user_id, "item_count": {"$gt": 0}, "is_favorite": {"$ne": 1}
@@ -1573,9 +1696,9 @@ async def sell_all(interaction: discord.Interaction):
         ),
         color=0xE74C3C
     )
-    await interaction.response.send_message(embed=embed, view=SellAllConfirmView(user_id), ephemeral=True)
+    await interaction.followup.send(embed=embed, view=SellAllConfirmView(user_id), ephemeral=True)
 
-async def execute_sell_all(interaction: discord.Interaction):
+async def execute_sell_all(interaction: discord.Interaction, only_afk=False):
     user_id = int(interaction.user.id)
     user = get_user(user_id)
     
@@ -1595,9 +1718,12 @@ async def execute_sell_all(interaction: discord.Interaction):
     for item in items:
         item_name = item["item_name"]
         count = int(item["item_count"])
-        base_name = item_name
-        for p in ["[🟢毒性突變] ", "[🔵晶螢閃耀] ", "[👑極致黃金] ", "[🔴血色異變] ", "[🌌星空突變] "]: 
-            base_name = base_name.replace(p, "")
+        is_afk = str(item_name).startswith(AFK_PREFIX)
+        if only_afk and not is_afk:
+            continue
+        if not only_afk and not is_afk:
+            pass
+        base_name = normalize_fish_name(item_name)
         if base_name in prices_map:
             revenue = prices_map[base_name] * count
             if "[🟢毒性突變]" in item_name: revenue = int(revenue * 1.3); tag = "(🔥1.3倍毒性)"
@@ -1609,7 +1735,10 @@ async def execute_sell_all(interaction: discord.Interaction):
             
             sold_details.append(f"• {item_name} x{count} -> 獲得 {revenue} 金幣 {tag}")
             total_revenue += revenue; sold_any = True
-            inventory_col.update_one({"_id": item["_id"]}, {"$set": {"item_count": 0}})
+            inventory_col.update_one(
+                {"_id": item["_id"], "item_count": {"$gt": 0}, "is_favorite": {"$ne": 1}},
+                {"$set": {"item_count": 0}}
+            )
             
     if not sold_any or total_revenue == 0:
         await interaction.followup.send("❌ 大倉庫內沒有常規可交易回收的魚獲物資。", ephemeral=True); return
@@ -1633,6 +1762,55 @@ async def execute_sell_all(interaction: discord.Interaction):
     embed = discord.Embed(title="💰 魚獲交易結算完畢", description="\n".join(sold_details) + f"\n\n💵 實際賺得：**{total_revenue}** 金幣！{tax_msg}", color=0xF1C40F)
     await interaction.followup.send(embed=embed)
 
+
+
+class SellAFKConfirmView(discord.ui.View):
+    def __init__(self, user_id):
+        super().__init__(timeout=60)
+        self.user_id = int(user_id)
+
+    @discord.ui.button(label="確認出售掛機魚", emoji="💤", style=discord.ButtonStyle.danger)
+    async def confirm_afk(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if int(interaction.user.id) != self.user_id:
+            await interaction.response.send_message("❌ 這不是你的掛機魚出售確認視窗。", ephemeral=True)
+            return
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(content="⏳ 正在結算掛機魚貨……", embed=None, view=self)
+        await execute_sell_all(interaction, only_afk=True)
+
+    @discord.ui.button(label="取消", emoji="✖️", style=discord.ButtonStyle.secondary)
+    async def cancel_afk(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(content="✅ 已取消，掛機魚貨沒有被扣除。", embed=None, view=None)
+
+
+@bot.tree.command(name="出售掛機魚", description="只出售背包中的掛機殘留魚貨，執行前會顯示警告確認")
+async def sell_afk_fish_cmd(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    user_id = int(interaction.user.id)
+    docs = list(inventory_col.find({
+        "user_id": user_id, "item_count": {"$gt": 0}, "is_favorite": {"$ne": 1}
+    }))
+    afk_count = sum(
+        int(d.get("item_count", 0))
+        for d in docs
+        if str(d.get("item_name", "")).startswith(AFK_PREFIX)
+    )
+    if afk_count <= 0:
+        await interaction.followup.send("📭 目前沒有可出售的 💤 掛機殘留魚貨。", ephemeral=True)
+        return
+
+    embed = discord.Embed(
+        title="⚠️ 掛機魚貨出售確認",
+        description=(
+            f"你即將出售所有未標記 💖 最愛的掛機殘留魚貨。\n\n"
+            f"💤 預計出售：**{afk_count} 隻**\n"
+            "💖 最愛魚獲：**不會出售**\n"
+            "⚠️ 確認後會依正常魚價結算金幣。"
+        ),
+        color=0xE67E22
+    )
+    await interaction.followup.send(embed=embed, view=SellAFKConfirmView(user_id), ephemeral=True)
 # ======= 📚 組十六：5.5.5 全新互動世界圖鑑 + 玩家交易所 =======
 # 魚類圖鑑：未發現魚種會隱藏名稱、代碼、售價、稀有度與條件；成功釣到後自動解鎖。
 # 工具圖鑑：直接讀取現有 ROD_STATS / BAITS_SHOP / WEAPONS_SHOP / ENCHANT_POOL / BOBBER_POOL。
@@ -2174,8 +2352,9 @@ def create_tool_detail_embed(category):
 
 @bot.tree.command(name="查看圖鑑", description="開啟全新的互動式魚類與工具圖鑑")
 async def view_encyclopedia(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
     user_id = int(interaction.user.id)
-    await interaction.response.send_message(
+    await interaction.followup.send(
         embed=create_encyclopedia_home_embed(user_id, interaction.user.display_name),
         view=EncyclopediaMainView()
     )
@@ -2297,9 +2476,11 @@ class MarketView(discord.ui.View):
 
 @bot.tree.command(name="交易所", description="查看玩家交易所掛單與市場價格")
 async def market_cmd(interaction: discord.Interaction):
-    await interaction.response.send_message(
+    await interaction.response.defer(ephemeral=True)
+    await interaction.followup.send(
         embed=create_market_embed(interaction.user.id),
-        view=MarketView()
+        view=MarketView(),
+        ephemeral=True
     )
 
 
@@ -2323,27 +2504,28 @@ class MarketListConfirmView(discord.ui.View):
 @bot.tree.command(name="上架交易所", description="將已發現的魚類掛到玩家交易所（上架前會彈出警告確認）")
 @app_commands.describe(fish_name="要出售的魚名", quantity="出售數量", unit_price="單條售價")
 async def market_list_cmd(interaction: discord.Interaction, fish_name: str, quantity: int, unit_price: int):
+    await interaction.response.defer(ephemeral=True)
     user_id = int(interaction.user.id); fish = get_fish_catalog().get(fish_name)
     if not fish:
-        await interaction.response.send_message("❌ 找不到這條魚。", ephemeral=True); return
+        await interaction.followup.send("❌ 找不到這條魚。", ephemeral=True); return
     if not is_fish_discovered(user_id, fish_name):
-        await interaction.response.send_message("❌ 你尚未發現這條魚，不能上架交易所。", ephemeral=True); return
+        await interaction.followup.send("❌ 你尚未發現這條魚，不能上架交易所。", ephemeral=True); return
     if quantity <= 0 or quantity > 999 or unit_price <= 0:
-        await interaction.response.send_message("❌ 數量需 1～999，單價必須大於 0。", ephemeral=True); return
+        await interaction.followup.send("❌ 數量需 1～999，單價必須大於 0。", ephemeral=True); return
     floor = fish_market_floor(fish)
     if unit_price < floor:
         mult = MARKET_FLOOR_MULTIPLIER.get(fish["rarity"], 2.5)
-        await interaction.response.send_message(f"❌ 低於官方最低掛單價！最低 `{floor:,}` 🪙（正常價 × {mult:g}）。", ephemeral=True); return
+        await interaction.followup.send(f"❌ 低於官方最低掛單價！最低 `{floor:,}` 🪙（正常價 × {mult:g}）。", ephemeral=True); return
     owned = get_item_count(user_id, fish_name)
     if owned < quantity:
-        await interaction.response.send_message(f"❌ 背包只有 `{owned}` 隻 {fish_name}。", ephemeral=True); return
+        await interaction.followup.send(f"❌ 背包只有 `{owned}` 隻 {fish_name}。", ephemeral=True); return
     embed = discord.Embed(title="⚠️ 交易所上架確認", description=(
         f"📦 商品：**{fish_name} ×{quantity}**\n"
         f"💰 單價：`{unit_price:,} 🪙`\n"
         f"💵 預估總價：`{unit_price * quantity:,} 🪙`\n"
         f"🏛️ 官方成交稅：`{MARKET_TAX_RATE * 100:.0f}%`\n\n"
         "⚠️ 確認後魚獲會立即從背包扣除並進入交易行。"), color=0xF39C12)
-    await interaction.response.send_message(embed=embed, view=MarketListConfirmView(user_id, fish_name, quantity, unit_price), ephemeral=True)
+    await interaction.followup.send(embed=embed, view=MarketListConfirmView(user_id, fish_name, quantity, unit_price), ephemeral=True)
 
 async def execute_market_list(interaction: discord.Interaction, fish_name: str, quantity: int, unit_price: int):
     user_id = int(interaction.user.id); fish = get_fish_catalog().get(fish_name)
@@ -2854,6 +3036,7 @@ async def adventure_cmd(interaction: discord.Interaction):
 
 @bot.tree.command(name="世界boss", description="查看全服世界 Boss、傷害榜並進行一次攻擊")
 async def world_boss_cmd(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
     user_id = int(interaction.user.id)
     boss = reset_world_boss_if_needed()
     hp = max(0, int(boss.get("hp", 0)))
@@ -2878,7 +3061,7 @@ async def world_boss_cmd(interaction: discord.Interaction):
     if hp <= 0:
         embed.description = "🏆 **Boss 已被全服擊破！正在進入新一輪重生。**"
         reset_world_boss_if_needed()
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
         return
 
     damage = max(1, int(suggested * random.uniform(0.85, 1.15)))
@@ -2889,7 +3072,7 @@ async def world_boss_cmd(interaction: discord.Interaction):
         return_document=ReturnDocument.AFTER,
     )
     if not updated:
-        await interaction.response.send_message("⚠️ Boss 剛好被其他玩家擊破，請刷新後再戰。", ephemeral=True)
+        await interaction.followup.send("⚠️ Boss 剛好被其他玩家擊破，請刷新後再戰。", ephemeral=True)
         return
 
     actual_damage = min(damage, before_hp)
@@ -2914,7 +3097,7 @@ async def world_boss_cmd(interaction: discord.Interaction):
         world_boss_col.update_one({"boss_id": "global_01"}, {"$set": {"rewarded": True, "active": False, "defeated_by": user_id, "defeated_at": time.time()}})
         reward_msg = f"\n\n🏆 **你完成了終結一擊！**\n💰 +{reward_gold:,} 🪙\n🎁 傳奇藥水寶箱 ×1"
 
-    await interaction.response.send_message(
+    await interaction.followup.send(
         f"⚔️ 你對 **{boss['name']}** 造成了 `{actual_damage:,}` 傷害！\n"
         f"❤️ Boss 剩餘 HP：`{new_hp:,} / {max_hp:,}`{reward_msg}"
     )
@@ -2923,6 +3106,7 @@ async def world_boss_cmd(interaction: discord.Interaction):
 @bot.tree.command(name="血脈", description="查看與覺醒你的遠古血脈")
 @app_commands.describe(目標血脈="留空查看目前血脈；填入血脈名稱可嘗試覺醒")
 async def bloodline_cmd(interaction: discord.Interaction, 目標血脈: str = ""):
+    await interaction.response.defer(ephemeral=True)
     user_id = int(interaction.user.id)
     user = get_user(user_id)
     current = user.get("race_type", "👤 常規人類")
@@ -2933,41 +3117,41 @@ async def bloodline_cmd(interaction: discord.Interaction, 目標血脈: str = ""
         for name, data in BLOODLINES.items():
             lines.append(f"\n**{name}**\n• 最高 V{data['max_version']}\n• 解鎖條件：{data['requirements']}\n• 首次費用：`{data['unlock_cost']:,}` 🪙\n• {data['desc']}")
         embed = discord.Embed(title="🧬 血脈神殿", description="".join(lines), color=0x9B59B6)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
         return
 
     target = 目標血脈.strip()
     if target not in BLOODLINES:
-        await interaction.response.send_message("❌ 找不到指定血脈。請先使用 `/血脈` 查看完整血脈名冊。", ephemeral=True)
+        await interaction.followup.send("❌ 找不到指定血脈。請先使用 `/血脈` 查看完整血脈名冊。", ephemeral=True)
         return
     data = BLOODLINES[target]
     level = int(user.get("level", 0))
     if target == "🦈 深海鯊皇" and level < 20:
-        await interaction.response.send_message("❌ 需要 LV.20 才能覺醒深海鯊皇。", ephemeral=True)
+        await interaction.followup.send("❌ 需要 LV.20 才能覺醒深海鯊皇。", ephemeral=True)
         return
     if target == "🧜 海妖" and level < 60:
-        await interaction.response.send_message("❌ 需要 LV.60 才能覺醒海妖。", ephemeral=True)
+        await interaction.followup.send("❌ 需要 LV.60 才能覺醒海妖。", ephemeral=True)
         return
     if target == "🔱 亞特蘭提斯神族" and (level < 160 or user.get("current_map") != "三海_馬里亞娜海溝深淵"):
-        await interaction.response.send_message("❌ 需要 LV.160 且位於三海才能覺醒亞特蘭提斯神族。", ephemeral=True)
+        await interaction.followup.send("❌ 需要 LV.160 且位於三海才能覺醒亞特蘭提斯神族。", ephemeral=True)
         return
     cost = int(data["unlock_cost"] if target != current else max(5000, data["unlock_cost"] // 2))
     current_version = version if current == target else 0
     next_version = 1 if current != target else current_version + 1
     if next_version > int(data["max_version"]):
-        await interaction.response.send_message("✅ 你的這條血脈已達最高階。", ephemeral=True)
+        await interaction.followup.send("✅ 你的這條血脈已達最高階。", ephemeral=True)
         return
     if int(user.get("balance", 0)) < cost:
-        await interaction.response.send_message(f"❌ 金幣不足，需要 `{cost:,}` 🪙。", ephemeral=True)
+        await interaction.followup.send(f"❌ 金幣不足，需要 `{cost:,}` 🪙。", ephemeral=True)
         return
     changed = users_col.update_one(
         {"user_id": user_id, "balance": {"$gte": cost}},
         {"$inc": {"balance": -cost}, "$set": {"race_type": target, "race_version": next_version}}
     )
     if changed.modified_count != 1:
-        await interaction.response.send_message("❌ 覺醒扣款失敗，這次操作未成立。", ephemeral=True)
+        await interaction.followup.send("❌ 覺醒扣款失敗，這次操作未成立。", ephemeral=True)
         return
-    await interaction.response.send_message(
+    await interaction.followup.send(
         f"🧬 **血脈覺醒成功！**\n"
         f"{current} V{version} → **{target} V{next_version}**\n"
         f"💰 消耗：`{cost:,}` 🪙"
@@ -3002,8 +3186,9 @@ def generate_auction_code():
 
 @bot.tree.command(name="拍賣場", description="查看玩家競標中的物品與剩餘時間")
 async def auction_house_cmd(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
     embed = create_auction_embed()
-    await interaction.response.send_message(embed=embed)
+    await interaction.followup.send(embed=embed)
 
 
 @bot.tree.command(name="建立拍賣", description="把背包中的物品放入限時競標拍賣場")
@@ -3157,3 +3342,5 @@ install_tutorial_gate()
 keep_alive()
 DISCORD_CODE = os.getenv("DISCORD_TOKEN")
 bot.run(DISCORD_CODE)
+
+#@ESRSC是gay古月方圓才是作者123132
