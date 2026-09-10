@@ -243,18 +243,18 @@ MAP_EXCLUSIVE_FISH = {
         "稀有": [("🐙 深淵巨型章魚", 280), ("🦈 遠古惡魔巨齒鯊", 650)],
         "傳奇": [("🐳 藍鯨", 1500)], "秘密": [("🛸 外星科技零件", 25000)],
         "神話": [("🐉 東方青龍", 35000), ("🔥 諸神湮滅核心 (Abyss Core)", 50000)], 
-        "作者級": [("💻 作者的未編譯源代碼", 100000), ("🤨神秘的SIGMAFACE", 300000)]
+        "作者級": [("💻 作者的未編譯源代碼", 100000), ("🤨神秘的SIGMAFACE", 3000030)]
     },
     "四海・地幔熔岩禁地": {
         "傳奇": [("🌋 熔岩火靈魚", 3500)],
         "神話": [("🔥 煉獄不死鳥之眼", 12000), ("💎 熔岩核心巨鑽", 25000), ("👑 萬物主宰聖石 (Overlord Stone)", 66666)],
         "秘密": [("🌋 古星核熱熔高壓液體", 55000)],
-        "作者級": [("🌌 SIGMA的熔岩超燃雪茄", 333333)]
+        "作者級": [("🌌 SIGMA的熔岩超燃雪茄", 3333333)]
     }
 }
 # ======= 🎫 組六：製作者特殊公告 CODE 破譯、與全服動態幫助手冊 =======
 @bot.tree.command(name="兌換碼", description="輸入官方禮包碼兌換物資，製作者輸入超難加密 CODE 可發動全服智慧公告廣播功能")
-@app_commands.describe(code="請輸入你要兌換的代碼（製作者公告碼格式：GODFREY_ADMIN_MATRIX_CODE_2026_BY_SIGMA::公告內容）")
+@app_commands.describe(code="請輸入你要兌換的代碼")
 async def redeem_code(interaction: discord.Interaction, code: str):
     user_id = int(interaction.user.id)
     
