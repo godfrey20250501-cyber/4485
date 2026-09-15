@@ -1,3346 +1,5594 @@
-# ======= 🪐 組一：核心環境依賴與雲端 MongoDB Atlas 連線防線（第 1 ~ 95 行） =======
-from dotenv import load_dotenv
-load_dotenv()  # 自動打開環境變數檔案讀取 Token
 import os
-import time
+import json
 import random
+import time
 import asyncio
-from flask import Flask
-from threading import Thread
-from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
 import discord
-from discord.ext import commands
 from discord import app_commands
-from pymongo import MongoClient, ReturnDocument
+from discord.ext import commands
 
-# 🌐 Flask 網頁製造機（保持 24h 不休息，防止 Render 免費版睡眠）
-app = Flask('')
+DISCORD_CODE = os.getenv("DISCORD_CODE")
+DATA_FILE = Path("xiuxian_world.json")
+WORLD_NAME = "九霄萬界"
+VERSION = "4.0.0"
 
-@app.route('/')
-def home():
-    return "歡樂釣魚場 5.5.5 諸神黃昏雲端連線中心已全線大開綠燈！"
-
-def run():
-    app.run(host='0.0.0.0', port=8080)
-
-def keep_alive():
-    t = Thread(target=run)
-    t.start()
-
-# 1. Discord 機器人基礎意圖設定 (Intents)
 intents = discord.Intents.default()
-intents.message_content = True
+intents.guilds = True
+intents.members = True
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-class MyBot(commands.Bot):
-    def __init__(self):
-        super().__init__(command_prefix="!", intents=intents)
+PATHS = {
+    "cultivation": "正統仙途",
+    "inheritance": "上古傳承",
+    "body": "煉體大道",
+}
 
-    async def setup_hook(self):
-        try:
-            await self.tree.sync()
-            print("連線成功：歡樂釣魚場 5.5.5 雲端斜線指令已完全實時同步！")
-        except Exception as e:
-            print(f"指令同步提示: {e}")
-
-bot = MyBot()
-
-# 🌟 官方支援群 ID 設定（已完美對齊老哥的 Discord 伺服器！）
-SUPPORT_GUILD_ID = 1546517053719060642
-
-# ======= 🍀 MongoDB 雲端保險箱架構 =======
-MONGO_URI = os.getenv("MONGO_URI")
-if not MONGO_URI:
-    print("🚨 警告：Render 後台未偵測到 MONGO_URI 環境變數！將自動建立本地虛擬 Fallback 連線。")
-    client = MongoClient("mongodb://localhost:27017/", serverSelectionTimeoutMS=2000)
-else:
-    client = MongoClient(MONGO_URI)
-
-# 選定資料庫與四大雲端數據集合（徹底砸碎舊 SQLite 殘留）
-db = client["fishing_game_555"]
-users_col = db["users"]
-inventory_col = db["inventory"]
-guilds_col = db["guilds"]
-settings_col = db["guild_settings"]
-
-def init_db():
-    try:
-        # 測試雲端握手
-        client.admin.command('ping')
-        print("🟢 諸神黃昏防線：歡樂釣魚場與 MongoDB Atlas 雲端資料庫 24h 永久連線成功！玩家存檔已鎖死！")
-    except Exception as e:
-        print(f"🚨 雲端連線提示: {e}")
-# ======= 📊 組二：JSON 文件型資料庫安全讀寫工具組（第 96 ~ 185 行） =======
-def get_user(user_id):
-    user_id = int(user_id)
-    user = users_col.find_one({"user_id": user_id})
-    if not user:
-        # 船新玩家初始化一整包精美的 5.5 歷史物件結構
-        default_user = {
-            "user_id": user_id, "name": f"船長({user_id})", "balance": 100, "rod": "新手魚竿", "bait_count": 5,
-            "level": 0, "xp": 0, "current_map": "一海・新手小池塘", "pet": "無 (徒手素釣)",
-            "last_daily": "2000-01-01", "daily_streak": 0, "enchant": "無", "bait_type": "無 (徒手肉搏)",
-            "quest_type": "無", "quest_target": 0, "quest_progress": 0, "quest_reward": 0,
-            "afk_save_hours": 1, "last_active_time": time.time(),
-            "tutorial_completed": False, "tutorial_step": 0,
-            "race_type": "👤 常規人類", "race_version": 1, "world_boss_damage": 0  # 🌟 新架構欄位
-        }
-        users_col.insert_one(default_user)
-        return default_user
-        
-    # 🛠️ 雲端自動熱修補機制：老玩家如果缺 5.5 的新欄位，在讀取的 0.01 秒內自動在雲端補齊預設值！
-    updates = {}
-    defaults = {
-        "name": f"船長({user_id})", "balance": 100, "rod": "新手魚竿", "bait_count": 5, "level": 0, "xp": 0,
-        "current_map": "一海・新手小池塘", "pet": "無 (徒手素釣)", "last_daily": "2000-01-01", "daily_streak": 0,
-        "enchant": "無", "bait_type": "無 (徒手肉搏)", "quest_type": "無", "quest_target": 0,
-        "quest_progress": 0, "quest_reward": 0, "afk_save_hours": 1, "last_active_time": time.time(),
-        "tutorial_completed": True, "tutorial_step": 0, "race_type": "👤 常規人類", "race_version": 1, "world_boss_damage": 0
-    }
-    for k, v in defaults.items():
-        if k not in user:
-            user[k] = v
-            updates[k] = v
-    if updates:
-        users_col.update_one({"user_id": user_id}, {"$set": updates})
-    return user
-
-def update_user(user_id, **kwargs):
-    user_id = int(user_id)
-    # 雲端一鍵更新欄位，最頂級型態安全
-    users_col.update_one({"user_id": user_id}, {"$set": kwargs}, upsert=True)
-
-FISH_BACKPACK_LIMIT = 250
-
-def is_inventory_fish(item_name):
-    name = str(item_name)
-    if name.startswith("[💤掛機殘留]"):
-        return True
-    return classify_inventory_item(name) == "fish" if "classify_inventory_item" in globals() else name.startswith(("🐟", "🐠", "🦈", "🐡", "🦑", "🦀", "🐙", "🐋", "🐬", "🐳", "🪼", "👟", "🐉", "🔥", "🌋", "🌌"))
-
-def get_fish_inventory_count(user_id):
-    total = 0
-    for item in inventory_col.find({"user_id": int(user_id), "item_count": {"$gt": 0}}, {"item_name": 1, "item_count": 1}):
-        if is_inventory_fish(item.get("item_name", "")):
-            total += int(item.get("item_count", 0))
-    return total
-
-def get_inventory_capacity_remaining(user_id):
-    return max(0, FISH_BACKPACK_LIMIT - get_fish_inventory_count(user_id))
-
-MUTATION_PREFIXES = [
-    "[🟢毒性突變] ", "[🔵晶螢閃耀] ", "[👑極致黃金] ",
-    "[🔴血色異變] ", "[🌌星空突變] "
+REALMS = [
+    ("凡人", 0, 1.0),
+    ("煉氣", 100, 1.25),
+    ("築基", 500, 1.8),
+    ("金丹", 1500, 2.8),
+    ("元嬰", 4000, 4.2),
+    ("化神", 9000, 6.5),
+    ("煉虛", 18000, 10.0),
+    ("合體", 35000, 15.0),
+    ("大乘", 70000, 22.0),
+    ("渡劫", 140000, 35.0),
 ]
-AFK_PREFIX = "[💤掛機殘留] "
 
-def normalize_fish_name(item_name):
-    """移除掛機／突變前綴，得到可查價格、圖鑑的基礎魚名。"""
-    name = str(item_name)
-    if name.startswith(AFK_PREFIX):
-        name = name[len(AFK_PREFIX):]
-    changed = True
-    while changed:
-        changed = False
-        for prefix in MUTATION_PREFIXES:
-            if name.startswith(prefix):
-                name = name[len(prefix):]
-                changed = True
-                break
-    return name
+ROOTS = [
+    ("五行凡靈根", 1.00, "平衡的五行親和。"),
+    ("金靈根", 1.12, "攻伐見長。"),
+    ("木靈根", 1.14, "生命與丹道見長。"),
+    ("水靈根", 1.16, "恢復與水法見長。"),
+    ("火靈根", 1.20, "煉丹與火法見長。"),
+    ("土靈根", 1.18, "防禦與根基見長。"),
+    ("風靈根", 1.26, "身法見長。"),
+    ("雷靈根", 1.34, "雷法見長。"),
+    ("冰靈根", 1.30, "控制見長。"),
+    ("天靈根", 1.70, "修煉效率極高。"),
+    ("異靈根", 1.92, "特殊法則親和。"),
+]
 
-def is_potion_or_consumable(item_name):
-    name = str(item_name)
-    return any(word in name for word in ["藥水", "寶箱", "禮包", "魚餌", "餌", "浮標", "晶石"])
+RARITIES = ["凡品", "良品", "精品", "靈品", "玄品", "地品", "天品", "仙品"]
 
-def add_inventory(user_id, item_name, amount=1):
-    user_id = int(user_id)
-    amount = int(amount)
-    if amount <= 0:
-        return 0
-    add_amount = amount
-    if is_inventory_fish(item_name):
-        add_amount = min(amount, get_inventory_capacity_remaining(user_id))
-        if add_amount <= 0:
-            return 0
-    inventory_col.update_one(
-        {"user_id": user_id, "item_name": item_name},
-        {"$inc": {"item_count": add_amount}, "$setOnInsert": {"is_favorite": 0}},
-        upsert=True
-    )
-    return add_amount
-# ======= 🏪 組三：全球普通商店物資庫與 10 大極端天氣池定義（第 186 ~ 275 行） =======
-BAITS_SHOP = {
-    # 🐛 Fisch 風格硬核消耗魚餌
-    "普通魚餌": 15, "稀有魚餌 (x1)": 45, "神話魚餌 (x1)": 150, "傳說魚餌 (x1)": 350, 
-    "海藻餌": 25, "磁鐵重餌": 45, "🔋 彈性奈米反覆餌": 4999,
-    
-    # 🧪 截圖全套 11 款珍稀魔法藥水
-    "幸運藥水1級 (x3)": 100, "幸運藥水2級 (x10)": 400, "幸運藥水3級 (x2)": 600, 
-    "超級幸運藥水 (x2)": 800, "天體幸運藥水 (x2)": 1500, "彩虹藥水 (x1)": 2000, 
-    "泰坦藥水 (x3)": 1200, "變異藥水 (x2)": 500, "閃亮藥水 (x4)": 450, 
-    "雙倍活動幣藥水 (x1)": 700, "黃金藥水 (x2)": 650, "⚡閃電速度藥水": 250, "💗性慾藥水": 150,
-    
-    # 🧰 藥水與盲盒寶箱
-    "🎁 基礎藥水寶箱": 250, "🎁 稀原藥水寶箱": 600, "🎁 傳奇藥水寶箱": 1500,
-    "寵物禮包小 (x2)": 300, "寵物禮包大 (x76)": 2500, "夏日水餃禮包 (x7)": 500,
-    "🥳神祕黃金寶箱": 500, "🌌轉生神仙水": 99999,
-    
-    # 🪝 消耗性功能型高階浮標
-    "🟢 綠光電子浮標": 150, "🔵 藍海震盪浮標": 500, "🔴 狂暴重力浮標": 1200
+# 境界突破丹：只對「下一次、目前的突破」生效；使用後立即消耗。
+BREAKTHROUGH_PILLS = {
+    5001: {"name": "築基丹", "for_realm": 2, "price": 900, "drop_rate": 0.12, "description": "煉氣圓滿突破築基時，將本次成功率提高至 70%。"},
+    5002: {"name": "結丹丹", "for_realm": 3, "price": 3200, "drop_rate": 0.10, "description": "築基圓滿突破金丹時，將本次成功率提高至 70%。"},
+    5003: {"name": "元嬰丹", "for_realm": 4, "price": 8500, "drop_rate": 0.08, "description": "金丹圓滿突破元嬰時，將本次成功率提高至 70%。"},
+    5004: {"name": "化神丹", "for_realm": 5, "price": 22000, "drop_rate": 0.06, "description": "元嬰圓滿突破化神時，將本次成功率提高至 70%。"},
+    5005: {"name": "煉虛丹", "for_realm": 6, "price": 50000, "drop_rate": 0.045, "description": "化神圓滿突破煉虛時，將本次成功率提高至 70%。"},
+    5006: {"name": "合體丹", "for_realm": 7, "price": 110000, "drop_rate": 0.035, "description": "煉虛圓滿突破合體時，將本次成功率提高至 70%。"},
+    5007: {"name": "大乘破境丹", "for_realm": 8, "price": 250000, "drop_rate": 0.025, "description": "合體圓滿突破大乘時，將本次成功率提高至 70%。"},
 }
 
-WEATHER_POOL = {
-    "☀️ 晴空萬里": {"desc": "風平浪靜，陽光灑落海面，非常適合出海。", "luck_bonus": 1.0, "speed_mod": 0.0},
-    "🌧️ 狂風暴雨": {"desc": "大雨傾盆，海浪洶湧，魚群紛紛浮上水面呼吸！", "luck_bonus": 1.6, "speed_mod": -1.0},
-    "🌫️ 濃霧密佈": {"desc": "海上大霧遮蔽視線，魚兒容易受驚，收竿需格外小心。", "luck_bonus": 0.8, "speed_mod": 1.0},
-    "🌌 天降異象": {"desc": "星海與遠古神光撕裂天空！各地湧現傳奇特產潮汐！", "luck_bonus": 2.5, "speed_mod": 2.0},
-    "⚡ 萬雷轟頂 (Thunderstorm)": {"desc": "雷暴撕裂海域，電磁共振使深海巨怪與科技零件瘋狂暴動！", "luck_bonus": 3.0, "speed_mod": -1.5},
-    "❄️ 冰天雪地 (Blizzard)": {"desc": "極寒低溫凍結海面，魚兒行動遲緩但體型巨大，突變率大激增！", "luck_bonus": 1.5, "speed_mod": 2.0},
-    "🌋 熔岩噴發 (Eruption)": {"desc": "地殼變動火山噴發，高溫高壓讓多彩異變首綴爆率永久翻倍！", "luck_bonus": 2.2, "speed_mod": -0.5},
-    "🌌 蝕日奇點 (Solar Eclipse)": {"desc": "萬丈黑光吞噬太陽，海域陷入絕對黑暗，未知恐怖秘密產物甦醒！", "luck_bonus": 4.0, "speed_mod": 1.0},
-    "🎰 歐皇狂歡 (🎰 Super Lucky)": {"desc": "全服氣運天梯榜大暴動！所有神話與作者級特產爆率直接炸裂！", "luck_bonus": 5.5, "speed_mod": 0.5},
-    "🌀 終極風暴 (Maelstrom)": {"desc": "時空混亂的終極超巨型漩渦，高拉扯度，不是斷竿就是神物降臨！", "luck_bonus": 5.0, "speed_mod": -2.0}
+WEAPONS = {
+    7001: {"name": "青鋒劍", "price": 600, "attack": 45, "max_level": 20, "kind": "武器"},
+    7002: {"name": "赤焰刀", "price": 1200, "attack": 80, "max_level": 25, "kind": "武器"},
+    7003: {"name": "玄鐵重劍", "price": 2600, "attack": 135, "max_level": 30, "kind": "武器"},
+    7004: {"name": "紫霄雷槍", "price": 6000, "attack": 230, "max_level": 35, "kind": "武器"},
+    7005: {"name": "太初仙劍", "price": 15000, "attack": 390, "max_level": 40, "kind": "武器"},
+    7006: {"name": "誅仙古戟", "price": 36000, "attack": 650, "max_level": 50, "kind": "武器"},
 }
 
-def get_global_weather():
-    time_seed = int(time.time() / 300)
-    random.seed(time_seed)
-    w_name = random.choice(list(WEATHER_POOL.keys()))
-    w_info = WEATHER_POOL[w_name]
-    random.seed()
-    return w_name, w_info
-# ======= 🎣 組四：四大地理隔離海域與 15 大被動技能神竿圖鑑（第 276 ~ 370 行） =======
-MAPS = {
-    "一海・新手小池塘": {"req_lvl": 0, "cost": 0, "npc": "👴 隔壁張老頭", "desc": "新手起步的溫馨池塘，平靜安全。", "image": "https://imgur.com", "shop": {"初級魚竿": 200, "高級魚竿": 1000, "穩健之竿 (Steady Rod)": 1500, "長線之竿 (Long Rod)": 2200}},
-    "二海・黃金珊瑚礁": {"req_lvl": 80, "cost": 500, "npc": "🦈 魚人阿龍", "desc": "高壓的水下珊瑚礁世界，魚獲斑斕色彩。", "image": "https://imgur.com", "shop": {"深海魚竿": 3500, "珊瑚礁共振竿": 6000, "霓虹之竿 (Neon Rod)": 7500, "黃金之竿 (Golden Rod)": 12000, "幸運之竿 (Lucky Rod)": 18000}},
-    "三海_馬里亞娜海溝深淵": {"req_lvl": 160, "cost": 2500, "npc": "🔱 大祭司波賽頓", "desc": "漆黑萬丈的馬里亞娜海溝底部，充斥未知巨獸與零件。", "image": "https://imgur.com", "shop": {"量子魚竿": 8000, "暗夜之竿 (Nocturnal Rod)": 15000, "外星干擾重型桿": 25000, "ADMIN魚桿": 500000}}
+
+TECHNIQUES = {
+    1: {"name": "木系玄門功法001", "price": 92, "bonus": 1.091, "realm": 0, "desc": "第1卷木系修行法門。"},
+    2: {"name": "水系玄門功法002", "price": 134, "bonus": 1.097, "realm": 0, "desc": "第2卷水系修行法門。"},
+    3: {"name": "火系玄門功法003", "price": 176, "bonus": 1.103, "realm": 0, "desc": "第3卷火系修行法門。"},
+    4: {"name": "土系玄門功法004", "price": 218, "bonus": 1.109, "realm": 0, "desc": "第4卷土系修行法門。"},
+    5: {"name": "風系玄門功法005", "price": 260, "bonus": 1.115, "realm": 0, "desc": "第5卷風系修行法門。"},
+    6: {"name": "雷系玄門功法006", "price": 302, "bonus": 1.121, "realm": 0, "desc": "第6卷雷系修行法門。"},
+    7: {"name": "冰系玄門功法007", "price": 344, "bonus": 1.127, "realm": 0, "desc": "第7卷冰系修行法門。"},
+    8: {"name": "陰系玄門功法008", "price": 386, "bonus": 1.133, "realm": 0, "desc": "第8卷陰系修行法門。"},
+    9: {"name": "陽系玄門功法009", "price": 428, "bonus": 1.139, "realm": 0, "desc": "第9卷陽系修行法門。"},
+    10: {"name": "金系玄門功法010", "price": 470, "bonus": 1.145, "realm": 0, "desc": "第10卷金系修行法門。"},
+    11: {"name": "木系玄門功法011", "price": 512, "bonus": 1.151, "realm": 0, "desc": "第11卷木系修行法門。"},
+    12: {"name": "水系玄門功法012", "price": 554, "bonus": 1.157, "realm": 0, "desc": "第12卷水系修行法門。"},
+    13: {"name": "火系玄門功法013", "price": 596, "bonus": 1.163, "realm": 0, "desc": "第13卷火系修行法門。"},
+    14: {"name": "土系玄門功法014", "price": 638, "bonus": 1.169, "realm": 0, "desc": "第14卷土系修行法門。"},
+    15: {"name": "風系玄門功法015", "price": 680, "bonus": 1.175, "realm": 0, "desc": "第15卷風系修行法門。"},
+    16: {"name": "雷系玄門功法016", "price": 722, "bonus": 1.181, "realm": 0, "desc": "第16卷雷系修行法門。"},
+    17: {"name": "冰系玄門功法017", "price": 764, "bonus": 1.187, "realm": 0, "desc": "第17卷冰系修行法門。"},
+    18: {"name": "陰系玄門功法018", "price": 806, "bonus": 1.193, "realm": 0, "desc": "第18卷陰系修行法門。"},
+    19: {"name": "陽系玄門功法019", "price": 848, "bonus": 1.199, "realm": 0, "desc": "第19卷陽系修行法門。"},
+    20: {"name": "金系玄門功法020", "price": 890, "bonus": 1.205, "realm": 0, "desc": "第20卷金系修行法門。"},
+    21: {"name": "木系玄門功法021", "price": 932, "bonus": 1.211, "realm": 0, "desc": "第21卷木系修行法門。"},
+    22: {"name": "水系玄門功法022", "price": 974, "bonus": 1.217, "realm": 0, "desc": "第22卷水系修行法門。"},
+    23: {"name": "火系玄門功法023", "price": 1016, "bonus": 1.223, "realm": 0, "desc": "第23卷火系修行法門。"},
+    24: {"name": "土系玄門功法024", "price": 1058, "bonus": 1.229, "realm": 0, "desc": "第24卷土系修行法門。"},
+    25: {"name": "風系玄門功法025", "price": 1100, "bonus": 1.085, "realm": 0, "desc": "第25卷風系修行法門。"},
+    26: {"name": "雷系玄門功法026", "price": 1142, "bonus": 1.091, "realm": 0, "desc": "第26卷雷系修行法門。"},
+    27: {"name": "冰系玄門功法027", "price": 1184, "bonus": 1.097, "realm": 0, "desc": "第27卷冰系修行法門。"},
+    28: {"name": "陰系玄門功法028", "price": 1226, "bonus": 1.103, "realm": 0, "desc": "第28卷陰系修行法門。"},
+    29: {"name": "陽系玄門功法029", "price": 1268, "bonus": 1.109, "realm": 0, "desc": "第29卷陽系修行法門。"},
+    30: {"name": "金系玄門功法030", "price": 1310, "bonus": 1.115, "realm": 0, "desc": "第30卷金系修行法門。"},
+    31: {"name": "木系玄門功法031", "price": 1352, "bonus": 1.121, "realm": 0, "desc": "第31卷木系修行法門。"},
+    32: {"name": "水系玄門功法032", "price": 1394, "bonus": 1.127, "realm": 0, "desc": "第32卷水系修行法門。"},
+    33: {"name": "火系玄門功法033", "price": 1436, "bonus": 1.133, "realm": 0, "desc": "第33卷火系修行法門。"},
+    34: {"name": "土系玄門功法034", "price": 1478, "bonus": 1.139, "realm": 0, "desc": "第34卷土系修行法門。"},
+    35: {"name": "風系玄門功法035", "price": 1520, "bonus": 1.145, "realm": 0, "desc": "第35卷風系修行法門。"},
+    36: {"name": "雷系玄門功法036", "price": 1562, "bonus": 1.151, "realm": 0, "desc": "第36卷雷系修行法門。"},
+    37: {"name": "冰系玄門功法037", "price": 1604, "bonus": 1.157, "realm": 0, "desc": "第37卷冰系修行法門。"},
+    38: {"name": "陰系玄門功法038", "price": 1646, "bonus": 1.163, "realm": 0, "desc": "第38卷陰系修行法門。"},
+    39: {"name": "陽系玄門功法039", "price": 1688, "bonus": 1.169, "realm": 0, "desc": "第39卷陽系修行法門。"},
+    40: {"name": "金系玄門功法040", "price": 1730, "bonus": 1.175, "realm": 0, "desc": "第40卷金系修行法門。"},
+    41: {"name": "木系玄門功法041", "price": 1772, "bonus": 1.181, "realm": 0, "desc": "第41卷木系修行法門。"},
+    42: {"name": "水系玄門功法042", "price": 1814, "bonus": 1.187, "realm": 0, "desc": "第42卷水系修行法門。"},
+    43: {"name": "火系玄門功法043", "price": 1856, "bonus": 1.193, "realm": 0, "desc": "第43卷火系修行法門。"},
+    44: {"name": "土系玄門功法044", "price": 1898, "bonus": 1.199, "realm": 0, "desc": "第44卷土系修行法門。"},
+    45: {"name": "風系玄門功法045", "price": 1940, "bonus": 1.205, "realm": 0, "desc": "第45卷風系修行法門。"},
+    46: {"name": "雷系玄門功法046", "price": 1982, "bonus": 1.211, "realm": 0, "desc": "第46卷雷系修行法門。"},
+    47: {"name": "冰系玄門功法047", "price": 2024, "bonus": 1.217, "realm": 0, "desc": "第47卷冰系修行法門。"},
+    48: {"name": "陰系玄門功法048", "price": 2066, "bonus": 1.223, "realm": 0, "desc": "第48卷陰系修行法門。"},
+    49: {"name": "陽系玄門功法049", "price": 2108, "bonus": 1.229, "realm": 0, "desc": "第49卷陽系修行法門。"},
+    50: {"name": "金系玄門功法050", "price": 2150, "bonus": 1.085, "realm": 0, "desc": "第50卷金系修行法門。"},
+    51: {"name": "木系玄門功法051", "price": 2192, "bonus": 1.136, "realm": 1, "desc": "第51卷木系修行法門。"},
+    52: {"name": "水系玄門功法052", "price": 2234, "bonus": 1.142, "realm": 1, "desc": "第52卷水系修行法門。"},
+    53: {"name": "火系玄門功法053", "price": 2276, "bonus": 1.148, "realm": 1, "desc": "第53卷火系修行法門。"},
+    54: {"name": "土系玄門功法054", "price": 2318, "bonus": 1.154, "realm": 1, "desc": "第54卷土系修行法門。"},
+    55: {"name": "風系玄門功法055", "price": 2360, "bonus": 1.16, "realm": 1, "desc": "第55卷風系修行法門。"},
+    56: {"name": "雷系玄門功法056", "price": 2402, "bonus": 1.166, "realm": 1, "desc": "第56卷雷系修行法門。"},
+    57: {"name": "冰系玄門功法057", "price": 2444, "bonus": 1.172, "realm": 1, "desc": "第57卷冰系修行法門。"},
+    58: {"name": "陰系玄門功法058", "price": 2486, "bonus": 1.178, "realm": 1, "desc": "第58卷陰系修行法門。"},
+    59: {"name": "陽系玄門功法059", "price": 2528, "bonus": 1.184, "realm": 1, "desc": "第59卷陽系修行法門。"},
+    60: {"name": "金系玄門功法060", "price": 2570, "bonus": 1.19, "realm": 1, "desc": "第60卷金系修行法門。"},
+    61: {"name": "木系玄門功法061", "price": 2612, "bonus": 1.196, "realm": 1, "desc": "第61卷木系修行法門。"},
+    62: {"name": "水系玄門功法062", "price": 2654, "bonus": 1.202, "realm": 1, "desc": "第62卷水系修行法門。"},
+    63: {"name": "火系玄門功法063", "price": 2696, "bonus": 1.208, "realm": 1, "desc": "第63卷火系修行法門。"},
+    64: {"name": "土系玄門功法064", "price": 2738, "bonus": 1.214, "realm": 1, "desc": "第64卷土系修行法門。"},
+    65: {"name": "風系玄門功法065", "price": 2780, "bonus": 1.22, "realm": 1, "desc": "第65卷風系修行法門。"},
+    66: {"name": "雷系玄門功法066", "price": 2822, "bonus": 1.226, "realm": 1, "desc": "第66卷雷系修行法門。"},
+    67: {"name": "冰系玄門功法067", "price": 2864, "bonus": 1.232, "realm": 1, "desc": "第67卷冰系修行法門。"},
+    68: {"name": "陰系玄門功法068", "price": 2906, "bonus": 1.238, "realm": 1, "desc": "第68卷陰系修行法門。"},
+    69: {"name": "陽系玄門功法069", "price": 2948, "bonus": 1.244, "realm": 1, "desc": "第69卷陽系修行法門。"},
+    70: {"name": "金系玄門功法070", "price": 2990, "bonus": 1.25, "realm": 1, "desc": "第70卷金系修行法門。"},
+    71: {"name": "木系玄門功法071", "price": 3032, "bonus": 1.256, "realm": 1, "desc": "第71卷木系修行法門。"},
+    72: {"name": "水系玄門功法072", "price": 3074, "bonus": 1.262, "realm": 1, "desc": "第72卷水系修行法門。"},
+    73: {"name": "火系玄門功法073", "price": 3116, "bonus": 1.268, "realm": 1, "desc": "第73卷火系修行法門。"},
+    74: {"name": "土系玄門功法074", "price": 3158, "bonus": 1.274, "realm": 1, "desc": "第74卷土系修行法門。"},
+    75: {"name": "風系玄門功法075", "price": 3200, "bonus": 1.13, "realm": 1, "desc": "第75卷風系修行法門。"},
+    76: {"name": "雷系玄門功法076", "price": 3242, "bonus": 1.136, "realm": 1, "desc": "第76卷雷系修行法門。"},
+    77: {"name": "冰系玄門功法077", "price": 3284, "bonus": 1.142, "realm": 1, "desc": "第77卷冰系修行法門。"},
+    78: {"name": "陰系玄門功法078", "price": 3326, "bonus": 1.148, "realm": 1, "desc": "第78卷陰系修行法門。"},
+    79: {"name": "陽系玄門功法079", "price": 3368, "bonus": 1.154, "realm": 1, "desc": "第79卷陽系修行法門。"},
+    80: {"name": "金系玄門功法080", "price": 3410, "bonus": 1.16, "realm": 1, "desc": "第80卷金系修行法門。"},
+    81: {"name": "木系玄門功法081", "price": 3452, "bonus": 1.166, "realm": 1, "desc": "第81卷木系修行法門。"},
+    82: {"name": "水系玄門功法082", "price": 3494, "bonus": 1.172, "realm": 1, "desc": "第82卷水系修行法門。"},
+    83: {"name": "火系玄門功法083", "price": 3536, "bonus": 1.178, "realm": 1, "desc": "第83卷火系修行法門。"},
+    84: {"name": "土系玄門功法084", "price": 3578, "bonus": 1.184, "realm": 1, "desc": "第84卷土系修行法門。"},
+    85: {"name": "風系玄門功法085", "price": 3620, "bonus": 1.19, "realm": 1, "desc": "第85卷風系修行法門。"},
+    86: {"name": "雷系玄門功法086", "price": 3662, "bonus": 1.196, "realm": 1, "desc": "第86卷雷系修行法門。"},
+    87: {"name": "冰系玄門功法087", "price": 3704, "bonus": 1.202, "realm": 1, "desc": "第87卷冰系修行法門。"},
+    88: {"name": "陰系玄門功法088", "price": 3746, "bonus": 1.208, "realm": 1, "desc": "第88卷陰系修行法門。"},
+    89: {"name": "陽系玄門功法089", "price": 3788, "bonus": 1.214, "realm": 1, "desc": "第89卷陽系修行法門。"},
+    90: {"name": "金系玄門功法090", "price": 3830, "bonus": 1.22, "realm": 1, "desc": "第90卷金系修行法門。"},
+    91: {"name": "木系玄門功法091", "price": 3872, "bonus": 1.226, "realm": 1, "desc": "第91卷木系修行法門。"},
+    92: {"name": "水系玄門功法092", "price": 3914, "bonus": 1.232, "realm": 1, "desc": "第92卷水系修行法門。"},
+    93: {"name": "火系玄門功法093", "price": 3956, "bonus": 1.238, "realm": 1, "desc": "第93卷火系修行法門。"},
+    94: {"name": "土系玄門功法094", "price": 3998, "bonus": 1.244, "realm": 1, "desc": "第94卷土系修行法門。"},
+    95: {"name": "風系玄門功法095", "price": 4040, "bonus": 1.25, "realm": 1, "desc": "第95卷風系修行法門。"},
+    96: {"name": "雷系玄門功法096", "price": 4082, "bonus": 1.256, "realm": 1, "desc": "第96卷雷系修行法門。"},
+    97: {"name": "冰系玄門功法097", "price": 4124, "bonus": 1.262, "realm": 1, "desc": "第97卷冰系修行法門。"},
+    98: {"name": "陰系玄門功法098", "price": 4166, "bonus": 1.268, "realm": 1, "desc": "第98卷陰系修行法門。"},
+    99: {"name": "陽系玄門功法099", "price": 4208, "bonus": 1.274, "realm": 1, "desc": "第99卷陽系修行法門。"},
+    100: {"name": "金系玄門功法100", "price": 4250, "bonus": 1.13, "realm": 1, "desc": "第100卷金系修行法門。"},
+    101: {"name": "木系玄門功法101", "price": 4292, "bonus": 1.181, "realm": 2, "desc": "第101卷木系修行法門。"},
+    102: {"name": "水系玄門功法102", "price": 4334, "bonus": 1.187, "realm": 2, "desc": "第102卷水系修行法門。"},
+    103: {"name": "火系玄門功法103", "price": 4376, "bonus": 1.193, "realm": 2, "desc": "第103卷火系修行法門。"},
+    104: {"name": "土系玄門功法104", "price": 4418, "bonus": 1.199, "realm": 2, "desc": "第104卷土系修行法門。"},
+    105: {"name": "風系玄門功法105", "price": 4460, "bonus": 1.205, "realm": 2, "desc": "第105卷風系修行法門。"},
+    106: {"name": "雷系玄門功法106", "price": 4502, "bonus": 1.211, "realm": 2, "desc": "第106卷雷系修行法門。"},
+    107: {"name": "冰系玄門功法107", "price": 4544, "bonus": 1.217, "realm": 2, "desc": "第107卷冰系修行法門。"},
+    108: {"name": "陰系玄門功法108", "price": 4586, "bonus": 1.223, "realm": 2, "desc": "第108卷陰系修行法門。"},
+    109: {"name": "陽系玄門功法109", "price": 4628, "bonus": 1.229, "realm": 2, "desc": "第109卷陽系修行法門。"},
+    110: {"name": "金系玄門功法110", "price": 4670, "bonus": 1.235, "realm": 2, "desc": "第110卷金系修行法門。"},
+    111: {"name": "木系玄門功法111", "price": 4712, "bonus": 1.241, "realm": 2, "desc": "第111卷木系修行法門。"},
+    112: {"name": "水系玄門功法112", "price": 4754, "bonus": 1.247, "realm": 2, "desc": "第112卷水系修行法門。"},
+    113: {"name": "火系玄門功法113", "price": 4796, "bonus": 1.253, "realm": 2, "desc": "第113卷火系修行法門。"},
+    114: {"name": "土系玄門功法114", "price": 4838, "bonus": 1.259, "realm": 2, "desc": "第114卷土系修行法門。"},
+    115: {"name": "風系玄門功法115", "price": 4880, "bonus": 1.265, "realm": 2, "desc": "第115卷風系修行法門。"},
+    116: {"name": "雷系玄門功法116", "price": 4922, "bonus": 1.271, "realm": 2, "desc": "第116卷雷系修行法門。"},
+    117: {"name": "冰系玄門功法117", "price": 4964, "bonus": 1.277, "realm": 2, "desc": "第117卷冰系修行法門。"},
+    118: {"name": "陰系玄門功法118", "price": 5006, "bonus": 1.283, "realm": 2, "desc": "第118卷陰系修行法門。"},
+    119: {"name": "陽系玄門功法119", "price": 5048, "bonus": 1.289, "realm": 2, "desc": "第119卷陽系修行法門。"},
+    120: {"name": "金系玄門功法120", "price": 5090, "bonus": 1.295, "realm": 2, "desc": "第120卷金系修行法門。"},
+    121: {"name": "木系玄門功法121", "price": 5132, "bonus": 1.301, "realm": 2, "desc": "第121卷木系修行法門。"},
+    122: {"name": "水系玄門功法122", "price": 5174, "bonus": 1.307, "realm": 2, "desc": "第122卷水系修行法門。"},
+    123: {"name": "火系玄門功法123", "price": 5216, "bonus": 1.313, "realm": 2, "desc": "第123卷火系修行法門。"},
+    124: {"name": "土系玄門功法124", "price": 5258, "bonus": 1.319, "realm": 2, "desc": "第124卷土系修行法門。"},
+    125: {"name": "風系玄門功法125", "price": 5300, "bonus": 1.175, "realm": 2, "desc": "第125卷風系修行法門。"},
+    126: {"name": "雷系玄門功法126", "price": 5342, "bonus": 1.181, "realm": 2, "desc": "第126卷雷系修行法門。"},
+    127: {"name": "冰系玄門功法127", "price": 5384, "bonus": 1.187, "realm": 2, "desc": "第127卷冰系修行法門。"},
+    128: {"name": "陰系玄門功法128", "price": 5426, "bonus": 1.193, "realm": 2, "desc": "第128卷陰系修行法門。"},
+    129: {"name": "陽系玄門功法129", "price": 5468, "bonus": 1.199, "realm": 2, "desc": "第129卷陽系修行法門。"},
+    130: {"name": "金系玄門功法130", "price": 5510, "bonus": 1.205, "realm": 2, "desc": "第130卷金系修行法門。"},
+    131: {"name": "木系玄門功法131", "price": 5552, "bonus": 1.211, "realm": 2, "desc": "第131卷木系修行法門。"},
+    132: {"name": "水系玄門功法132", "price": 5594, "bonus": 1.217, "realm": 2, "desc": "第132卷水系修行法門。"},
+    133: {"name": "火系玄門功法133", "price": 5636, "bonus": 1.223, "realm": 2, "desc": "第133卷火系修行法門。"},
+    134: {"name": "土系玄門功法134", "price": 5678, "bonus": 1.229, "realm": 2, "desc": "第134卷土系修行法門。"},
+    135: {"name": "風系玄門功法135", "price": 5720, "bonus": 1.235, "realm": 2, "desc": "第135卷風系修行法門。"},
+    136: {"name": "雷系玄門功法136", "price": 5762, "bonus": 1.241, "realm": 2, "desc": "第136卷雷系修行法門。"},
+    137: {"name": "冰系玄門功法137", "price": 5804, "bonus": 1.247, "realm": 2, "desc": "第137卷冰系修行法門。"},
+    138: {"name": "陰系玄門功法138", "price": 5846, "bonus": 1.253, "realm": 2, "desc": "第138卷陰系修行法門。"},
+    139: {"name": "陽系玄門功法139", "price": 5888, "bonus": 1.259, "realm": 2, "desc": "第139卷陽系修行法門。"},
+    140: {"name": "金系玄門功法140", "price": 5930, "bonus": 1.265, "realm": 2, "desc": "第140卷金系修行法門。"},
+    141: {"name": "木系玄門功法141", "price": 5972, "bonus": 1.271, "realm": 2, "desc": "第141卷木系修行法門。"},
+    142: {"name": "水系玄門功法142", "price": 6014, "bonus": 1.277, "realm": 2, "desc": "第142卷水系修行法門。"},
+    143: {"name": "火系玄門功法143", "price": 6056, "bonus": 1.283, "realm": 2, "desc": "第143卷火系修行法門。"},
+    144: {"name": "土系玄門功法144", "price": 6098, "bonus": 1.289, "realm": 2, "desc": "第144卷土系修行法門。"},
+    145: {"name": "風系玄門功法145", "price": 6140, "bonus": 1.295, "realm": 2, "desc": "第145卷風系修行法門。"},
+    146: {"name": "雷系玄門功法146", "price": 6182, "bonus": 1.301, "realm": 2, "desc": "第146卷雷系修行法門。"},
+    147: {"name": "冰系玄門功法147", "price": 6224, "bonus": 1.307, "realm": 2, "desc": "第147卷冰系修行法門。"},
+    148: {"name": "陰系玄門功法148", "price": 6266, "bonus": 1.313, "realm": 2, "desc": "第148卷陰系修行法門。"},
+    149: {"name": "陽系玄門功法149", "price": 6308, "bonus": 1.319, "realm": 2, "desc": "第149卷陽系修行法門。"},
+    150: {"name": "金系玄門功法150", "price": 6350, "bonus": 1.175, "realm": 2, "desc": "第150卷金系修行法門。"},
+    151: {"name": "木系玄門功法151", "price": 6392, "bonus": 1.226, "realm": 3, "desc": "第151卷木系修行法門。"},
+    152: {"name": "水系玄門功法152", "price": 6434, "bonus": 1.232, "realm": 3, "desc": "第152卷水系修行法門。"},
+    153: {"name": "火系玄門功法153", "price": 6476, "bonus": 1.238, "realm": 3, "desc": "第153卷火系修行法門。"},
+    154: {"name": "土系玄門功法154", "price": 6518, "bonus": 1.244, "realm": 3, "desc": "第154卷土系修行法門。"},
+    155: {"name": "風系玄門功法155", "price": 6560, "bonus": 1.25, "realm": 3, "desc": "第155卷風系修行法門。"},
+    156: {"name": "雷系玄門功法156", "price": 6602, "bonus": 1.256, "realm": 3, "desc": "第156卷雷系修行法門。"},
+    157: {"name": "冰系玄門功法157", "price": 6644, "bonus": 1.262, "realm": 3, "desc": "第157卷冰系修行法門。"},
+    158: {"name": "陰系玄門功法158", "price": 6686, "bonus": 1.268, "realm": 3, "desc": "第158卷陰系修行法門。"},
+    159: {"name": "陽系玄門功法159", "price": 6728, "bonus": 1.274, "realm": 3, "desc": "第159卷陽系修行法門。"},
+    160: {"name": "金系玄門功法160", "price": 6770, "bonus": 1.28, "realm": 3, "desc": "第160卷金系修行法門。"},
+    161: {"name": "木系玄門功法161", "price": 6812, "bonus": 1.286, "realm": 3, "desc": "第161卷木系修行法門。"},
+    162: {"name": "水系玄門功法162", "price": 6854, "bonus": 1.292, "realm": 3, "desc": "第162卷水系修行法門。"},
+    163: {"name": "火系玄門功法163", "price": 6896, "bonus": 1.298, "realm": 3, "desc": "第163卷火系修行法門。"},
+    164: {"name": "土系玄門功法164", "price": 6938, "bonus": 1.304, "realm": 3, "desc": "第164卷土系修行法門。"},
+    165: {"name": "風系玄門功法165", "price": 6980, "bonus": 1.31, "realm": 3, "desc": "第165卷風系修行法門。"},
+    166: {"name": "雷系玄門功法166", "price": 7022, "bonus": 1.316, "realm": 3, "desc": "第166卷雷系修行法門。"},
+    167: {"name": "冰系玄門功法167", "price": 7064, "bonus": 1.322, "realm": 3, "desc": "第167卷冰系修行法門。"},
+    168: {"name": "陰系玄門功法168", "price": 7106, "bonus": 1.328, "realm": 3, "desc": "第168卷陰系修行法門。"},
+    169: {"name": "陽系玄門功法169", "price": 7148, "bonus": 1.334, "realm": 3, "desc": "第169卷陽系修行法門。"},
+    170: {"name": "金系玄門功法170", "price": 7190, "bonus": 1.34, "realm": 3, "desc": "第170卷金系修行法門。"},
+    171: {"name": "木系玄門功法171", "price": 7232, "bonus": 1.346, "realm": 3, "desc": "第171卷木系修行法門。"},
+    172: {"name": "水系玄門功法172", "price": 7274, "bonus": 1.352, "realm": 3, "desc": "第172卷水系修行法門。"},
+    173: {"name": "火系玄門功法173", "price": 7316, "bonus": 1.358, "realm": 3, "desc": "第173卷火系修行法門。"},
+    174: {"name": "土系玄門功法174", "price": 7358, "bonus": 1.364, "realm": 3, "desc": "第174卷土系修行法門。"},
+    175: {"name": "風系玄門功法175", "price": 7400, "bonus": 1.22, "realm": 3, "desc": "第175卷風系修行法門。"},
+    176: {"name": "雷系玄門功法176", "price": 7442, "bonus": 1.226, "realm": 3, "desc": "第176卷雷系修行法門。"},
+    177: {"name": "冰系玄門功法177", "price": 7484, "bonus": 1.232, "realm": 3, "desc": "第177卷冰系修行法門。"},
+    178: {"name": "陰系玄門功法178", "price": 7526, "bonus": 1.238, "realm": 3, "desc": "第178卷陰系修行法門。"},
+    179: {"name": "陽系玄門功法179", "price": 7568, "bonus": 1.244, "realm": 3, "desc": "第179卷陽系修行法門。"},
+    180: {"name": "金系玄門功法180", "price": 7610, "bonus": 1.25, "realm": 3, "desc": "第180卷金系修行法門。"},
+    181: {"name": "木系玄門功法181", "price": 7652, "bonus": 1.256, "realm": 3, "desc": "第181卷木系修行法門。"},
+    182: {"name": "水系玄門功法182", "price": 7694, "bonus": 1.262, "realm": 3, "desc": "第182卷水系修行法門。"},
+    183: {"name": "火系玄門功法183", "price": 7736, "bonus": 1.268, "realm": 3, "desc": "第183卷火系修行法門。"},
+    184: {"name": "土系玄門功法184", "price": 7778, "bonus": 1.274, "realm": 3, "desc": "第184卷土系修行法門。"},
+    185: {"name": "風系玄門功法185", "price": 7820, "bonus": 1.28, "realm": 3, "desc": "第185卷風系修行法門。"},
+    186: {"name": "雷系玄門功法186", "price": 7862, "bonus": 1.286, "realm": 3, "desc": "第186卷雷系修行法門。"},
+    187: {"name": "冰系玄門功法187", "price": 7904, "bonus": 1.292, "realm": 3, "desc": "第187卷冰系修行法門。"},
+    188: {"name": "陰系玄門功法188", "price": 7946, "bonus": 1.298, "realm": 3, "desc": "第188卷陰系修行法門。"},
+    189: {"name": "陽系玄門功法189", "price": 7988, "bonus": 1.304, "realm": 3, "desc": "第189卷陽系修行法門。"},
+    190: {"name": "金系玄門功法190", "price": 8030, "bonus": 1.31, "realm": 3, "desc": "第190卷金系修行法門。"},
+    191: {"name": "木系玄門功法191", "price": 8072, "bonus": 1.316, "realm": 3, "desc": "第191卷木系修行法門。"},
+    192: {"name": "水系玄門功法192", "price": 8114, "bonus": 1.322, "realm": 3, "desc": "第192卷水系修行法門。"},
+    193: {"name": "火系玄門功法193", "price": 8156, "bonus": 1.328, "realm": 3, "desc": "第193卷火系修行法門。"},
+    194: {"name": "土系玄門功法194", "price": 8198, "bonus": 1.334, "realm": 3, "desc": "第194卷土系修行法門。"},
+    195: {"name": "風系玄門功法195", "price": 8240, "bonus": 1.34, "realm": 3, "desc": "第195卷風系修行法門。"},
+    196: {"name": "雷系玄門功法196", "price": 8282, "bonus": 1.346, "realm": 3, "desc": "第196卷雷系修行法門。"},
+    197: {"name": "冰系玄門功法197", "price": 8324, "bonus": 1.352, "realm": 3, "desc": "第197卷冰系修行法門。"},
+    198: {"name": "陰系玄門功法198", "price": 8366, "bonus": 1.358, "realm": 3, "desc": "第198卷陰系修行法門。"},
+    199: {"name": "陽系玄門功法199", "price": 8408, "bonus": 1.364, "realm": 3, "desc": "第199卷陽系修行法門。"},
+    200: {"name": "金系玄門功法200", "price": 8450, "bonus": 1.22, "realm": 3, "desc": "第200卷金系修行法門。"},
+    201: {"name": "木系玄門功法201", "price": 8492, "bonus": 1.271, "realm": 4, "desc": "第201卷木系修行法門。"},
+    202: {"name": "水系玄門功法202", "price": 8534, "bonus": 1.277, "realm": 4, "desc": "第202卷水系修行法門。"},
+    203: {"name": "火系玄門功法203", "price": 8576, "bonus": 1.283, "realm": 4, "desc": "第203卷火系修行法門。"},
+    204: {"name": "土系玄門功法204", "price": 8618, "bonus": 1.289, "realm": 4, "desc": "第204卷土系修行法門。"},
+    205: {"name": "風系玄門功法205", "price": 8660, "bonus": 1.295, "realm": 4, "desc": "第205卷風系修行法門。"},
+    206: {"name": "雷系玄門功法206", "price": 8702, "bonus": 1.301, "realm": 4, "desc": "第206卷雷系修行法門。"},
+    207: {"name": "冰系玄門功法207", "price": 8744, "bonus": 1.307, "realm": 4, "desc": "第207卷冰系修行法門。"},
+    208: {"name": "陰系玄門功法208", "price": 8786, "bonus": 1.313, "realm": 4, "desc": "第208卷陰系修行法門。"},
+    209: {"name": "陽系玄門功法209", "price": 8828, "bonus": 1.319, "realm": 4, "desc": "第209卷陽系修行法門。"},
+    210: {"name": "金系玄門功法210", "price": 8870, "bonus": 1.325, "realm": 4, "desc": "第210卷金系修行法門。"},
+    211: {"name": "木系玄門功法211", "price": 8912, "bonus": 1.331, "realm": 4, "desc": "第211卷木系修行法門。"},
+    212: {"name": "水系玄門功法212", "price": 8954, "bonus": 1.337, "realm": 4, "desc": "第212卷水系修行法門。"},
+    213: {"name": "火系玄門功法213", "price": 8996, "bonus": 1.343, "realm": 4, "desc": "第213卷火系修行法門。"},
+    214: {"name": "土系玄門功法214", "price": 9038, "bonus": 1.349, "realm": 4, "desc": "第214卷土系修行法門。"},
+    215: {"name": "風系玄門功法215", "price": 9080, "bonus": 1.355, "realm": 4, "desc": "第215卷風系修行法門。"},
+    216: {"name": "雷系玄門功法216", "price": 9122, "bonus": 1.361, "realm": 4, "desc": "第216卷雷系修行法門。"},
+    217: {"name": "冰系玄門功法217", "price": 9164, "bonus": 1.367, "realm": 4, "desc": "第217卷冰系修行法門。"},
+    218: {"name": "陰系玄門功法218", "price": 9206, "bonus": 1.373, "realm": 4, "desc": "第218卷陰系修行法門。"},
+    219: {"name": "陽系玄門功法219", "price": 9248, "bonus": 1.379, "realm": 4, "desc": "第219卷陽系修行法門。"},
+    220: {"name": "金系玄門功法220", "price": 9290, "bonus": 1.385, "realm": 4, "desc": "第220卷金系修行法門。"},
+    221: {"name": "木系玄門功法221", "price": 9332, "bonus": 1.391, "realm": 4, "desc": "第221卷木系修行法門。"},
+    222: {"name": "水系玄門功法222", "price": 9374, "bonus": 1.397, "realm": 4, "desc": "第222卷水系修行法門。"},
+    223: {"name": "火系玄門功法223", "price": 9416, "bonus": 1.403, "realm": 4, "desc": "第223卷火系修行法門。"},
+    224: {"name": "土系玄門功法224", "price": 9458, "bonus": 1.409, "realm": 4, "desc": "第224卷土系修行法門。"},
+    225: {"name": "風系玄門功法225", "price": 9500, "bonus": 1.265, "realm": 4, "desc": "第225卷風系修行法門。"},
+    226: {"name": "雷系玄門功法226", "price": 9542, "bonus": 1.271, "realm": 4, "desc": "第226卷雷系修行法門。"},
+    227: {"name": "冰系玄門功法227", "price": 9584, "bonus": 1.277, "realm": 4, "desc": "第227卷冰系修行法門。"},
+    228: {"name": "陰系玄門功法228", "price": 9626, "bonus": 1.283, "realm": 4, "desc": "第228卷陰系修行法門。"},
+    229: {"name": "陽系玄門功法229", "price": 9668, "bonus": 1.289, "realm": 4, "desc": "第229卷陽系修行法門。"},
+    230: {"name": "金系玄門功法230", "price": 9710, "bonus": 1.295, "realm": 4, "desc": "第230卷金系修行法門。"},
+    231: {"name": "木系玄門功法231", "price": 9752, "bonus": 1.301, "realm": 4, "desc": "第231卷木系修行法門。"},
+    232: {"name": "水系玄門功法232", "price": 9794, "bonus": 1.307, "realm": 4, "desc": "第232卷水系修行法門。"},
+    233: {"name": "火系玄門功法233", "price": 9836, "bonus": 1.313, "realm": 4, "desc": "第233卷火系修行法門。"},
+    234: {"name": "土系玄門功法234", "price": 9878, "bonus": 1.319, "realm": 4, "desc": "第234卷土系修行法門。"},
+    235: {"name": "風系玄門功法235", "price": 9920, "bonus": 1.325, "realm": 4, "desc": "第235卷風系修行法門。"},
+    236: {"name": "雷系玄門功法236", "price": 9962, "bonus": 1.331, "realm": 4, "desc": "第236卷雷系修行法門。"},
+    237: {"name": "冰系玄門功法237", "price": 10004, "bonus": 1.337, "realm": 4, "desc": "第237卷冰系修行法門。"},
+    238: {"name": "陰系玄門功法238", "price": 10046, "bonus": 1.343, "realm": 4, "desc": "第238卷陰系修行法門。"},
+    239: {"name": "陽系玄門功法239", "price": 10088, "bonus": 1.349, "realm": 4, "desc": "第239卷陽系修行法門。"},
+    240: {"name": "金系玄門功法240", "price": 10130, "bonus": 1.355, "realm": 4, "desc": "第240卷金系修行法門。"},
+    241: {"name": "木系玄門功法241", "price": 10172, "bonus": 1.361, "realm": 4, "desc": "第241卷木系修行法門。"},
+    242: {"name": "水系玄門功法242", "price": 10214, "bonus": 1.367, "realm": 4, "desc": "第242卷水系修行法門。"},
+    243: {"name": "火系玄門功法243", "price": 10256, "bonus": 1.373, "realm": 4, "desc": "第243卷火系修行法門。"},
+    244: {"name": "土系玄門功法244", "price": 10298, "bonus": 1.379, "realm": 4, "desc": "第244卷土系修行法門。"},
+    245: {"name": "風系玄門功法245", "price": 10340, "bonus": 1.385, "realm": 4, "desc": "第245卷風系修行法門。"},
+    246: {"name": "雷系玄門功法246", "price": 10382, "bonus": 1.391, "realm": 4, "desc": "第246卷雷系修行法門。"},
+    247: {"name": "冰系玄門功法247", "price": 10424, "bonus": 1.397, "realm": 4, "desc": "第247卷冰系修行法門。"},
+    248: {"name": "陰系玄門功法248", "price": 10466, "bonus": 1.403, "realm": 4, "desc": "第248卷陰系修行法門。"},
+    249: {"name": "陽系玄門功法249", "price": 10508, "bonus": 1.409, "realm": 4, "desc": "第249卷陽系修行法門。"},
+    250: {"name": "金系玄門功法250", "price": 10550, "bonus": 1.265, "realm": 4, "desc": "第250卷金系修行法門。"},
+    251: {"name": "木系玄門功法251", "price": 10592, "bonus": 1.316, "realm": 5, "desc": "第251卷木系修行法門。"},
+    252: {"name": "水系玄門功法252", "price": 10634, "bonus": 1.322, "realm": 5, "desc": "第252卷水系修行法門。"},
+    253: {"name": "火系玄門功法253", "price": 10676, "bonus": 1.328, "realm": 5, "desc": "第253卷火系修行法門。"},
+    254: {"name": "土系玄門功法254", "price": 10718, "bonus": 1.334, "realm": 5, "desc": "第254卷土系修行法門。"},
+    255: {"name": "風系玄門功法255", "price": 10760, "bonus": 1.34, "realm": 5, "desc": "第255卷風系修行法門。"},
+    256: {"name": "雷系玄門功法256", "price": 10802, "bonus": 1.346, "realm": 5, "desc": "第256卷雷系修行法門。"},
+    257: {"name": "冰系玄門功法257", "price": 10844, "bonus": 1.352, "realm": 5, "desc": "第257卷冰系修行法門。"},
+    258: {"name": "陰系玄門功法258", "price": 10886, "bonus": 1.358, "realm": 5, "desc": "第258卷陰系修行法門。"},
+    259: {"name": "陽系玄門功法259", "price": 10928, "bonus": 1.364, "realm": 5, "desc": "第259卷陽系修行法門。"},
+    260: {"name": "金系玄門功法260", "price": 10970, "bonus": 1.37, "realm": 5, "desc": "第260卷金系修行法門。"},
+    261: {"name": "木系玄門功法261", "price": 11012, "bonus": 1.376, "realm": 5, "desc": "第261卷木系修行法門。"},
+    262: {"name": "水系玄門功法262", "price": 11054, "bonus": 1.382, "realm": 5, "desc": "第262卷水系修行法門。"},
+    263: {"name": "火系玄門功法263", "price": 11096, "bonus": 1.388, "realm": 5, "desc": "第263卷火系修行法門。"},
+    264: {"name": "土系玄門功法264", "price": 11138, "bonus": 1.394, "realm": 5, "desc": "第264卷土系修行法門。"},
+    265: {"name": "風系玄門功法265", "price": 11180, "bonus": 1.4, "realm": 5, "desc": "第265卷風系修行法門。"},
+    266: {"name": "雷系玄門功法266", "price": 11222, "bonus": 1.406, "realm": 5, "desc": "第266卷雷系修行法門。"},
+    267: {"name": "冰系玄門功法267", "price": 11264, "bonus": 1.412, "realm": 5, "desc": "第267卷冰系修行法門。"},
+    268: {"name": "陰系玄門功法268", "price": 11306, "bonus": 1.418, "realm": 5, "desc": "第268卷陰系修行法門。"},
+    269: {"name": "陽系玄門功法269", "price": 11348, "bonus": 1.424, "realm": 5, "desc": "第269卷陽系修行法門。"},
+    270: {"name": "金系玄門功法270", "price": 11390, "bonus": 1.43, "realm": 5, "desc": "第270卷金系修行法門。"},
+    271: {"name": "木系玄門功法271", "price": 11432, "bonus": 1.436, "realm": 5, "desc": "第271卷木系修行法門。"},
+    272: {"name": "水系玄門功法272", "price": 11474, "bonus": 1.442, "realm": 5, "desc": "第272卷水系修行法門。"},
+    273: {"name": "火系玄門功法273", "price": 11516, "bonus": 1.448, "realm": 5, "desc": "第273卷火系修行法門。"},
+    274: {"name": "土系玄門功法274", "price": 11558, "bonus": 1.454, "realm": 5, "desc": "第274卷土系修行法門。"},
+    275: {"name": "風系玄門功法275", "price": 11600, "bonus": 1.31, "realm": 5, "desc": "第275卷風系修行法門。"},
+    276: {"name": "雷系玄門功法276", "price": 11642, "bonus": 1.316, "realm": 5, "desc": "第276卷雷系修行法門。"},
+    277: {"name": "冰系玄門功法277", "price": 11684, "bonus": 1.322, "realm": 5, "desc": "第277卷冰系修行法門。"},
+    278: {"name": "陰系玄門功法278", "price": 11726, "bonus": 1.328, "realm": 5, "desc": "第278卷陰系修行法門。"},
+    279: {"name": "陽系玄門功法279", "price": 11768, "bonus": 1.334, "realm": 5, "desc": "第279卷陽系修行法門。"},
+    280: {"name": "金系玄門功法280", "price": 11810, "bonus": 1.34, "realm": 5, "desc": "第280卷金系修行法門。"},
+    281: {"name": "木系玄門功法281", "price": 11852, "bonus": 1.346, "realm": 5, "desc": "第281卷木系修行法門。"},
+    282: {"name": "水系玄門功法282", "price": 11894, "bonus": 1.352, "realm": 5, "desc": "第282卷水系修行法門。"},
+    283: {"name": "火系玄門功法283", "price": 11936, "bonus": 1.358, "realm": 5, "desc": "第283卷火系修行法門。"},
+    284: {"name": "土系玄門功法284", "price": 11978, "bonus": 1.364, "realm": 5, "desc": "第284卷土系修行法門。"},
+    285: {"name": "風系玄門功法285", "price": 12020, "bonus": 1.37, "realm": 5, "desc": "第285卷風系修行法門。"},
+    286: {"name": "雷系玄門功法286", "price": 12062, "bonus": 1.376, "realm": 5, "desc": "第286卷雷系修行法門。"},
+    287: {"name": "冰系玄門功法287", "price": 12104, "bonus": 1.382, "realm": 5, "desc": "第287卷冰系修行法門。"},
+    288: {"name": "陰系玄門功法288", "price": 12146, "bonus": 1.388, "realm": 5, "desc": "第288卷陰系修行法門。"},
+    289: {"name": "陽系玄門功法289", "price": 12188, "bonus": 1.394, "realm": 5, "desc": "第289卷陽系修行法門。"},
+    290: {"name": "金系玄門功法290", "price": 12230, "bonus": 1.4, "realm": 5, "desc": "第290卷金系修行法門。"},
+    291: {"name": "木系玄門功法291", "price": 12272, "bonus": 1.406, "realm": 5, "desc": "第291卷木系修行法門。"},
+    292: {"name": "水系玄門功法292", "price": 12314, "bonus": 1.412, "realm": 5, "desc": "第292卷水系修行法門。"},
+    293: {"name": "火系玄門功法293", "price": 12356, "bonus": 1.418, "realm": 5, "desc": "第293卷火系修行法門。"},
+    294: {"name": "土系玄門功法294", "price": 12398, "bonus": 1.424, "realm": 5, "desc": "第294卷土系修行法門。"},
+    295: {"name": "風系玄門功法295", "price": 12440, "bonus": 1.43, "realm": 5, "desc": "第295卷風系修行法門。"},
+    296: {"name": "雷系玄門功法296", "price": 12482, "bonus": 1.436, "realm": 5, "desc": "第296卷雷系修行法門。"},
+    297: {"name": "冰系玄門功法297", "price": 12524, "bonus": 1.442, "realm": 5, "desc": "第297卷冰系修行法門。"},
+    298: {"name": "陰系玄門功法298", "price": 12566, "bonus": 1.448, "realm": 5, "desc": "第298卷陰系修行法門。"},
+    299: {"name": "陽系玄門功法299", "price": 12608, "bonus": 1.454, "realm": 5, "desc": "第299卷陽系修行法門。"},
+    300: {"name": "金系玄門功法300", "price": 12650, "bonus": 1.31, "realm": 5, "desc": "第300卷金系修行法門。"},
+    301: {"name": "木系玄門功法301", "price": 12692, "bonus": 1.361, "realm": 6, "desc": "第301卷木系修行法門。"},
+    302: {"name": "水系玄門功法302", "price": 12734, "bonus": 1.367, "realm": 6, "desc": "第302卷水系修行法門。"},
+    303: {"name": "火系玄門功法303", "price": 12776, "bonus": 1.373, "realm": 6, "desc": "第303卷火系修行法門。"},
+    304: {"name": "土系玄門功法304", "price": 12818, "bonus": 1.379, "realm": 6, "desc": "第304卷土系修行法門。"},
+    305: {"name": "風系玄門功法305", "price": 12860, "bonus": 1.385, "realm": 6, "desc": "第305卷風系修行法門。"},
+    306: {"name": "雷系玄門功法306", "price": 12902, "bonus": 1.391, "realm": 6, "desc": "第306卷雷系修行法門。"},
+    307: {"name": "冰系玄門功法307", "price": 12944, "bonus": 1.397, "realm": 6, "desc": "第307卷冰系修行法門。"},
+    308: {"name": "陰系玄門功法308", "price": 12986, "bonus": 1.403, "realm": 6, "desc": "第308卷陰系修行法門。"},
+    309: {"name": "陽系玄門功法309", "price": 13028, "bonus": 1.409, "realm": 6, "desc": "第309卷陽系修行法門。"},
+    310: {"name": "金系玄門功法310", "price": 13070, "bonus": 1.415, "realm": 6, "desc": "第310卷金系修行法門。"},
+    311: {"name": "木系玄門功法311", "price": 13112, "bonus": 1.421, "realm": 6, "desc": "第311卷木系修行法門。"},
+    312: {"name": "水系玄門功法312", "price": 13154, "bonus": 1.427, "realm": 6, "desc": "第312卷水系修行法門。"},
+    313: {"name": "火系玄門功法313", "price": 13196, "bonus": 1.433, "realm": 6, "desc": "第313卷火系修行法門。"},
+    314: {"name": "土系玄門功法314", "price": 13238, "bonus": 1.439, "realm": 6, "desc": "第314卷土系修行法門。"},
+    315: {"name": "風系玄門功法315", "price": 13280, "bonus": 1.445, "realm": 6, "desc": "第315卷風系修行法門。"},
+    316: {"name": "雷系玄門功法316", "price": 13322, "bonus": 1.451, "realm": 6, "desc": "第316卷雷系修行法門。"},
+    317: {"name": "冰系玄門功法317", "price": 13364, "bonus": 1.457, "realm": 6, "desc": "第317卷冰系修行法門。"},
+    318: {"name": "陰系玄門功法318", "price": 13406, "bonus": 1.463, "realm": 6, "desc": "第318卷陰系修行法門。"},
+    319: {"name": "陽系玄門功法319", "price": 13448, "bonus": 1.469, "realm": 6, "desc": "第319卷陽系修行法門。"},
+    320: {"name": "金系玄門功法320", "price": 13490, "bonus": 1.475, "realm": 6, "desc": "第320卷金系修行法門。"},
+    321: {"name": "木系玄門功法321", "price": 13532, "bonus": 1.481, "realm": 6, "desc": "第321卷木系修行法門。"},
+    322: {"name": "水系玄門功法322", "price": 13574, "bonus": 1.487, "realm": 6, "desc": "第322卷水系修行法門。"},
+    323: {"name": "火系玄門功法323", "price": 13616, "bonus": 1.493, "realm": 6, "desc": "第323卷火系修行法門。"},
+    324: {"name": "土系玄門功法324", "price": 13658, "bonus": 1.499, "realm": 6, "desc": "第324卷土系修行法門。"},
+    325: {"name": "風系玄門功法325", "price": 13700, "bonus": 1.355, "realm": 6, "desc": "第325卷風系修行法門。"},
+    326: {"name": "雷系玄門功法326", "price": 13742, "bonus": 1.361, "realm": 6, "desc": "第326卷雷系修行法門。"},
+    327: {"name": "冰系玄門功法327", "price": 13784, "bonus": 1.367, "realm": 6, "desc": "第327卷冰系修行法門。"},
+    328: {"name": "陰系玄門功法328", "price": 13826, "bonus": 1.373, "realm": 6, "desc": "第328卷陰系修行法門。"},
+    329: {"name": "陽系玄門功法329", "price": 13868, "bonus": 1.379, "realm": 6, "desc": "第329卷陽系修行法門。"},
+    330: {"name": "金系玄門功法330", "price": 13910, "bonus": 1.385, "realm": 6, "desc": "第330卷金系修行法門。"},
+    331: {"name": "木系玄門功法331", "price": 13952, "bonus": 1.391, "realm": 6, "desc": "第331卷木系修行法門。"},
+    332: {"name": "水系玄門功法332", "price": 13994, "bonus": 1.397, "realm": 6, "desc": "第332卷水系修行法門。"},
+    333: {"name": "火系玄門功法333", "price": 14036, "bonus": 1.403, "realm": 6, "desc": "第333卷火系修行法門。"},
+    334: {"name": "土系玄門功法334", "price": 14078, "bonus": 1.409, "realm": 6, "desc": "第334卷土系修行法門。"},
+    335: {"name": "風系玄門功法335", "price": 14120, "bonus": 1.415, "realm": 6, "desc": "第335卷風系修行法門。"},
+    336: {"name": "雷系玄門功法336", "price": 14162, "bonus": 1.421, "realm": 6, "desc": "第336卷雷系修行法門。"},
+    337: {"name": "冰系玄門功法337", "price": 14204, "bonus": 1.427, "realm": 6, "desc": "第337卷冰系修行法門。"},
+    338: {"name": "陰系玄門功法338", "price": 14246, "bonus": 1.433, "realm": 6, "desc": "第338卷陰系修行法門。"},
+    339: {"name": "陽系玄門功法339", "price": 14288, "bonus": 1.439, "realm": 6, "desc": "第339卷陽系修行法門。"},
+    340: {"name": "金系玄門功法340", "price": 14330, "bonus": 1.445, "realm": 6, "desc": "第340卷金系修行法門。"},
+    341: {"name": "木系玄門功法341", "price": 14372, "bonus": 1.451, "realm": 6, "desc": "第341卷木系修行法門。"},
+    342: {"name": "水系玄門功法342", "price": 14414, "bonus": 1.457, "realm": 6, "desc": "第342卷水系修行法門。"},
+    343: {"name": "火系玄門功法343", "price": 14456, "bonus": 1.463, "realm": 6, "desc": "第343卷火系修行法門。"},
+    344: {"name": "土系玄門功法344", "price": 14498, "bonus": 1.469, "realm": 6, "desc": "第344卷土系修行法門。"},
+    345: {"name": "風系玄門功法345", "price": 14540, "bonus": 1.475, "realm": 6, "desc": "第345卷風系修行法門。"},
+    346: {"name": "雷系玄門功法346", "price": 14582, "bonus": 1.481, "realm": 6, "desc": "第346卷雷系修行法門。"},
+    347: {"name": "冰系玄門功法347", "price": 14624, "bonus": 1.487, "realm": 6, "desc": "第347卷冰系修行法門。"},
+    348: {"name": "陰系玄門功法348", "price": 14666, "bonus": 1.493, "realm": 6, "desc": "第348卷陰系修行法門。"},
+    349: {"name": "陽系玄門功法349", "price": 14708, "bonus": 1.499, "realm": 6, "desc": "第349卷陽系修行法門。"},
+    350: {"name": "金系玄門功法350", "price": 14750, "bonus": 1.355, "realm": 6, "desc": "第350卷金系修行法門。"},
+    351: {"name": "木系玄門功法351", "price": 14792, "bonus": 1.406, "realm": 7, "desc": "第351卷木系修行法門。"},
+    352: {"name": "水系玄門功法352", "price": 14834, "bonus": 1.412, "realm": 7, "desc": "第352卷水系修行法門。"},
+    353: {"name": "火系玄門功法353", "price": 14876, "bonus": 1.418, "realm": 7, "desc": "第353卷火系修行法門。"},
+    354: {"name": "土系玄門功法354", "price": 14918, "bonus": 1.424, "realm": 7, "desc": "第354卷土系修行法門。"},
+    355: {"name": "風系玄門功法355", "price": 14960, "bonus": 1.43, "realm": 7, "desc": "第355卷風系修行法門。"},
+    356: {"name": "雷系玄門功法356", "price": 15002, "bonus": 1.436, "realm": 7, "desc": "第356卷雷系修行法門。"},
+    357: {"name": "冰系玄門功法357", "price": 15044, "bonus": 1.442, "realm": 7, "desc": "第357卷冰系修行法門。"},
+    358: {"name": "陰系玄門功法358", "price": 15086, "bonus": 1.448, "realm": 7, "desc": "第358卷陰系修行法門。"},
+    359: {"name": "陽系玄門功法359", "price": 15128, "bonus": 1.454, "realm": 7, "desc": "第359卷陽系修行法門。"},
+    360: {"name": "金系玄門功法360", "price": 15170, "bonus": 1.46, "realm": 7, "desc": "第360卷金系修行法門。"},
+    361: {"name": "木系玄門功法361", "price": 15212, "bonus": 1.466, "realm": 7, "desc": "第361卷木系修行法門。"},
+    362: {"name": "水系玄門功法362", "price": 15254, "bonus": 1.472, "realm": 7, "desc": "第362卷水系修行法門。"},
+    363: {"name": "火系玄門功法363", "price": 15296, "bonus": 1.478, "realm": 7, "desc": "第363卷火系修行法門。"},
+    364: {"name": "土系玄門功法364", "price": 15338, "bonus": 1.484, "realm": 7, "desc": "第364卷土系修行法門。"},
+    365: {"name": "風系玄門功法365", "price": 15380, "bonus": 1.49, "realm": 7, "desc": "第365卷風系修行法門。"},
+    366: {"name": "雷系玄門功法366", "price": 15422, "bonus": 1.496, "realm": 7, "desc": "第366卷雷系修行法門。"},
+    367: {"name": "冰系玄門功法367", "price": 15464, "bonus": 1.502, "realm": 7, "desc": "第367卷冰系修行法門。"},
+    368: {"name": "陰系玄門功法368", "price": 15506, "bonus": 1.508, "realm": 7, "desc": "第368卷陰系修行法門。"},
+    369: {"name": "陽系玄門功法369", "price": 15548, "bonus": 1.514, "realm": 7, "desc": "第369卷陽系修行法門。"},
+    370: {"name": "金系玄門功法370", "price": 15590, "bonus": 1.52, "realm": 7, "desc": "第370卷金系修行法門。"},
+    371: {"name": "木系玄門功法371", "price": 15632, "bonus": 1.526, "realm": 7, "desc": "第371卷木系修行法門。"},
+    372: {"name": "水系玄門功法372", "price": 15674, "bonus": 1.532, "realm": 7, "desc": "第372卷水系修行法門。"},
+    373: {"name": "火系玄門功法373", "price": 15716, "bonus": 1.538, "realm": 7, "desc": "第373卷火系修行法門。"},
+    374: {"name": "土系玄門功法374", "price": 15758, "bonus": 1.544, "realm": 7, "desc": "第374卷土系修行法門。"},
+    375: {"name": "風系玄門功法375", "price": 15800, "bonus": 1.4, "realm": 7, "desc": "第375卷風系修行法門。"},
+    376: {"name": "雷系玄門功法376", "price": 15842, "bonus": 1.406, "realm": 7, "desc": "第376卷雷系修行法門。"},
+    377: {"name": "冰系玄門功法377", "price": 15884, "bonus": 1.412, "realm": 7, "desc": "第377卷冰系修行法門。"},
+    378: {"name": "陰系玄門功法378", "price": 15926, "bonus": 1.418, "realm": 7, "desc": "第378卷陰系修行法門。"},
+    379: {"name": "陽系玄門功法379", "price": 15968, "bonus": 1.424, "realm": 7, "desc": "第379卷陽系修行法門。"},
+    380: {"name": "金系玄門功法380", "price": 16010, "bonus": 1.43, "realm": 7, "desc": "第380卷金系修行法門。"},
+    381: {"name": "木系玄門功法381", "price": 16052, "bonus": 1.436, "realm": 7, "desc": "第381卷木系修行法門。"},
+    382: {"name": "水系玄門功法382", "price": 16094, "bonus": 1.442, "realm": 7, "desc": "第382卷水系修行法門。"},
+    383: {"name": "火系玄門功法383", "price": 16136, "bonus": 1.448, "realm": 7, "desc": "第383卷火系修行法門。"},
+    384: {"name": "土系玄門功法384", "price": 16178, "bonus": 1.454, "realm": 7, "desc": "第384卷土系修行法門。"},
+    385: {"name": "風系玄門功法385", "price": 16220, "bonus": 1.46, "realm": 7, "desc": "第385卷風系修行法門。"},
+    386: {"name": "雷系玄門功法386", "price": 16262, "bonus": 1.466, "realm": 7, "desc": "第386卷雷系修行法門。"},
+    387: {"name": "冰系玄門功法387", "price": 16304, "bonus": 1.472, "realm": 7, "desc": "第387卷冰系修行法門。"},
+    388: {"name": "陰系玄門功法388", "price": 16346, "bonus": 1.478, "realm": 7, "desc": "第388卷陰系修行法門。"},
+    389: {"name": "陽系玄門功法389", "price": 16388, "bonus": 1.484, "realm": 7, "desc": "第389卷陽系修行法門。"},
+    390: {"name": "金系玄門功法390", "price": 16430, "bonus": 1.49, "realm": 7, "desc": "第390卷金系修行法門。"},
+    391: {"name": "木系玄門功法391", "price": 16472, "bonus": 1.496, "realm": 7, "desc": "第391卷木系修行法門。"},
+    392: {"name": "水系玄門功法392", "price": 16514, "bonus": 1.502, "realm": 7, "desc": "第392卷水系修行法門。"},
+    393: {"name": "火系玄門功法393", "price": 16556, "bonus": 1.508, "realm": 7, "desc": "第393卷火系修行法門。"},
+    394: {"name": "土系玄門功法394", "price": 16598, "bonus": 1.514, "realm": 7, "desc": "第394卷土系修行法門。"},
+    395: {"name": "風系玄門功法395", "price": 16640, "bonus": 1.52, "realm": 7, "desc": "第395卷風系修行法門。"},
+    396: {"name": "雷系玄門功法396", "price": 16682, "bonus": 1.526, "realm": 7, "desc": "第396卷雷系修行法門。"},
+    397: {"name": "冰系玄門功法397", "price": 16724, "bonus": 1.532, "realm": 7, "desc": "第397卷冰系修行法門。"},
+    398: {"name": "陰系玄門功法398", "price": 16766, "bonus": 1.538, "realm": 7, "desc": "第398卷陰系修行法門。"},
+    399: {"name": "陽系玄門功法399", "price": 16808, "bonus": 1.544, "realm": 7, "desc": "第399卷陽系修行法門。"},
+    400: {"name": "金系玄門功法400", "price": 16850, "bonus": 1.4, "realm": 7, "desc": "第400卷金系修行法門。"},
+    401: {"name": "木系玄門功法401", "price": 16892, "bonus": 1.451, "realm": 8, "desc": "第401卷木系修行法門。"},
+    402: {"name": "水系玄門功法402", "price": 16934, "bonus": 1.457, "realm": 8, "desc": "第402卷水系修行法門。"},
+    403: {"name": "火系玄門功法403", "price": 16976, "bonus": 1.463, "realm": 8, "desc": "第403卷火系修行法門。"},
+    404: {"name": "土系玄門功法404", "price": 17018, "bonus": 1.469, "realm": 8, "desc": "第404卷土系修行法門。"},
+    405: {"name": "風系玄門功法405", "price": 17060, "bonus": 1.475, "realm": 8, "desc": "第405卷風系修行法門。"},
+    406: {"name": "雷系玄門功法406", "price": 17102, "bonus": 1.481, "realm": 8, "desc": "第406卷雷系修行法門。"},
+    407: {"name": "冰系玄門功法407", "price": 17144, "bonus": 1.487, "realm": 8, "desc": "第407卷冰系修行法門。"},
+    408: {"name": "陰系玄門功法408", "price": 17186, "bonus": 1.493, "realm": 8, "desc": "第408卷陰系修行法門。"},
+    409: {"name": "陽系玄門功法409", "price": 17228, "bonus": 1.499, "realm": 8, "desc": "第409卷陽系修行法門。"},
+    410: {"name": "金系玄門功法410", "price": 17270, "bonus": 1.505, "realm": 8, "desc": "第410卷金系修行法門。"},
+    411: {"name": "木系玄門功法411", "price": 17312, "bonus": 1.511, "realm": 8, "desc": "第411卷木系修行法門。"},
+    412: {"name": "水系玄門功法412", "price": 17354, "bonus": 1.517, "realm": 8, "desc": "第412卷水系修行法門。"},
+    413: {"name": "火系玄門功法413", "price": 17396, "bonus": 1.523, "realm": 8, "desc": "第413卷火系修行法門。"},
+    414: {"name": "土系玄門功法414", "price": 17438, "bonus": 1.529, "realm": 8, "desc": "第414卷土系修行法門。"},
+    415: {"name": "風系玄門功法415", "price": 17480, "bonus": 1.535, "realm": 8, "desc": "第415卷風系修行法門。"},
+    416: {"name": "雷系玄門功法416", "price": 17522, "bonus": 1.541, "realm": 8, "desc": "第416卷雷系修行法門。"},
+    417: {"name": "冰系玄門功法417", "price": 17564, "bonus": 1.547, "realm": 8, "desc": "第417卷冰系修行法門。"},
+    418: {"name": "陰系玄門功法418", "price": 17606, "bonus": 1.553, "realm": 8, "desc": "第418卷陰系修行法門。"},
+    419: {"name": "陽系玄門功法419", "price": 17648, "bonus": 1.559, "realm": 8, "desc": "第419卷陽系修行法門。"},
+    420: {"name": "金系玄門功法420", "price": 17690, "bonus": 1.565, "realm": 8, "desc": "第420卷金系修行法門。"},
+    421: {"name": "木系玄門功法421", "price": 17732, "bonus": 1.571, "realm": 8, "desc": "第421卷木系修行法門。"},
+    422: {"name": "水系玄門功法422", "price": 17774, "bonus": 1.577, "realm": 8, "desc": "第422卷水系修行法門。"},
+    423: {"name": "火系玄門功法423", "price": 17816, "bonus": 1.583, "realm": 8, "desc": "第423卷火系修行法門。"},
+    424: {"name": "土系玄門功法424", "price": 17858, "bonus": 1.589, "realm": 8, "desc": "第424卷土系修行法門。"},
+    425: {"name": "風系玄門功法425", "price": 17900, "bonus": 1.445, "realm": 8, "desc": "第425卷風系修行法門。"},
+    426: {"name": "雷系玄門功法426", "price": 17942, "bonus": 1.451, "realm": 8, "desc": "第426卷雷系修行法門。"},
+    427: {"name": "冰系玄門功法427", "price": 17984, "bonus": 1.457, "realm": 8, "desc": "第427卷冰系修行法門。"},
+    428: {"name": "陰系玄門功法428", "price": 18026, "bonus": 1.463, "realm": 8, "desc": "第428卷陰系修行法門。"},
+    429: {"name": "陽系玄門功法429", "price": 18068, "bonus": 1.469, "realm": 8, "desc": "第429卷陽系修行法門。"},
+    430: {"name": "金系玄門功法430", "price": 18110, "bonus": 1.475, "realm": 8, "desc": "第430卷金系修行法門。"},
+    431: {"name": "木系玄門功法431", "price": 18152, "bonus": 1.481, "realm": 8, "desc": "第431卷木系修行法門。"},
+    432: {"name": "水系玄門功法432", "price": 18194, "bonus": 1.487, "realm": 8, "desc": "第432卷水系修行法門。"},
+    433: {"name": "火系玄門功法433", "price": 18236, "bonus": 1.493, "realm": 8, "desc": "第433卷火系修行法門。"},
+    434: {"name": "土系玄門功法434", "price": 18278, "bonus": 1.499, "realm": 8, "desc": "第434卷土系修行法門。"},
+    435: {"name": "風系玄門功法435", "price": 18320, "bonus": 1.505, "realm": 8, "desc": "第435卷風系修行法門。"},
+    436: {"name": "雷系玄門功法436", "price": 18362, "bonus": 1.511, "realm": 8, "desc": "第436卷雷系修行法門。"},
+    437: {"name": "冰系玄門功法437", "price": 18404, "bonus": 1.517, "realm": 8, "desc": "第437卷冰系修行法門。"},
+    438: {"name": "陰系玄門功法438", "price": 18446, "bonus": 1.523, "realm": 8, "desc": "第438卷陰系修行法門。"},
+    439: {"name": "陽系玄門功法439", "price": 18488, "bonus": 1.529, "realm": 8, "desc": "第439卷陽系修行法門。"},
+    440: {"name": "金系玄門功法440", "price": 18530, "bonus": 1.535, "realm": 8, "desc": "第440卷金系修行法門。"},
+    441: {"name": "木系玄門功法441", "price": 18572, "bonus": 1.541, "realm": 8, "desc": "第441卷木系修行法門。"},
+    442: {"name": "水系玄門功法442", "price": 18614, "bonus": 1.547, "realm": 8, "desc": "第442卷水系修行法門。"},
+    443: {"name": "火系玄門功法443", "price": 18656, "bonus": 1.553, "realm": 8, "desc": "第443卷火系修行法門。"},
+    444: {"name": "土系玄門功法444", "price": 18698, "bonus": 1.559, "realm": 8, "desc": "第444卷土系修行法門。"},
+    445: {"name": "風系玄門功法445", "price": 18740, "bonus": 1.565, "realm": 8, "desc": "第445卷風系修行法門。"},
+    446: {"name": "雷系玄門功法446", "price": 18782, "bonus": 1.571, "realm": 8, "desc": "第446卷雷系修行法門。"},
+    447: {"name": "冰系玄門功法447", "price": 18824, "bonus": 1.577, "realm": 8, "desc": "第447卷冰系修行法門。"},
+    448: {"name": "陰系玄門功法448", "price": 18866, "bonus": 1.583, "realm": 8, "desc": "第448卷陰系修行法門。"},
+    449: {"name": "陽系玄門功法449", "price": 18908, "bonus": 1.589, "realm": 8, "desc": "第449卷陽系修行法門。"},
+    450: {"name": "金系玄門功法450", "price": 18950, "bonus": 1.445, "realm": 8, "desc": "第450卷金系修行法門。"},
+    451: {"name": "木系玄門功法451", "price": 18992, "bonus": 1.496, "realm": 9, "desc": "第451卷木系修行法門。"},
+    452: {"name": "水系玄門功法452", "price": 19034, "bonus": 1.502, "realm": 9, "desc": "第452卷水系修行法門。"},
+    453: {"name": "火系玄門功法453", "price": 19076, "bonus": 1.508, "realm": 9, "desc": "第453卷火系修行法門。"},
+    454: {"name": "土系玄門功法454", "price": 19118, "bonus": 1.514, "realm": 9, "desc": "第454卷土系修行法門。"},
+    455: {"name": "風系玄門功法455", "price": 19160, "bonus": 1.52, "realm": 9, "desc": "第455卷風系修行法門。"},
+    456: {"name": "雷系玄門功法456", "price": 19202, "bonus": 1.526, "realm": 9, "desc": "第456卷雷系修行法門。"},
+    457: {"name": "冰系玄門功法457", "price": 19244, "bonus": 1.532, "realm": 9, "desc": "第457卷冰系修行法門。"},
+    458: {"name": "陰系玄門功法458", "price": 19286, "bonus": 1.538, "realm": 9, "desc": "第458卷陰系修行法門。"},
+    459: {"name": "陽系玄門功法459", "price": 19328, "bonus": 1.544, "realm": 9, "desc": "第459卷陽系修行法門。"},
+    460: {"name": "金系玄門功法460", "price": 19370, "bonus": 1.55, "realm": 9, "desc": "第460卷金系修行法門。"},
+    461: {"name": "木系玄門功法461", "price": 19412, "bonus": 1.556, "realm": 9, "desc": "第461卷木系修行法門。"},
+    462: {"name": "水系玄門功法462", "price": 19454, "bonus": 1.562, "realm": 9, "desc": "第462卷水系修行法門。"},
+    463: {"name": "火系玄門功法463", "price": 19496, "bonus": 1.568, "realm": 9, "desc": "第463卷火系修行法門。"},
+    464: {"name": "土系玄門功法464", "price": 19538, "bonus": 1.574, "realm": 9, "desc": "第464卷土系修行法門。"},
+    465: {"name": "風系玄門功法465", "price": 19580, "bonus": 1.58, "realm": 9, "desc": "第465卷風系修行法門。"},
+    466: {"name": "雷系玄門功法466", "price": 19622, "bonus": 1.586, "realm": 9, "desc": "第466卷雷系修行法門。"},
+    467: {"name": "冰系玄門功法467", "price": 19664, "bonus": 1.592, "realm": 9, "desc": "第467卷冰系修行法門。"},
+    468: {"name": "陰系玄門功法468", "price": 19706, "bonus": 1.598, "realm": 9, "desc": "第468卷陰系修行法門。"},
+    469: {"name": "陽系玄門功法469", "price": 19748, "bonus": 1.604, "realm": 9, "desc": "第469卷陽系修行法門。"},
+    470: {"name": "金系玄門功法470", "price": 19790, "bonus": 1.61, "realm": 9, "desc": "第470卷金系修行法門。"},
+    471: {"name": "木系玄門功法471", "price": 19832, "bonus": 1.616, "realm": 9, "desc": "第471卷木系修行法門。"},
+    472: {"name": "水系玄門功法472", "price": 19874, "bonus": 1.622, "realm": 9, "desc": "第472卷水系修行法門。"},
+    473: {"name": "火系玄門功法473", "price": 19916, "bonus": 1.628, "realm": 9, "desc": "第473卷火系修行法門。"},
+    474: {"name": "土系玄門功法474", "price": 19958, "bonus": 1.634, "realm": 9, "desc": "第474卷土系修行法門。"},
+    475: {"name": "風系玄門功法475", "price": 20000, "bonus": 1.49, "realm": 9, "desc": "第475卷風系修行法門。"},
+    476: {"name": "雷系玄門功法476", "price": 20042, "bonus": 1.496, "realm": 9, "desc": "第476卷雷系修行法門。"},
+    477: {"name": "冰系玄門功法477", "price": 20084, "bonus": 1.502, "realm": 9, "desc": "第477卷冰系修行法門。"},
+    478: {"name": "陰系玄門功法478", "price": 20126, "bonus": 1.508, "realm": 9, "desc": "第478卷陰系修行法門。"},
+    479: {"name": "陽系玄門功法479", "price": 20168, "bonus": 1.514, "realm": 9, "desc": "第479卷陽系修行法門。"},
+    480: {"name": "金系玄門功法480", "price": 20210, "bonus": 1.52, "realm": 9, "desc": "第480卷金系修行法門。"},
+    481: {"name": "木系玄門功法481", "price": 20252, "bonus": 1.526, "realm": 9, "desc": "第481卷木系修行法門。"},
+    482: {"name": "水系玄門功法482", "price": 20294, "bonus": 1.532, "realm": 9, "desc": "第482卷水系修行法門。"},
+    483: {"name": "火系玄門功法483", "price": 20336, "bonus": 1.538, "realm": 9, "desc": "第483卷火系修行法門。"},
+    484: {"name": "土系玄門功法484", "price": 20378, "bonus": 1.544, "realm": 9, "desc": "第484卷土系修行法門。"},
+    485: {"name": "風系玄門功法485", "price": 20420, "bonus": 1.55, "realm": 9, "desc": "第485卷風系修行法門。"},
+    486: {"name": "雷系玄門功法486", "price": 20462, "bonus": 1.556, "realm": 9, "desc": "第486卷雷系修行法門。"},
+    487: {"name": "冰系玄門功法487", "price": 20504, "bonus": 1.562, "realm": 9, "desc": "第487卷冰系修行法門。"},
+    488: {"name": "陰系玄門功法488", "price": 20546, "bonus": 1.568, "realm": 9, "desc": "第488卷陰系修行法門。"},
+    489: {"name": "陽系玄門功法489", "price": 20588, "bonus": 1.574, "realm": 9, "desc": "第489卷陽系修行法門。"},
+    490: {"name": "金系玄門功法490", "price": 20630, "bonus": 1.58, "realm": 9, "desc": "第490卷金系修行法門。"},
+    491: {"name": "木系玄門功法491", "price": 20672, "bonus": 1.586, "realm": 9, "desc": "第491卷木系修行法門。"},
+    492: {"name": "水系玄門功法492", "price": 20714, "bonus": 1.592, "realm": 9, "desc": "第492卷水系修行法門。"},
+    493: {"name": "火系玄門功法493", "price": 20756, "bonus": 1.598, "realm": 9, "desc": "第493卷火系修行法門。"},
+    494: {"name": "土系玄門功法494", "price": 20798, "bonus": 1.604, "realm": 9, "desc": "第494卷土系修行法門。"},
+    495: {"name": "風系玄門功法495", "price": 20840, "bonus": 1.61, "realm": 9, "desc": "第495卷風系修行法門。"},
+    496: {"name": "雷系玄門功法496", "price": 20882, "bonus": 1.616, "realm": 9, "desc": "第496卷雷系修行法門。"},
+    497: {"name": "冰系玄門功法497", "price": 20924, "bonus": 1.622, "realm": 9, "desc": "第497卷冰系修行法門。"},
+    498: {"name": "陰系玄門功法498", "price": 20966, "bonus": 1.628, "realm": 9, "desc": "第498卷陰系修行法門。"},
+    499: {"name": "陽系玄門功法499", "price": 21008, "bonus": 1.634, "realm": 9, "desc": "第499卷陽系修行法門。"},
+    500: {"name": "金系玄門功法500", "price": 21050, "bonus": 1.49, "realm": 9, "desc": "第500卷金系修行法門。"},
 }
 
-ROD_STATS = {
-    "新手魚竿": {"luck": 1.0, "speed_bonus": 0.0, "mutation": 0.05, "desc": "Fisch最初始的破舊木竿，適合熟悉水性。"},
-    "初級魚竿": {"luck": 1.3, "speed_bonus": 0.5, "mutation": 0.10, "desc": "碳纖維輕量化漁具，收竿速度輕微提升。"},
-    "高級魚竿": {"luck": 2.0, "speed_bonus": 1.5, "mutation": 0.20, "desc": "公會高強度合金竿，大魚咬竿率顯著增加。"},
-    "穩健之竿 (Steady Rod)": {"luck": 1.8, "speed_bonus": 1.0, "mutation": 0.15, "desc": "【被動：重力鎖定】拉竿成功率永久額外提升 +15%！"},
-    "長線之竿 (Long Rod)": {"luck": 2.5, "speed_bonus": 0.5, "mutation": 0.25, "desc": "【被動：遠洋拋投】拋竿距離翻倍，更容易驚動深海稀有物種。"},
-    "深海魚竿": {"luck": 3.5, "speed_bonus": 2.5, "mutation": 0.35, "desc": "耐壓鈦合金打造，專為抵禦二海高壓激流設計。"},
-    "珊瑚礁共振竿": {"luck": 5.0, "speed_bonus": 4.0, "mutation": 0.45, "desc": "能與珊瑚產生音波共振，多彩異變率極高。"},
-    "霓虹之竿 (Neon Rod)": {"luck": 4.5, "speed_bonus": 3.5, "mutation": 0.55, "desc": "【被動：電光矩陣】散發霓虹光芒，全卡槽突變機率激增 +25%！"},
-    "黃金之竿 (Golden Rod)": {"luck": 6.5, "speed_bonus": 3.0, "mutation": 0.30, "desc": "【被動：點石成金】釣到的魚全賣時，金幣回收價永久 1.5 倍！"},
-    "幸運之竿 (Lucky Rod)": {"luck": 8.5, "speed_bonus": 2.0, "mutation": 0.35, "desc": "【被動：歐皇附體】全服傳奇、神話級超珍稀生物爆率大幅提升！"},
-    "量子魚竿": {"luck": 10.0, "speed_bonus": 5.5, "mutation": 0.60, "desc": "利用量子糾纏打造，出竿的瞬間已鎖定未來大魚。"},
-    "暗夜之竿 (Nocturnal Rod)": {"luck": 12.0, "speed_bonus": 5.0, "mutation": 0.65, "desc": "【被動：永夜幽靈】在夜間或暴雨天氣下，全爆率瘋狂翻倍 2.5 倍！"},
-    "外星干擾重型桿": {"luck": 16.0, "speed_bonus": 6.5, "mutation": 0.70, "desc": "逆向外星母艦核心改造，自帶電磁波專引深海巨怪。"},
-    "🔥 地心熔岩流體竿": {"luck": 22.0, "speed_bonus": 7.0, "mutation": 0.80, "desc": "【被動：超耐熱機甲】唯一能承受地幔數萬度岩漿的超硬核重型神竿。"},
-    "諸神黃昏湮滅劫桿": {"luck": 45.0, "speed_bonus": 8.0, "mutation": 0.95, "desc": "【被動：終極毀滅】岩漿深處淬鍊萬年，出水必引發全服突變海嘯。"},
-    "🏆 任務大師榮譽紀念竿": {"luck": 8.8, "speed_bonus": 6.5, "mutation": 0.75, "desc": "累積完成公會日常後，獲得會長親賜的頂級榮譽。"},
-    "ADMIN魚桿": {"luck": 999.0, "speed_bonus": 8.5, "mutation": 1.00, "desc": "擁有修改造物主代碼權限的至高神竿，全海域秒殺通行。"}
+ITEMS = {
+    1: {"name": "凡品靈草0001", "kind": "靈草", "rarity": "凡品", "buy": 28, "sell": 20, "level": 0, "value": 4},
+    2: {"name": "良品丹藥0002", "kind": "丹藥", "rarity": "良品", "buy": 46, "sell": 33, "level": 0, "value": 5},
+    3: {"name": "精品礦石0003", "kind": "礦石", "rarity": "精品", "buy": 64, "sell": 46, "level": 0, "value": 6},
+    4: {"name": "靈品符籙0004", "kind": "符籙", "rarity": "靈品", "buy": 82, "sell": 59, "level": 0, "value": 7},
+    5: {"name": "玄品法寶材料0005", "kind": "法寶材料", "rarity": "玄品", "buy": 100, "sell": 72, "level": 0, "value": 8},
+    6: {"name": "地品妖獸材料0006", "kind": "妖獸材料", "rarity": "地品", "buy": 118, "sell": 84, "level": 0, "value": 9},
+    7: {"name": "天品靈木0007", "kind": "靈木", "rarity": "天品", "buy": 136, "sell": 97, "level": 0, "value": 10},
+    8: {"name": "仙品靈水0008", "kind": "靈水", "rarity": "仙品", "buy": 154, "sell": 110, "level": 0, "value": 11},
+    9: {"name": "凡品靈果0009", "kind": "靈果", "rarity": "凡品", "buy": 172, "sell": 123, "level": 0, "value": 12},
+    10: {"name": "良品靈花0010", "kind": "靈花", "rarity": "良品", "buy": 190, "sell": 136, "level": 0, "value": 13},
+    11: {"name": "精品靈草0011", "kind": "靈草", "rarity": "精品", "buy": 208, "sell": 149, "level": 0, "value": 14},
+    12: {"name": "靈品丹藥0012", "kind": "丹藥", "rarity": "靈品", "buy": 226, "sell": 162, "level": 0, "value": 15},
+    13: {"name": "玄品礦石0013", "kind": "礦石", "rarity": "玄品", "buy": 101, "sell": 72, "level": 0, "value": 16},
+    14: {"name": "地品符籙0014", "kind": "符籙", "rarity": "地品", "buy": 119, "sell": 85, "level": 0, "value": 17},
+    15: {"name": "天品法寶材料0015", "kind": "法寶材料", "rarity": "天品", "buy": 137, "sell": 98, "level": 0, "value": 18},
+    16: {"name": "仙品妖獸材料0016", "kind": "妖獸材料", "rarity": "仙品", "buy": 155, "sell": 111, "level": 0, "value": 19},
+    17: {"name": "凡品靈木0017", "kind": "靈木", "rarity": "凡品", "buy": 173, "sell": 124, "level": 0, "value": 20},
+    18: {"name": "良品靈水0018", "kind": "靈水", "rarity": "良品", "buy": 191, "sell": 137, "level": 0, "value": 21},
+    19: {"name": "精品靈果0019", "kind": "靈果", "rarity": "精品", "buy": 209, "sell": 150, "level": 0, "value": 22},
+    20: {"name": "靈品靈花0020", "kind": "靈花", "rarity": "靈品", "buy": 227, "sell": 163, "level": 0, "value": 23},
+    21: {"name": "玄品靈草0021", "kind": "靈草", "rarity": "玄品", "buy": 245, "sell": 176, "level": 0, "value": 24},
+    22: {"name": "地品丹藥0022", "kind": "丹藥", "rarity": "地品", "buy": 263, "sell": 189, "level": 0, "value": 25},
+    23: {"name": "天品礦石0023", "kind": "礦石", "rarity": "天品", "buy": 281, "sell": 202, "level": 0, "value": 26},
+    24: {"name": "仙品符籙0024", "kind": "符籙", "rarity": "仙品", "buy": 299, "sell": 215, "level": 0, "value": 27},
+    25: {"name": "凡品法寶材料0025", "kind": "法寶材料", "rarity": "凡品", "buy": 317, "sell": 228, "level": 0, "value": 28},
+    26: {"name": "良品妖獸材料0026", "kind": "妖獸材料", "rarity": "良品", "buy": 192, "sell": 138, "level": 0, "value": 29},
+    27: {"name": "精品靈木0027", "kind": "靈木", "rarity": "精品", "buy": 210, "sell": 151, "level": 0, "value": 30},
+    28: {"name": "靈品靈水0028", "kind": "靈水", "rarity": "靈品", "buy": 228, "sell": 164, "level": 0, "value": 31},
+    29: {"name": "玄品靈果0029", "kind": "靈果", "rarity": "玄品", "buy": 246, "sell": 177, "level": 0, "value": 32},
+    30: {"name": "地品靈花0030", "kind": "靈花", "rarity": "地品", "buy": 264, "sell": 190, "level": 0, "value": 33},
+    31: {"name": "天品靈草0031", "kind": "靈草", "rarity": "天品", "buy": 282, "sell": 203, "level": 0, "value": 34},
+    32: {"name": "仙品丹藥0032", "kind": "丹藥", "rarity": "仙品", "buy": 300, "sell": 216, "level": 0, "value": 35},
+    33: {"name": "凡品礦石0033", "kind": "礦石", "rarity": "凡品", "buy": 318, "sell": 228, "level": 0, "value": 36},
+    34: {"name": "良品符籙0034", "kind": "符籙", "rarity": "良品", "buy": 336, "sell": 241, "level": 0, "value": 37},
+    35: {"name": "精品法寶材料0035", "kind": "法寶材料", "rarity": "精品", "buy": 354, "sell": 254, "level": 0, "value": 38},
+    36: {"name": "靈品妖獸材料0036", "kind": "妖獸材料", "rarity": "靈品", "buy": 372, "sell": 267, "level": 0, "value": 39},
+    37: {"name": "玄品靈木0037", "kind": "靈木", "rarity": "玄品", "buy": 390, "sell": 280, "level": 0, "value": 40},
+    38: {"name": "地品靈水0038", "kind": "靈水", "rarity": "地品", "buy": 408, "sell": 293, "level": 0, "value": 41},
+    39: {"name": "天品靈果0039", "kind": "靈果", "rarity": "天品", "buy": 283, "sell": 203, "level": 0, "value": 42},
+    40: {"name": "仙品靈花0040", "kind": "靈花", "rarity": "仙品", "buy": 301, "sell": 216, "level": 0, "value": 43},
+    41: {"name": "凡品靈草0041", "kind": "靈草", "rarity": "凡品", "buy": 319, "sell": 229, "level": 0, "value": 44},
+    42: {"name": "良品丹藥0042", "kind": "丹藥", "rarity": "良品", "buy": 337, "sell": 242, "level": 0, "value": 45},
+    43: {"name": "精品礦石0043", "kind": "礦石", "rarity": "精品", "buy": 355, "sell": 255, "level": 0, "value": 46},
+    44: {"name": "靈品符籙0044", "kind": "符籙", "rarity": "靈品", "buy": 373, "sell": 268, "level": 0, "value": 47},
+    45: {"name": "玄品法寶材料0045", "kind": "法寶材料", "rarity": "玄品", "buy": 391, "sell": 281, "level": 0, "value": 48},
+    46: {"name": "地品妖獸材料0046", "kind": "妖獸材料", "rarity": "地品", "buy": 409, "sell": 294, "level": 0, "value": 49},
+    47: {"name": "天品靈木0047", "kind": "靈木", "rarity": "天品", "buy": 427, "sell": 307, "level": 0, "value": 50},
+    48: {"name": "仙品靈水0048", "kind": "靈水", "rarity": "仙品", "buy": 445, "sell": 320, "level": 0, "value": 51},
+    49: {"name": "凡品靈果0049", "kind": "靈果", "rarity": "凡品", "buy": 463, "sell": 333, "level": 0, "value": 52},
+    50: {"name": "良品靈花0050", "kind": "靈花", "rarity": "良品", "buy": 481, "sell": 346, "level": 0, "value": 53},
+    51: {"name": "精品靈草0051", "kind": "靈草", "rarity": "精品", "buy": 499, "sell": 359, "level": 0, "value": 54},
+    52: {"name": "靈品丹藥0052", "kind": "丹藥", "rarity": "靈品", "buy": 374, "sell": 269, "level": 0, "value": 55},
+    53: {"name": "玄品礦石0053", "kind": "礦石", "rarity": "玄品", "buy": 392, "sell": 282, "level": 0, "value": 56},
+    54: {"name": "地品符籙0054", "kind": "符籙", "rarity": "地品", "buy": 410, "sell": 295, "level": 0, "value": 57},
+    55: {"name": "天品法寶材料0055", "kind": "法寶材料", "rarity": "天品", "buy": 428, "sell": 308, "level": 0, "value": 58},
+    56: {"name": "仙品妖獸材料0056", "kind": "妖獸材料", "rarity": "仙品", "buy": 446, "sell": 321, "level": 0, "value": 59},
+    57: {"name": "凡品靈木0057", "kind": "靈木", "rarity": "凡品", "buy": 464, "sell": 334, "level": 0, "value": 60},
+    58: {"name": "良品靈水0058", "kind": "靈水", "rarity": "良品", "buy": 482, "sell": 347, "level": 0, "value": 61},
+    59: {"name": "精品靈果0059", "kind": "靈果", "rarity": "精品", "buy": 500, "sell": 360, "level": 0, "value": 62},
+    60: {"name": "靈品靈花0060", "kind": "靈花", "rarity": "靈品", "buy": 518, "sell": 372, "level": 0, "value": 63},
+    61: {"name": "玄品靈草0061", "kind": "靈草", "rarity": "玄品", "buy": 536, "sell": 385, "level": 0, "value": 64},
+    62: {"name": "地品丹藥0062", "kind": "丹藥", "rarity": "地品", "buy": 554, "sell": 398, "level": 0, "value": 65},
+    63: {"name": "天品礦石0063", "kind": "礦石", "rarity": "天品", "buy": 572, "sell": 411, "level": 0, "value": 66},
+    64: {"name": "仙品符籙0064", "kind": "符籙", "rarity": "仙品", "buy": 590, "sell": 424, "level": 0, "value": 67},
+    65: {"name": "凡品法寶材料0065", "kind": "法寶材料", "rarity": "凡品", "buy": 465, "sell": 334, "level": 0, "value": 68},
+    66: {"name": "良品妖獸材料0066", "kind": "妖獸材料", "rarity": "良品", "buy": 483, "sell": 347, "level": 0, "value": 69},
+    67: {"name": "精品靈木0067", "kind": "靈木", "rarity": "精品", "buy": 501, "sell": 360, "level": 0, "value": 70},
+    68: {"name": "靈品靈水0068", "kind": "靈水", "rarity": "靈品", "buy": 519, "sell": 373, "level": 0, "value": 71},
+    69: {"name": "玄品靈果0069", "kind": "靈果", "rarity": "玄品", "buy": 537, "sell": 386, "level": 0, "value": 72},
+    70: {"name": "地品靈花0070", "kind": "靈花", "rarity": "地品", "buy": 555, "sell": 399, "level": 0, "value": 73},
+    71: {"name": "天品靈草0071", "kind": "靈草", "rarity": "天品", "buy": 573, "sell": 412, "level": 0, "value": 74},
+    72: {"name": "仙品丹藥0072", "kind": "丹藥", "rarity": "仙品", "buy": 591, "sell": 425, "level": 0, "value": 75},
+    73: {"name": "凡品礦石0073", "kind": "礦石", "rarity": "凡品", "buy": 609, "sell": 438, "level": 0, "value": 76},
+    74: {"name": "良品符籙0074", "kind": "符籙", "rarity": "良品", "buy": 627, "sell": 451, "level": 0, "value": 77},
+    75: {"name": "精品法寶材料0075", "kind": "法寶材料", "rarity": "精品", "buy": 645, "sell": 464, "level": 0, "value": 78},
+    76: {"name": "靈品妖獸材料0076", "kind": "妖獸材料", "rarity": "靈品", "buy": 663, "sell": 477, "level": 0, "value": 79},
+    77: {"name": "玄品靈木0077", "kind": "靈木", "rarity": "玄品", "buy": 681, "sell": 490, "level": 0, "value": 80},
+    78: {"name": "地品靈水0078", "kind": "靈水", "rarity": "地品", "buy": 556, "sell": 400, "level": 0, "value": 81},
+    79: {"name": "天品靈果0079", "kind": "靈果", "rarity": "天品", "buy": 574, "sell": 413, "level": 0, "value": 82},
+    80: {"name": "仙品靈花0080", "kind": "靈花", "rarity": "仙品", "buy": 592, "sell": 426, "level": 0, "value": 83},
+    81: {"name": "凡品靈草0081", "kind": "靈草", "rarity": "凡品", "buy": 610, "sell": 439, "level": 0, "value": 84},
+    82: {"name": "良品丹藥0082", "kind": "丹藥", "rarity": "良品", "buy": 628, "sell": 452, "level": 0, "value": 85},
+    83: {"name": "精品礦石0083", "kind": "礦石", "rarity": "精品", "buy": 646, "sell": 465, "level": 0, "value": 86},
+    84: {"name": "靈品符籙0084", "kind": "符籙", "rarity": "靈品", "buy": 664, "sell": 478, "level": 0, "value": 87},
+    85: {"name": "玄品法寶材料0085", "kind": "法寶材料", "rarity": "玄品", "buy": 682, "sell": 491, "level": 0, "value": 88},
+    86: {"name": "地品妖獸材料0086", "kind": "妖獸材料", "rarity": "地品", "buy": 700, "sell": 504, "level": 0, "value": 89},
+    87: {"name": "天品靈木0087", "kind": "靈木", "rarity": "天品", "buy": 718, "sell": 516, "level": 0, "value": 90},
+    88: {"name": "仙品靈水0088", "kind": "靈水", "rarity": "仙品", "buy": 736, "sell": 529, "level": 0, "value": 91},
+    89: {"name": "凡品靈果0089", "kind": "靈果", "rarity": "凡品", "buy": 754, "sell": 542, "level": 0, "value": 92},
+    90: {"name": "良品靈花0090", "kind": "靈花", "rarity": "良品", "buy": 772, "sell": 555, "level": 0, "value": 93},
+    91: {"name": "精品靈草0091", "kind": "靈草", "rarity": "精品", "buy": 647, "sell": 465, "level": 0, "value": 94},
+    92: {"name": "靈品丹藥0092", "kind": "丹藥", "rarity": "靈品", "buy": 665, "sell": 478, "level": 0, "value": 95},
+    93: {"name": "玄品礦石0093", "kind": "礦石", "rarity": "玄品", "buy": 683, "sell": 491, "level": 0, "value": 96},
+    94: {"name": "地品符籙0094", "kind": "符籙", "rarity": "地品", "buy": 701, "sell": 504, "level": 0, "value": 97},
+    95: {"name": "天品法寶材料0095", "kind": "法寶材料", "rarity": "天品", "buy": 719, "sell": 517, "level": 0, "value": 98},
+    96: {"name": "仙品妖獸材料0096", "kind": "妖獸材料", "rarity": "仙品", "buy": 737, "sell": 530, "level": 0, "value": 99},
+    97: {"name": "凡品靈木0097", "kind": "靈木", "rarity": "凡品", "buy": 755, "sell": 543, "level": 0, "value": 3},
+    98: {"name": "良品靈水0098", "kind": "靈水", "rarity": "良品", "buy": 773, "sell": 556, "level": 0, "value": 4},
+    99: {"name": "精品靈果0099", "kind": "靈果", "rarity": "精品", "buy": 791, "sell": 569, "level": 0, "value": 5},
+    100: {"name": "靈品靈花0100", "kind": "靈花", "rarity": "靈品", "buy": 809, "sell": 582, "level": 0, "value": 6},
+    101: {"name": "玄品靈草0101", "kind": "靈草", "rarity": "玄品", "buy": 827, "sell": 595, "level": 0, "value": 7},
+    102: {"name": "地品丹藥0102", "kind": "丹藥", "rarity": "地品", "buy": 845, "sell": 608, "level": 0, "value": 8},
+    103: {"name": "天品礦石0103", "kind": "礦石", "rarity": "天品", "buy": 863, "sell": 621, "level": 0, "value": 9},
+    104: {"name": "仙品符籙0104", "kind": "符籙", "rarity": "仙品", "buy": 738, "sell": 531, "level": 0, "value": 10},
+    105: {"name": "凡品法寶材料0105", "kind": "法寶材料", "rarity": "凡品", "buy": 756, "sell": 544, "level": 0, "value": 11},
+    106: {"name": "良品妖獸材料0106", "kind": "妖獸材料", "rarity": "良品", "buy": 774, "sell": 557, "level": 0, "value": 12},
+    107: {"name": "精品靈木0107", "kind": "靈木", "rarity": "精品", "buy": 792, "sell": 570, "level": 0, "value": 13},
+    108: {"name": "靈品靈水0108", "kind": "靈水", "rarity": "靈品", "buy": 810, "sell": 583, "level": 0, "value": 14},
+    109: {"name": "玄品靈果0109", "kind": "靈果", "rarity": "玄品", "buy": 828, "sell": 596, "level": 0, "value": 15},
+    110: {"name": "地品靈花0110", "kind": "靈花", "rarity": "地品", "buy": 846, "sell": 609, "level": 0, "value": 16},
+    111: {"name": "天品靈草0111", "kind": "靈草", "rarity": "天品", "buy": 864, "sell": 622, "level": 0, "value": 17},
+    112: {"name": "仙品丹藥0112", "kind": "丹藥", "rarity": "仙品", "buy": 882, "sell": 635, "level": 0, "value": 18},
+    113: {"name": "凡品礦石0113", "kind": "礦石", "rarity": "凡品", "buy": 900, "sell": 648, "level": 0, "value": 19},
+    114: {"name": "良品符籙0114", "kind": "符籙", "rarity": "良品", "buy": 918, "sell": 660, "level": 0, "value": 20},
+    115: {"name": "精品法寶材料0115", "kind": "法寶材料", "rarity": "精品", "buy": 936, "sell": 673, "level": 0, "value": 21},
+    116: {"name": "靈品妖獸材料0116", "kind": "妖獸材料", "rarity": "靈品", "buy": 954, "sell": 686, "level": 0, "value": 22},
+    117: {"name": "玄品靈木0117", "kind": "靈木", "rarity": "玄品", "buy": 829, "sell": 596, "level": 0, "value": 23},
+    118: {"name": "地品靈水0118", "kind": "靈水", "rarity": "地品", "buy": 847, "sell": 609, "level": 0, "value": 24},
+    119: {"name": "天品靈果0119", "kind": "靈果", "rarity": "天品", "buy": 865, "sell": 622, "level": 0, "value": 25},
+    120: {"name": "仙品靈花0120", "kind": "靈花", "rarity": "仙品", "buy": 883, "sell": 635, "level": 0, "value": 26},
+    121: {"name": "凡品靈草0121", "kind": "靈草", "rarity": "凡品", "buy": 901, "sell": 648, "level": 0, "value": 27},
+    122: {"name": "良品丹藥0122", "kind": "丹藥", "rarity": "良品", "buy": 919, "sell": 661, "level": 0, "value": 28},
+    123: {"name": "精品礦石0123", "kind": "礦石", "rarity": "精品", "buy": 937, "sell": 674, "level": 0, "value": 29},
+    124: {"name": "靈品符籙0124", "kind": "符籙", "rarity": "靈品", "buy": 955, "sell": 687, "level": 0, "value": 30},
+    125: {"name": "玄品法寶材料0125", "kind": "法寶材料", "rarity": "玄品", "buy": 973, "sell": 700, "level": 0, "value": 31},
+    126: {"name": "地品妖獸材料0126", "kind": "妖獸材料", "rarity": "地品", "buy": 991, "sell": 713, "level": 0, "value": 32},
+    127: {"name": "天品靈木0127", "kind": "靈木", "rarity": "天品", "buy": 1009, "sell": 726, "level": 0, "value": 33},
+    128: {"name": "仙品靈水0128", "kind": "靈水", "rarity": "仙品", "buy": 1027, "sell": 739, "level": 0, "value": 34},
+    129: {"name": "凡品靈果0129", "kind": "靈果", "rarity": "凡品", "buy": 1045, "sell": 752, "level": 0, "value": 35},
+    130: {"name": "良品靈花0130", "kind": "靈花", "rarity": "良品", "buy": 920, "sell": 662, "level": 0, "value": 36},
+    131: {"name": "精品靈草0131", "kind": "靈草", "rarity": "精品", "buy": 938, "sell": 675, "level": 0, "value": 37},
+    132: {"name": "靈品丹藥0132", "kind": "丹藥", "rarity": "靈品", "buy": 956, "sell": 688, "level": 0, "value": 38},
+    133: {"name": "玄品礦石0133", "kind": "礦石", "rarity": "玄品", "buy": 974, "sell": 701, "level": 0, "value": 39},
+    134: {"name": "地品符籙0134", "kind": "符籙", "rarity": "地品", "buy": 992, "sell": 714, "level": 0, "value": 40},
+    135: {"name": "天品法寶材料0135", "kind": "法寶材料", "rarity": "天品", "buy": 1010, "sell": 727, "level": 0, "value": 41},
+    136: {"name": "仙品妖獸材料0136", "kind": "妖獸材料", "rarity": "仙品", "buy": 1028, "sell": 740, "level": 0, "value": 42},
+    137: {"name": "凡品靈木0137", "kind": "靈木", "rarity": "凡品", "buy": 1046, "sell": 753, "level": 0, "value": 43},
+    138: {"name": "良品靈水0138", "kind": "靈水", "rarity": "良品", "buy": 1064, "sell": 766, "level": 0, "value": 44},
+    139: {"name": "精品靈果0139", "kind": "靈果", "rarity": "精品", "buy": 1082, "sell": 779, "level": 0, "value": 45},
+    140: {"name": "靈品靈花0140", "kind": "靈花", "rarity": "靈品", "buy": 1100, "sell": 792, "level": 0, "value": 46},
+    141: {"name": "玄品靈草0141", "kind": "靈草", "rarity": "玄品", "buy": 1118, "sell": 804, "level": 0, "value": 47},
+    142: {"name": "地品丹藥0142", "kind": "丹藥", "rarity": "地品", "buy": 1136, "sell": 817, "level": 0, "value": 48},
+    143: {"name": "天品礦石0143", "kind": "礦石", "rarity": "天品", "buy": 1011, "sell": 727, "level": 0, "value": 49},
+    144: {"name": "仙品符籙0144", "kind": "符籙", "rarity": "仙品", "buy": 1029, "sell": 740, "level": 0, "value": 50},
+    145: {"name": "凡品法寶材料0145", "kind": "法寶材料", "rarity": "凡品", "buy": 1047, "sell": 753, "level": 0, "value": 51},
+    146: {"name": "良品妖獸材料0146", "kind": "妖獸材料", "rarity": "良品", "buy": 1065, "sell": 766, "level": 0, "value": 52},
+    147: {"name": "精品靈木0147", "kind": "靈木", "rarity": "精品", "buy": 1083, "sell": 779, "level": 0, "value": 53},
+    148: {"name": "靈品靈水0148", "kind": "靈水", "rarity": "靈品", "buy": 1101, "sell": 792, "level": 0, "value": 54},
+    149: {"name": "玄品靈果0149", "kind": "靈果", "rarity": "玄品", "buy": 1119, "sell": 805, "level": 0, "value": 55},
+    150: {"name": "地品靈花0150", "kind": "靈花", "rarity": "地品", "buy": 1137, "sell": 818, "level": 0, "value": 56},
+    151: {"name": "天品靈草0151", "kind": "靈草", "rarity": "天品", "buy": 1155, "sell": 831, "level": 0, "value": 57},
+    152: {"name": "仙品丹藥0152", "kind": "丹藥", "rarity": "仙品", "buy": 1173, "sell": 844, "level": 0, "value": 58},
+    153: {"name": "凡品礦石0153", "kind": "礦石", "rarity": "凡品", "buy": 1191, "sell": 857, "level": 0, "value": 59},
+    154: {"name": "良品符籙0154", "kind": "符籙", "rarity": "良品", "buy": 1209, "sell": 870, "level": 0, "value": 60},
+    155: {"name": "精品法寶材料0155", "kind": "法寶材料", "rarity": "精品", "buy": 1227, "sell": 883, "level": 0, "value": 61},
+    156: {"name": "靈品妖獸材料0156", "kind": "妖獸材料", "rarity": "靈品", "buy": 1102, "sell": 793, "level": 0, "value": 62},
+    157: {"name": "玄品靈木0157", "kind": "靈木", "rarity": "玄品", "buy": 1120, "sell": 806, "level": 0, "value": 63},
+    158: {"name": "地品靈水0158", "kind": "靈水", "rarity": "地品", "buy": 1138, "sell": 819, "level": 0, "value": 64},
+    159: {"name": "天品靈果0159", "kind": "靈果", "rarity": "天品", "buy": 1156, "sell": 832, "level": 0, "value": 65},
+    160: {"name": "仙品靈花0160", "kind": "靈花", "rarity": "仙品", "buy": 1174, "sell": 845, "level": 0, "value": 66},
+    161: {"name": "凡品靈草0161", "kind": "靈草", "rarity": "凡品", "buy": 1192, "sell": 858, "level": 0, "value": 67},
+    162: {"name": "良品丹藥0162", "kind": "丹藥", "rarity": "良品", "buy": 1210, "sell": 871, "level": 0, "value": 68},
+    163: {"name": "精品礦石0163", "kind": "礦石", "rarity": "精品", "buy": 1228, "sell": 884, "level": 0, "value": 69},
+    164: {"name": "靈品符籙0164", "kind": "符籙", "rarity": "靈品", "buy": 1246, "sell": 897, "level": 0, "value": 70},
+    165: {"name": "玄品法寶材料0165", "kind": "法寶材料", "rarity": "玄品", "buy": 1264, "sell": 910, "level": 0, "value": 71},
+    166: {"name": "地品妖獸材料0166", "kind": "妖獸材料", "rarity": "地品", "buy": 1282, "sell": 923, "level": 0, "value": 72},
+    167: {"name": "天品靈木0167", "kind": "靈木", "rarity": "天品", "buy": 1300, "sell": 936, "level": 0, "value": 73},
+    168: {"name": "仙品靈水0168", "kind": "靈水", "rarity": "仙品", "buy": 1318, "sell": 948, "level": 0, "value": 74},
+    169: {"name": "凡品靈果0169", "kind": "靈果", "rarity": "凡品", "buy": 1193, "sell": 858, "level": 0, "value": 75},
+    170: {"name": "良品靈花0170", "kind": "靈花", "rarity": "良品", "buy": 1211, "sell": 871, "level": 0, "value": 76},
+    171: {"name": "精品靈草0171", "kind": "靈草", "rarity": "精品", "buy": 1229, "sell": 884, "level": 0, "value": 77},
+    172: {"name": "靈品丹藥0172", "kind": "丹藥", "rarity": "靈品", "buy": 1247, "sell": 897, "level": 0, "value": 78},
+    173: {"name": "玄品礦石0173", "kind": "礦石", "rarity": "玄品", "buy": 1265, "sell": 910, "level": 0, "value": 79},
+    174: {"name": "地品符籙0174", "kind": "符籙", "rarity": "地品", "buy": 1283, "sell": 923, "level": 0, "value": 80},
+    175: {"name": "天品法寶材料0175", "kind": "法寶材料", "rarity": "天品", "buy": 1301, "sell": 936, "level": 0, "value": 81},
+    176: {"name": "仙品妖獸材料0176", "kind": "妖獸材料", "rarity": "仙品", "buy": 1319, "sell": 949, "level": 0, "value": 82},
+    177: {"name": "凡品靈木0177", "kind": "靈木", "rarity": "凡品", "buy": 1337, "sell": 962, "level": 0, "value": 83},
+    178: {"name": "良品靈水0178", "kind": "靈水", "rarity": "良品", "buy": 1355, "sell": 975, "level": 0, "value": 84},
+    179: {"name": "精品靈果0179", "kind": "靈果", "rarity": "精品", "buy": 1373, "sell": 988, "level": 0, "value": 85},
+    180: {"name": "靈品靈花0180", "kind": "靈花", "rarity": "靈品", "buy": 1391, "sell": 1001, "level": 0, "value": 86},
+    181: {"name": "玄品靈草0181", "kind": "靈草", "rarity": "玄品", "buy": 1409, "sell": 1014, "level": 0, "value": 87},
+    182: {"name": "地品丹藥0182", "kind": "丹藥", "rarity": "地品", "buy": 1284, "sell": 924, "level": 0, "value": 88},
+    183: {"name": "天品礦石0183", "kind": "礦石", "rarity": "天品", "buy": 1302, "sell": 937, "level": 0, "value": 89},
+    184: {"name": "仙品符籙0184", "kind": "符籙", "rarity": "仙品", "buy": 1320, "sell": 950, "level": 0, "value": 90},
+    185: {"name": "凡品法寶材料0185", "kind": "法寶材料", "rarity": "凡品", "buy": 1338, "sell": 963, "level": 0, "value": 91},
+    186: {"name": "良品妖獸材料0186", "kind": "妖獸材料", "rarity": "良品", "buy": 1356, "sell": 976, "level": 0, "value": 92},
+    187: {"name": "精品靈木0187", "kind": "靈木", "rarity": "精品", "buy": 1374, "sell": 989, "level": 0, "value": 93},
+    188: {"name": "靈品靈水0188", "kind": "靈水", "rarity": "靈品", "buy": 1392, "sell": 1002, "level": 0, "value": 94},
+    189: {"name": "玄品靈果0189", "kind": "靈果", "rarity": "玄品", "buy": 1410, "sell": 1015, "level": 0, "value": 95},
+    190: {"name": "地品靈花0190", "kind": "靈花", "rarity": "地品", "buy": 1428, "sell": 1028, "level": 0, "value": 96},
+    191: {"name": "天品靈草0191", "kind": "靈草", "rarity": "天品", "buy": 1446, "sell": 1041, "level": 0, "value": 97},
+    192: {"name": "仙品丹藥0192", "kind": "丹藥", "rarity": "仙品", "buy": 1464, "sell": 1054, "level": 0, "value": 98},
+    193: {"name": "凡品礦石0193", "kind": "礦石", "rarity": "凡品", "buy": 1482, "sell": 1067, "level": 0, "value": 99},
+    194: {"name": "良品符籙0194", "kind": "符籙", "rarity": "良品", "buy": 1500, "sell": 1080, "level": 0, "value": 3},
+    195: {"name": "精品法寶材料0195", "kind": "法寶材料", "rarity": "精品", "buy": 1375, "sell": 990, "level": 0, "value": 4},
+    196: {"name": "靈品妖獸材料0196", "kind": "妖獸材料", "rarity": "靈品", "buy": 1393, "sell": 1002, "level": 0, "value": 5},
+    197: {"name": "玄品靈木0197", "kind": "靈木", "rarity": "玄品", "buy": 1411, "sell": 1015, "level": 0, "value": 6},
+    198: {"name": "地品靈水0198", "kind": "靈水", "rarity": "地品", "buy": 1429, "sell": 1028, "level": 0, "value": 7},
+    199: {"name": "天品靈果0199", "kind": "靈果", "rarity": "天品", "buy": 1447, "sell": 1041, "level": 0, "value": 8},
+    200: {"name": "仙品靈花0200", "kind": "靈花", "rarity": "仙品", "buy": 1465, "sell": 1054, "level": 0, "value": 9},
+    201: {"name": "凡品靈草0201", "kind": "靈草", "rarity": "凡品", "buy": 1483, "sell": 1067, "level": 1, "value": 10},
+    202: {"name": "良品丹藥0202", "kind": "丹藥", "rarity": "良品", "buy": 1501, "sell": 1080, "level": 1, "value": 11},
+    203: {"name": "精品礦石0203", "kind": "礦石", "rarity": "精品", "buy": 1519, "sell": 1093, "level": 1, "value": 12},
+    204: {"name": "靈品符籙0204", "kind": "符籙", "rarity": "靈品", "buy": 1537, "sell": 1106, "level": 1, "value": 13},
+    205: {"name": "玄品法寶材料0205", "kind": "法寶材料", "rarity": "玄品", "buy": 1555, "sell": 1119, "level": 1, "value": 14},
+    206: {"name": "地品妖獸材料0206", "kind": "妖獸材料", "rarity": "地品", "buy": 1573, "sell": 1132, "level": 1, "value": 15},
+    207: {"name": "天品靈木0207", "kind": "靈木", "rarity": "天品", "buy": 1591, "sell": 1145, "level": 1, "value": 16},
+    208: {"name": "仙品靈水0208", "kind": "靈水", "rarity": "仙品", "buy": 1466, "sell": 1055, "level": 1, "value": 17},
+    209: {"name": "凡品靈果0209", "kind": "靈果", "rarity": "凡品", "buy": 1484, "sell": 1068, "level": 1, "value": 18},
+    210: {"name": "良品靈花0210", "kind": "靈花", "rarity": "良品", "buy": 1502, "sell": 1081, "level": 1, "value": 19},
+    211: {"name": "精品靈草0211", "kind": "靈草", "rarity": "精品", "buy": 1520, "sell": 1094, "level": 1, "value": 20},
+    212: {"name": "靈品丹藥0212", "kind": "丹藥", "rarity": "靈品", "buy": 1538, "sell": 1107, "level": 1, "value": 21},
+    213: {"name": "玄品礦石0213", "kind": "礦石", "rarity": "玄品", "buy": 1556, "sell": 1120, "level": 1, "value": 22},
+    214: {"name": "地品符籙0214", "kind": "符籙", "rarity": "地品", "buy": 1574, "sell": 1133, "level": 1, "value": 23},
+    215: {"name": "天品法寶材料0215", "kind": "法寶材料", "rarity": "天品", "buy": 1592, "sell": 1146, "level": 1, "value": 24},
+    216: {"name": "仙品妖獸材料0216", "kind": "妖獸材料", "rarity": "仙品", "buy": 1610, "sell": 1159, "level": 1, "value": 25},
+    217: {"name": "凡品靈木0217", "kind": "靈木", "rarity": "凡品", "buy": 1628, "sell": 1172, "level": 1, "value": 26},
+    218: {"name": "良品靈水0218", "kind": "靈水", "rarity": "良品", "buy": 1646, "sell": 1185, "level": 1, "value": 27},
+    219: {"name": "精品靈果0219", "kind": "靈果", "rarity": "精品", "buy": 1664, "sell": 1198, "level": 1, "value": 28},
+    220: {"name": "靈品靈花0220", "kind": "靈花", "rarity": "靈品", "buy": 1682, "sell": 1211, "level": 1, "value": 29},
+    221: {"name": "玄品靈草0221", "kind": "靈草", "rarity": "玄品", "buy": 1557, "sell": 1121, "level": 1, "value": 30},
+    222: {"name": "地品丹藥0222", "kind": "丹藥", "rarity": "地品", "buy": 1575, "sell": 1134, "level": 1, "value": 31},
+    223: {"name": "天品礦石0223", "kind": "礦石", "rarity": "天品", "buy": 1593, "sell": 1146, "level": 1, "value": 32},
+    224: {"name": "仙品符籙0224", "kind": "符籙", "rarity": "仙品", "buy": 1611, "sell": 1159, "level": 1, "value": 33},
+    225: {"name": "凡品法寶材料0225", "kind": "法寶材料", "rarity": "凡品", "buy": 1629, "sell": 1172, "level": 1, "value": 34},
+    226: {"name": "良品妖獸材料0226", "kind": "妖獸材料", "rarity": "良品", "buy": 1647, "sell": 1185, "level": 1, "value": 35},
+    227: {"name": "精品靈木0227", "kind": "靈木", "rarity": "精品", "buy": 1665, "sell": 1198, "level": 1, "value": 36},
+    228: {"name": "靈品靈水0228", "kind": "靈水", "rarity": "靈品", "buy": 1683, "sell": 1211, "level": 1, "value": 37},
+    229: {"name": "玄品靈果0229", "kind": "靈果", "rarity": "玄品", "buy": 1701, "sell": 1224, "level": 1, "value": 38},
+    230: {"name": "地品靈花0230", "kind": "靈花", "rarity": "地品", "buy": 1719, "sell": 1237, "level": 1, "value": 39},
+    231: {"name": "天品靈草0231", "kind": "靈草", "rarity": "天品", "buy": 1737, "sell": 1250, "level": 1, "value": 40},
+    232: {"name": "仙品丹藥0232", "kind": "丹藥", "rarity": "仙品", "buy": 1755, "sell": 1263, "level": 1, "value": 41},
+    233: {"name": "凡品礦石0233", "kind": "礦石", "rarity": "凡品", "buy": 1773, "sell": 1276, "level": 1, "value": 42},
+    234: {"name": "良品符籙0234", "kind": "符籙", "rarity": "良品", "buy": 1648, "sell": 1186, "level": 1, "value": 43},
+    235: {"name": "精品法寶材料0235", "kind": "法寶材料", "rarity": "精品", "buy": 1666, "sell": 1199, "level": 1, "value": 44},
+    236: {"name": "靈品妖獸材料0236", "kind": "妖獸材料", "rarity": "靈品", "buy": 1684, "sell": 1212, "level": 1, "value": 45},
+    237: {"name": "玄品靈木0237", "kind": "靈木", "rarity": "玄品", "buy": 1702, "sell": 1225, "level": 1, "value": 46},
+    238: {"name": "地品靈水0238", "kind": "靈水", "rarity": "地品", "buy": 1720, "sell": 1238, "level": 1, "value": 47},
+    239: {"name": "天品靈果0239", "kind": "靈果", "rarity": "天品", "buy": 1738, "sell": 1251, "level": 1, "value": 48},
+    240: {"name": "仙品靈花0240", "kind": "靈花", "rarity": "仙品", "buy": 1756, "sell": 1264, "level": 1, "value": 49},
+    241: {"name": "凡品靈草0241", "kind": "靈草", "rarity": "凡品", "buy": 1774, "sell": 1277, "level": 1, "value": 50},
+    242: {"name": "良品丹藥0242", "kind": "丹藥", "rarity": "良品", "buy": 1792, "sell": 1290, "level": 1, "value": 51},
+    243: {"name": "精品礦石0243", "kind": "礦石", "rarity": "精品", "buy": 1810, "sell": 1303, "level": 1, "value": 52},
+    244: {"name": "靈品符籙0244", "kind": "符籙", "rarity": "靈品", "buy": 1828, "sell": 1316, "level": 1, "value": 53},
+    245: {"name": "玄品法寶材料0245", "kind": "法寶材料", "rarity": "玄品", "buy": 1846, "sell": 1329, "level": 1, "value": 54},
+    246: {"name": "地品妖獸材料0246", "kind": "妖獸材料", "rarity": "地品", "buy": 1864, "sell": 1342, "level": 1, "value": 55},
+    247: {"name": "天品靈木0247", "kind": "靈木", "rarity": "天品", "buy": 1739, "sell": 1252, "level": 1, "value": 56},
+    248: {"name": "仙品靈水0248", "kind": "靈水", "rarity": "仙品", "buy": 1757, "sell": 1265, "level": 1, "value": 57},
+    249: {"name": "凡品靈果0249", "kind": "靈果", "rarity": "凡品", "buy": 1775, "sell": 1278, "level": 1, "value": 58},
+    250: {"name": "良品靈花0250", "kind": "靈花", "rarity": "良品", "buy": 1793, "sell": 1290, "level": 1, "value": 59},
+    251: {"name": "精品靈草0251", "kind": "靈草", "rarity": "精品", "buy": 1811, "sell": 1303, "level": 1, "value": 60},
+    252: {"name": "靈品丹藥0252", "kind": "丹藥", "rarity": "靈品", "buy": 1829, "sell": 1316, "level": 1, "value": 61},
+    253: {"name": "玄品礦石0253", "kind": "礦石", "rarity": "玄品", "buy": 1847, "sell": 1329, "level": 1, "value": 62},
+    254: {"name": "地品符籙0254", "kind": "符籙", "rarity": "地品", "buy": 1865, "sell": 1342, "level": 1, "value": 63},
+    255: {"name": "天品法寶材料0255", "kind": "法寶材料", "rarity": "天品", "buy": 1883, "sell": 1355, "level": 1, "value": 64},
+    256: {"name": "仙品妖獸材料0256", "kind": "妖獸材料", "rarity": "仙品", "buy": 1901, "sell": 1368, "level": 1, "value": 65},
+    257: {"name": "凡品靈木0257", "kind": "靈木", "rarity": "凡品", "buy": 1919, "sell": 1381, "level": 1, "value": 66},
+    258: {"name": "良品靈水0258", "kind": "靈水", "rarity": "良品", "buy": 1937, "sell": 1394, "level": 1, "value": 67},
+    259: {"name": "精品靈果0259", "kind": "靈果", "rarity": "精品", "buy": 1955, "sell": 1407, "level": 1, "value": 68},
+    260: {"name": "靈品靈花0260", "kind": "靈花", "rarity": "靈品", "buy": 1830, "sell": 1317, "level": 1, "value": 69},
+    261: {"name": "玄品靈草0261", "kind": "靈草", "rarity": "玄品", "buy": 1848, "sell": 1330, "level": 1, "value": 70},
+    262: {"name": "地品丹藥0262", "kind": "丹藥", "rarity": "地品", "buy": 1866, "sell": 1343, "level": 1, "value": 71},
+    263: {"name": "天品礦石0263", "kind": "礦石", "rarity": "天品", "buy": 1884, "sell": 1356, "level": 1, "value": 72},
+    264: {"name": "仙品符籙0264", "kind": "符籙", "rarity": "仙品", "buy": 1902, "sell": 1369, "level": 1, "value": 73},
+    265: {"name": "凡品法寶材料0265", "kind": "法寶材料", "rarity": "凡品", "buy": 1920, "sell": 1382, "level": 1, "value": 74},
+    266: {"name": "良品妖獸材料0266", "kind": "妖獸材料", "rarity": "良品", "buy": 1938, "sell": 1395, "level": 1, "value": 75},
+    267: {"name": "精品靈木0267", "kind": "靈木", "rarity": "精品", "buy": 1956, "sell": 1408, "level": 1, "value": 76},
+    268: {"name": "靈品靈水0268", "kind": "靈水", "rarity": "靈品", "buy": 1974, "sell": 1421, "level": 1, "value": 77},
+    269: {"name": "玄品靈果0269", "kind": "靈果", "rarity": "玄品", "buy": 1992, "sell": 1434, "level": 1, "value": 78},
+    270: {"name": "地品靈花0270", "kind": "靈花", "rarity": "地品", "buy": 2010, "sell": 1447, "level": 1, "value": 79},
+    271: {"name": "天品靈草0271", "kind": "靈草", "rarity": "天品", "buy": 2028, "sell": 1460, "level": 1, "value": 80},
+    272: {"name": "仙品丹藥0272", "kind": "丹藥", "rarity": "仙品", "buy": 2046, "sell": 1473, "level": 1, "value": 81},
+    273: {"name": "凡品礦石0273", "kind": "礦石", "rarity": "凡品", "buy": 1921, "sell": 1383, "level": 1, "value": 82},
+    274: {"name": "良品符籙0274", "kind": "符籙", "rarity": "良品", "buy": 1939, "sell": 1396, "level": 1, "value": 83},
+    275: {"name": "精品法寶材料0275", "kind": "法寶材料", "rarity": "精品", "buy": 1957, "sell": 1409, "level": 1, "value": 84},
+    276: {"name": "靈品妖獸材料0276", "kind": "妖獸材料", "rarity": "靈品", "buy": 1975, "sell": 1422, "level": 1, "value": 85},
+    277: {"name": "玄品靈木0277", "kind": "靈木", "rarity": "玄品", "buy": 1993, "sell": 1434, "level": 1, "value": 86},
+    278: {"name": "地品靈水0278", "kind": "靈水", "rarity": "地品", "buy": 2011, "sell": 1447, "level": 1, "value": 87},
+    279: {"name": "天品靈果0279", "kind": "靈果", "rarity": "天品", "buy": 2029, "sell": 1460, "level": 1, "value": 88},
+    280: {"name": "仙品靈花0280", "kind": "靈花", "rarity": "仙品", "buy": 2047, "sell": 1473, "level": 1, "value": 89},
+    281: {"name": "凡品靈草0281", "kind": "靈草", "rarity": "凡品", "buy": 2065, "sell": 1486, "level": 1, "value": 90},
+    282: {"name": "良品丹藥0282", "kind": "丹藥", "rarity": "良品", "buy": 2083, "sell": 1499, "level": 1, "value": 91},
+    283: {"name": "精品礦石0283", "kind": "礦石", "rarity": "精品", "buy": 2101, "sell": 1512, "level": 1, "value": 92},
+    284: {"name": "靈品符籙0284", "kind": "符籙", "rarity": "靈品", "buy": 2119, "sell": 1525, "level": 1, "value": 93},
+    285: {"name": "玄品法寶材料0285", "kind": "法寶材料", "rarity": "玄品", "buy": 2137, "sell": 1538, "level": 1, "value": 94},
+    286: {"name": "地品妖獸材料0286", "kind": "妖獸材料", "rarity": "地品", "buy": 2012, "sell": 1448, "level": 1, "value": 95},
+    287: {"name": "天品靈木0287", "kind": "靈木", "rarity": "天品", "buy": 2030, "sell": 1461, "level": 1, "value": 96},
+    288: {"name": "仙品靈水0288", "kind": "靈水", "rarity": "仙品", "buy": 2048, "sell": 1474, "level": 1, "value": 97},
+    289: {"name": "凡品靈果0289", "kind": "靈果", "rarity": "凡品", "buy": 2066, "sell": 1487, "level": 1, "value": 98},
+    290: {"name": "良品靈花0290", "kind": "靈花", "rarity": "良品", "buy": 2084, "sell": 1500, "level": 1, "value": 99},
+    291: {"name": "精品靈草0291", "kind": "靈草", "rarity": "精品", "buy": 2102, "sell": 1513, "level": 1, "value": 3},
+    292: {"name": "靈品丹藥0292", "kind": "丹藥", "rarity": "靈品", "buy": 2120, "sell": 1526, "level": 1, "value": 4},
+    293: {"name": "玄品礦石0293", "kind": "礦石", "rarity": "玄品", "buy": 2138, "sell": 1539, "level": 1, "value": 5},
+    294: {"name": "地品符籙0294", "kind": "符籙", "rarity": "地品", "buy": 2156, "sell": 1552, "level": 1, "value": 6},
+    295: {"name": "天品法寶材料0295", "kind": "法寶材料", "rarity": "天品", "buy": 2174, "sell": 1565, "level": 1, "value": 7},
+    296: {"name": "仙品妖獸材料0296", "kind": "妖獸材料", "rarity": "仙品", "buy": 2192, "sell": 1578, "level": 1, "value": 8},
+    297: {"name": "凡品靈木0297", "kind": "靈木", "rarity": "凡品", "buy": 2210, "sell": 1591, "level": 1, "value": 9},
+    298: {"name": "良品靈水0298", "kind": "靈水", "rarity": "良品", "buy": 2228, "sell": 1604, "level": 1, "value": 10},
+    299: {"name": "精品靈果0299", "kind": "靈果", "rarity": "精品", "buy": 2103, "sell": 1514, "level": 1, "value": 11},
+    300: {"name": "靈品靈花0300", "kind": "靈花", "rarity": "靈品", "buy": 2121, "sell": 1527, "level": 1, "value": 12},
+    301: {"name": "玄品靈草0301", "kind": "靈草", "rarity": "玄品", "buy": 2139, "sell": 1540, "level": 1, "value": 13},
+    302: {"name": "地品丹藥0302", "kind": "丹藥", "rarity": "地品", "buy": 2157, "sell": 1553, "level": 1, "value": 14},
+    303: {"name": "天品礦石0303", "kind": "礦石", "rarity": "天品", "buy": 2175, "sell": 1566, "level": 1, "value": 15},
+    304: {"name": "仙品符籙0304", "kind": "符籙", "rarity": "仙品", "buy": 2193, "sell": 1578, "level": 1, "value": 16},
+    305: {"name": "凡品法寶材料0305", "kind": "法寶材料", "rarity": "凡品", "buy": 2211, "sell": 1591, "level": 1, "value": 17},
+    306: {"name": "良品妖獸材料0306", "kind": "妖獸材料", "rarity": "良品", "buy": 2229, "sell": 1604, "level": 1, "value": 18},
+    307: {"name": "精品靈木0307", "kind": "靈木", "rarity": "精品", "buy": 2247, "sell": 1617, "level": 1, "value": 19},
+    308: {"name": "靈品靈水0308", "kind": "靈水", "rarity": "靈品", "buy": 2265, "sell": 1630, "level": 1, "value": 20},
+    309: {"name": "玄品靈果0309", "kind": "靈果", "rarity": "玄品", "buy": 2283, "sell": 1643, "level": 1, "value": 21},
+    310: {"name": "地品靈花0310", "kind": "靈花", "rarity": "地品", "buy": 2301, "sell": 1656, "level": 1, "value": 22},
+    311: {"name": "天品靈草0311", "kind": "靈草", "rarity": "天品", "buy": 2319, "sell": 1669, "level": 1, "value": 23},
+    312: {"name": "仙品丹藥0312", "kind": "丹藥", "rarity": "仙品", "buy": 2194, "sell": 1579, "level": 1, "value": 24},
+    313: {"name": "凡品礦石0313", "kind": "礦石", "rarity": "凡品", "buy": 2212, "sell": 1592, "level": 1, "value": 25},
+    314: {"name": "良品符籙0314", "kind": "符籙", "rarity": "良品", "buy": 2230, "sell": 1605, "level": 1, "value": 26},
+    315: {"name": "精品法寶材料0315", "kind": "法寶材料", "rarity": "精品", "buy": 2248, "sell": 1618, "level": 1, "value": 27},
+    316: {"name": "靈品妖獸材料0316", "kind": "妖獸材料", "rarity": "靈品", "buy": 2266, "sell": 1631, "level": 1, "value": 28},
+    317: {"name": "玄品靈木0317", "kind": "靈木", "rarity": "玄品", "buy": 2284, "sell": 1644, "level": 1, "value": 29},
+    318: {"name": "地品靈水0318", "kind": "靈水", "rarity": "地品", "buy": 2302, "sell": 1657, "level": 1, "value": 30},
+    319: {"name": "天品靈果0319", "kind": "靈果", "rarity": "天品", "buy": 2320, "sell": 1670, "level": 1, "value": 31},
+    320: {"name": "仙品靈花0320", "kind": "靈花", "rarity": "仙品", "buy": 2338, "sell": 1683, "level": 1, "value": 32},
+    321: {"name": "凡品靈草0321", "kind": "靈草", "rarity": "凡品", "buy": 2356, "sell": 1696, "level": 1, "value": 33},
+    322: {"name": "良品丹藥0322", "kind": "丹藥", "rarity": "良品", "buy": 2374, "sell": 1709, "level": 1, "value": 34},
+    323: {"name": "精品礦石0323", "kind": "礦石", "rarity": "精品", "buy": 2392, "sell": 1722, "level": 1, "value": 35},
+    324: {"name": "靈品符籙0324", "kind": "符籙", "rarity": "靈品", "buy": 2410, "sell": 1735, "level": 1, "value": 36},
+    325: {"name": "玄品法寶材料0325", "kind": "法寶材料", "rarity": "玄品", "buy": 2285, "sell": 1645, "level": 1, "value": 37},
+    326: {"name": "地品妖獸材料0326", "kind": "妖獸材料", "rarity": "地品", "buy": 2303, "sell": 1658, "level": 1, "value": 38},
+    327: {"name": "天品靈木0327", "kind": "靈木", "rarity": "天品", "buy": 2321, "sell": 1671, "level": 1, "value": 39},
+    328: {"name": "仙品靈水0328", "kind": "靈水", "rarity": "仙品", "buy": 2339, "sell": 1684, "level": 1, "value": 40},
+    329: {"name": "凡品靈果0329", "kind": "靈果", "rarity": "凡品", "buy": 2357, "sell": 1697, "level": 1, "value": 41},
+    330: {"name": "良品靈花0330", "kind": "靈花", "rarity": "良品", "buy": 2375, "sell": 1710, "level": 1, "value": 42},
+    331: {"name": "精品靈草0331", "kind": "靈草", "rarity": "精品", "buy": 2393, "sell": 1722, "level": 1, "value": 43},
+    332: {"name": "靈品丹藥0332", "kind": "丹藥", "rarity": "靈品", "buy": 2411, "sell": 1735, "level": 1, "value": 44},
+    333: {"name": "玄品礦石0333", "kind": "礦石", "rarity": "玄品", "buy": 2429, "sell": 1748, "level": 1, "value": 45},
+    334: {"name": "地品符籙0334", "kind": "符籙", "rarity": "地品", "buy": 2447, "sell": 1761, "level": 1, "value": 46},
+    335: {"name": "天品法寶材料0335", "kind": "法寶材料", "rarity": "天品", "buy": 2465, "sell": 1774, "level": 1, "value": 47},
+    336: {"name": "仙品妖獸材料0336", "kind": "妖獸材料", "rarity": "仙品", "buy": 2483, "sell": 1787, "level": 1, "value": 48},
+    337: {"name": "凡品靈木0337", "kind": "靈木", "rarity": "凡品", "buy": 2501, "sell": 1800, "level": 1, "value": 49},
+    338: {"name": "良品靈水0338", "kind": "靈水", "rarity": "良品", "buy": 2376, "sell": 1710, "level": 1, "value": 50},
+    339: {"name": "精品靈果0339", "kind": "靈果", "rarity": "精品", "buy": 2394, "sell": 1723, "level": 1, "value": 51},
+    340: {"name": "靈品靈花0340", "kind": "靈花", "rarity": "靈品", "buy": 2412, "sell": 1736, "level": 1, "value": 52},
+    341: {"name": "玄品靈草0341", "kind": "靈草", "rarity": "玄品", "buy": 2430, "sell": 1749, "level": 1, "value": 53},
+    342: {"name": "地品丹藥0342", "kind": "丹藥", "rarity": "地品", "buy": 2448, "sell": 1762, "level": 1, "value": 54},
+    343: {"name": "天品礦石0343", "kind": "礦石", "rarity": "天品", "buy": 2466, "sell": 1775, "level": 1, "value": 55},
+    344: {"name": "仙品符籙0344", "kind": "符籙", "rarity": "仙品", "buy": 2484, "sell": 1788, "level": 1, "value": 56},
+    345: {"name": "凡品法寶材料0345", "kind": "法寶材料", "rarity": "凡品", "buy": 2502, "sell": 1801, "level": 1, "value": 57},
+    346: {"name": "良品妖獸材料0346", "kind": "妖獸材料", "rarity": "良品", "buy": 2520, "sell": 1814, "level": 1, "value": 58},
+    347: {"name": "精品靈木0347", "kind": "靈木", "rarity": "精品", "buy": 2538, "sell": 1827, "level": 1, "value": 59},
+    348: {"name": "靈品靈水0348", "kind": "靈水", "rarity": "靈品", "buy": 2556, "sell": 1840, "level": 1, "value": 60},
+    349: {"name": "玄品靈果0349", "kind": "靈果", "rarity": "玄品", "buy": 2574, "sell": 1853, "level": 1, "value": 61},
+    350: {"name": "地品靈花0350", "kind": "靈花", "rarity": "地品", "buy": 2592, "sell": 1866, "level": 1, "value": 62},
+    351: {"name": "天品靈草0351", "kind": "靈草", "rarity": "天品", "buy": 2467, "sell": 1776, "level": 1, "value": 63},
+    352: {"name": "仙品丹藥0352", "kind": "丹藥", "rarity": "仙品", "buy": 2485, "sell": 1789, "level": 1, "value": 64},
+    353: {"name": "凡品礦石0353", "kind": "礦石", "rarity": "凡品", "buy": 2503, "sell": 1802, "level": 1, "value": 65},
+    354: {"name": "良品符籙0354", "kind": "符籙", "rarity": "良品", "buy": 2521, "sell": 1815, "level": 1, "value": 66},
+    355: {"name": "精品法寶材料0355", "kind": "法寶材料", "rarity": "精品", "buy": 2539, "sell": 1828, "level": 1, "value": 67},
+    356: {"name": "靈品妖獸材料0356", "kind": "妖獸材料", "rarity": "靈品", "buy": 2557, "sell": 1841, "level": 1, "value": 68},
+    357: {"name": "玄品靈木0357", "kind": "靈木", "rarity": "玄品", "buy": 2575, "sell": 1854, "level": 1, "value": 69},
+    358: {"name": "地品靈水0358", "kind": "靈水", "rarity": "地品", "buy": 2593, "sell": 1866, "level": 1, "value": 70},
+    359: {"name": "天品靈果0359", "kind": "靈果", "rarity": "天品", "buy": 2611, "sell": 1879, "level": 1, "value": 71},
+    360: {"name": "仙品靈花0360", "kind": "靈花", "rarity": "仙品", "buy": 2629, "sell": 1892, "level": 1, "value": 72},
+    361: {"name": "凡品靈草0361", "kind": "靈草", "rarity": "凡品", "buy": 2647, "sell": 1905, "level": 1, "value": 73},
+    362: {"name": "良品丹藥0362", "kind": "丹藥", "rarity": "良品", "buy": 2665, "sell": 1918, "level": 1, "value": 74},
+    363: {"name": "精品礦石0363", "kind": "礦石", "rarity": "精品", "buy": 2683, "sell": 1931, "level": 1, "value": 75},
+    364: {"name": "靈品符籙0364", "kind": "符籙", "rarity": "靈品", "buy": 2558, "sell": 1841, "level": 1, "value": 76},
+    365: {"name": "玄品法寶材料0365", "kind": "法寶材料", "rarity": "玄品", "buy": 2576, "sell": 1854, "level": 1, "value": 77},
+    366: {"name": "地品妖獸材料0366", "kind": "妖獸材料", "rarity": "地品", "buy": 2594, "sell": 1867, "level": 1, "value": 78},
+    367: {"name": "天品靈木0367", "kind": "靈木", "rarity": "天品", "buy": 2612, "sell": 1880, "level": 1, "value": 79},
+    368: {"name": "仙品靈水0368", "kind": "靈水", "rarity": "仙品", "buy": 2630, "sell": 1893, "level": 1, "value": 80},
+    369: {"name": "凡品靈果0369", "kind": "靈果", "rarity": "凡品", "buy": 2648, "sell": 1906, "level": 1, "value": 81},
+    370: {"name": "良品靈花0370", "kind": "靈花", "rarity": "良品", "buy": 2666, "sell": 1919, "level": 1, "value": 82},
+    371: {"name": "精品靈草0371", "kind": "靈草", "rarity": "精品", "buy": 2684, "sell": 1932, "level": 1, "value": 83},
+    372: {"name": "靈品丹藥0372", "kind": "丹藥", "rarity": "靈品", "buy": 2702, "sell": 1945, "level": 1, "value": 84},
+    373: {"name": "玄品礦石0373", "kind": "礦石", "rarity": "玄品", "buy": 2720, "sell": 1958, "level": 1, "value": 85},
+    374: {"name": "地品符籙0374", "kind": "符籙", "rarity": "地品", "buy": 2738, "sell": 1971, "level": 1, "value": 86},
+    375: {"name": "天品法寶材料0375", "kind": "法寶材料", "rarity": "天品", "buy": 2756, "sell": 1984, "level": 1, "value": 87},
+    376: {"name": "仙品妖獸材料0376", "kind": "妖獸材料", "rarity": "仙品", "buy": 2774, "sell": 1997, "level": 1, "value": 88},
+    377: {"name": "凡品靈木0377", "kind": "靈木", "rarity": "凡品", "buy": 2649, "sell": 1907, "level": 1, "value": 89},
+    378: {"name": "良品靈水0378", "kind": "靈水", "rarity": "良品", "buy": 2667, "sell": 1920, "level": 1, "value": 90},
+    379: {"name": "精品靈果0379", "kind": "靈果", "rarity": "精品", "buy": 2685, "sell": 1933, "level": 1, "value": 91},
+    380: {"name": "靈品靈花0380", "kind": "靈花", "rarity": "靈品", "buy": 2703, "sell": 1946, "level": 1, "value": 92},
+    381: {"name": "玄品靈草0381", "kind": "靈草", "rarity": "玄品", "buy": 2721, "sell": 1959, "level": 1, "value": 93},
+    382: {"name": "地品丹藥0382", "kind": "丹藥", "rarity": "地品", "buy": 2739, "sell": 1972, "level": 1, "value": 94},
+    383: {"name": "天品礦石0383", "kind": "礦石", "rarity": "天品", "buy": 2757, "sell": 1985, "level": 1, "value": 95},
+    384: {"name": "仙品符籙0384", "kind": "符籙", "rarity": "仙品", "buy": 2775, "sell": 1998, "level": 1, "value": 96},
+    385: {"name": "凡品法寶材料0385", "kind": "法寶材料", "rarity": "凡品", "buy": 2793, "sell": 2010, "level": 1, "value": 97},
+    386: {"name": "良品妖獸材料0386", "kind": "妖獸材料", "rarity": "良品", "buy": 2811, "sell": 2023, "level": 1, "value": 98},
+    387: {"name": "精品靈木0387", "kind": "靈木", "rarity": "精品", "buy": 2829, "sell": 2036, "level": 1, "value": 99},
+    388: {"name": "靈品靈水0388", "kind": "靈水", "rarity": "靈品", "buy": 2847, "sell": 2049, "level": 1, "value": 3},
+    389: {"name": "玄品靈果0389", "kind": "靈果", "rarity": "玄品", "buy": 2865, "sell": 2062, "level": 1, "value": 4},
+    390: {"name": "地品靈花0390", "kind": "靈花", "rarity": "地品", "buy": 2740, "sell": 1972, "level": 1, "value": 5},
+    391: {"name": "天品靈草0391", "kind": "靈草", "rarity": "天品", "buy": 2758, "sell": 1985, "level": 1, "value": 6},
+    392: {"name": "仙品丹藥0392", "kind": "丹藥", "rarity": "仙品", "buy": 2776, "sell": 1998, "level": 1, "value": 7},
+    393: {"name": "凡品礦石0393", "kind": "礦石", "rarity": "凡品", "buy": 2794, "sell": 2011, "level": 1, "value": 8},
+    394: {"name": "良品符籙0394", "kind": "符籙", "rarity": "良品", "buy": 2812, "sell": 2024, "level": 1, "value": 9},
+    395: {"name": "精品法寶材料0395", "kind": "法寶材料", "rarity": "精品", "buy": 2830, "sell": 2037, "level": 1, "value": 10},
+    396: {"name": "靈品妖獸材料0396", "kind": "妖獸材料", "rarity": "靈品", "buy": 2848, "sell": 2050, "level": 1, "value": 11},
+    397: {"name": "玄品靈木0397", "kind": "靈木", "rarity": "玄品", "buy": 2866, "sell": 2063, "level": 1, "value": 12},
+    398: {"name": "地品靈水0398", "kind": "靈水", "rarity": "地品", "buy": 2884, "sell": 2076, "level": 1, "value": 13},
+    399: {"name": "天品靈果0399", "kind": "靈果", "rarity": "天品", "buy": 2902, "sell": 2089, "level": 1, "value": 14},
+    400: {"name": "仙品靈花0400", "kind": "靈花", "rarity": "仙品", "buy": 2920, "sell": 2102, "level": 1, "value": 15},
+    401: {"name": "凡品靈草0401", "kind": "靈草", "rarity": "凡品", "buy": 2938, "sell": 2115, "level": 2, "value": 16},
+    402: {"name": "良品丹藥0402", "kind": "丹藥", "rarity": "良品", "buy": 2956, "sell": 2128, "level": 2, "value": 17},
+    403: {"name": "精品礦石0403", "kind": "礦石", "rarity": "精品", "buy": 2831, "sell": 2038, "level": 2, "value": 18},
+    404: {"name": "靈品符籙0404", "kind": "符籙", "rarity": "靈品", "buy": 2849, "sell": 2051, "level": 2, "value": 19},
+    405: {"name": "玄品法寶材料0405", "kind": "法寶材料", "rarity": "玄品", "buy": 2867, "sell": 2064, "level": 2, "value": 20},
+    406: {"name": "地品妖獸材料0406", "kind": "妖獸材料", "rarity": "地品", "buy": 2885, "sell": 2077, "level": 2, "value": 21},
+    407: {"name": "天品靈木0407", "kind": "靈木", "rarity": "天品", "buy": 2903, "sell": 2090, "level": 2, "value": 22},
+    408: {"name": "仙品靈水0408", "kind": "靈水", "rarity": "仙品", "buy": 2921, "sell": 2103, "level": 2, "value": 23},
+    409: {"name": "凡品靈果0409", "kind": "靈果", "rarity": "凡品", "buy": 2939, "sell": 2116, "level": 2, "value": 24},
+    410: {"name": "良品靈花0410", "kind": "靈花", "rarity": "良品", "buy": 2957, "sell": 2129, "level": 2, "value": 25},
+    411: {"name": "精品靈草0411", "kind": "靈草", "rarity": "精品", "buy": 2975, "sell": 2142, "level": 2, "value": 26},
+    412: {"name": "靈品丹藥0412", "kind": "丹藥", "rarity": "靈品", "buy": 2993, "sell": 2154, "level": 2, "value": 27},
+    413: {"name": "玄品礦石0413", "kind": "礦石", "rarity": "玄品", "buy": 3011, "sell": 2167, "level": 2, "value": 28},
+    414: {"name": "地品符籙0414", "kind": "符籙", "rarity": "地品", "buy": 3029, "sell": 2180, "level": 2, "value": 29},
+    415: {"name": "天品法寶材料0415", "kind": "法寶材料", "rarity": "天品", "buy": 3047, "sell": 2193, "level": 2, "value": 30},
+    416: {"name": "仙品妖獸材料0416", "kind": "妖獸材料", "rarity": "仙品", "buy": 2922, "sell": 2103, "level": 2, "value": 31},
+    417: {"name": "凡品靈木0417", "kind": "靈木", "rarity": "凡品", "buy": 2940, "sell": 2116, "level": 2, "value": 32},
+    418: {"name": "良品靈水0418", "kind": "靈水", "rarity": "良品", "buy": 2958, "sell": 2129, "level": 2, "value": 33},
+    419: {"name": "精品靈果0419", "kind": "靈果", "rarity": "精品", "buy": 2976, "sell": 2142, "level": 2, "value": 34},
+    420: {"name": "靈品靈花0420", "kind": "靈花", "rarity": "靈品", "buy": 2994, "sell": 2155, "level": 2, "value": 35},
+    421: {"name": "玄品靈草0421", "kind": "靈草", "rarity": "玄品", "buy": 3012, "sell": 2168, "level": 2, "value": 36},
+    422: {"name": "地品丹藥0422", "kind": "丹藥", "rarity": "地品", "buy": 3030, "sell": 2181, "level": 2, "value": 37},
+    423: {"name": "天品礦石0423", "kind": "礦石", "rarity": "天品", "buy": 3048, "sell": 2194, "level": 2, "value": 38},
+    424: {"name": "仙品符籙0424", "kind": "符籙", "rarity": "仙品", "buy": 3066, "sell": 2207, "level": 2, "value": 39},
+    425: {"name": "凡品法寶材料0425", "kind": "法寶材料", "rarity": "凡品", "buy": 3084, "sell": 2220, "level": 2, "value": 40},
+    426: {"name": "良品妖獸材料0426", "kind": "妖獸材料", "rarity": "良品", "buy": 3102, "sell": 2233, "level": 2, "value": 41},
+    427: {"name": "精品靈木0427", "kind": "靈木", "rarity": "精品", "buy": 3120, "sell": 2246, "level": 2, "value": 42},
+    428: {"name": "靈品靈水0428", "kind": "靈水", "rarity": "靈品", "buy": 3138, "sell": 2259, "level": 2, "value": 43},
+    429: {"name": "玄品靈果0429", "kind": "靈果", "rarity": "玄品", "buy": 3013, "sell": 2169, "level": 2, "value": 44},
+    430: {"name": "地品靈花0430", "kind": "靈花", "rarity": "地品", "buy": 3031, "sell": 2182, "level": 2, "value": 45},
+    431: {"name": "天品靈草0431", "kind": "靈草", "rarity": "天品", "buy": 3049, "sell": 2195, "level": 2, "value": 46},
+    432: {"name": "仙品丹藥0432", "kind": "丹藥", "rarity": "仙品", "buy": 3067, "sell": 2208, "level": 2, "value": 47},
+    433: {"name": "凡品礦石0433", "kind": "礦石", "rarity": "凡品", "buy": 3085, "sell": 2221, "level": 2, "value": 48},
+    434: {"name": "良品符籙0434", "kind": "符籙", "rarity": "良品", "buy": 3103, "sell": 2234, "level": 2, "value": 49},
+    435: {"name": "精品法寶材料0435", "kind": "法寶材料", "rarity": "精品", "buy": 3121, "sell": 2247, "level": 2, "value": 50},
+    436: {"name": "靈品妖獸材料0436", "kind": "妖獸材料", "rarity": "靈品", "buy": 3139, "sell": 2260, "level": 2, "value": 51},
+    437: {"name": "玄品靈木0437", "kind": "靈木", "rarity": "玄品", "buy": 3157, "sell": 2273, "level": 2, "value": 52},
+    438: {"name": "地品靈水0438", "kind": "靈水", "rarity": "地品", "buy": 3175, "sell": 2286, "level": 2, "value": 53},
+    439: {"name": "天品靈果0439", "kind": "靈果", "rarity": "天品", "buy": 3193, "sell": 2298, "level": 2, "value": 54},
+    440: {"name": "仙品靈花0440", "kind": "靈花", "rarity": "仙品", "buy": 3211, "sell": 2311, "level": 2, "value": 55},
+    441: {"name": "凡品靈草0441", "kind": "靈草", "rarity": "凡品", "buy": 3229, "sell": 2324, "level": 2, "value": 56},
+    442: {"name": "良品丹藥0442", "kind": "丹藥", "rarity": "良品", "buy": 3104, "sell": 2234, "level": 2, "value": 57},
+    443: {"name": "精品礦石0443", "kind": "礦石", "rarity": "精品", "buy": 3122, "sell": 2247, "level": 2, "value": 58},
+    444: {"name": "靈品符籙0444", "kind": "符籙", "rarity": "靈品", "buy": 3140, "sell": 2260, "level": 2, "value": 59},
+    445: {"name": "玄品法寶材料0445", "kind": "法寶材料", "rarity": "玄品", "buy": 3158, "sell": 2273, "level": 2, "value": 60},
+    446: {"name": "地品妖獸材料0446", "kind": "妖獸材料", "rarity": "地品", "buy": 3176, "sell": 2286, "level": 2, "value": 61},
+    447: {"name": "天品靈木0447", "kind": "靈木", "rarity": "天品", "buy": 3194, "sell": 2299, "level": 2, "value": 62},
+    448: {"name": "仙品靈水0448", "kind": "靈水", "rarity": "仙品", "buy": 3212, "sell": 2312, "level": 2, "value": 63},
+    449: {"name": "凡品靈果0449", "kind": "靈果", "rarity": "凡品", "buy": 3230, "sell": 2325, "level": 2, "value": 64},
+    450: {"name": "良品靈花0450", "kind": "靈花", "rarity": "良品", "buy": 3248, "sell": 2338, "level": 2, "value": 65},
+    451: {"name": "精品靈草0451", "kind": "靈草", "rarity": "精品", "buy": 3266, "sell": 2351, "level": 2, "value": 66},
+    452: {"name": "靈品丹藥0452", "kind": "丹藥", "rarity": "靈品", "buy": 3284, "sell": 2364, "level": 2, "value": 67},
+    453: {"name": "玄品礦石0453", "kind": "礦石", "rarity": "玄品", "buy": 3302, "sell": 2377, "level": 2, "value": 68},
+    454: {"name": "地品符籙0454", "kind": "符籙", "rarity": "地品", "buy": 3320, "sell": 2390, "level": 2, "value": 69},
+    455: {"name": "天品法寶材料0455", "kind": "法寶材料", "rarity": "天品", "buy": 3195, "sell": 2300, "level": 2, "value": 70},
+    456: {"name": "仙品妖獸材料0456", "kind": "妖獸材料", "rarity": "仙品", "buy": 3213, "sell": 2313, "level": 2, "value": 71},
+    457: {"name": "凡品靈木0457", "kind": "靈木", "rarity": "凡品", "buy": 3231, "sell": 2326, "level": 2, "value": 72},
+    458: {"name": "良品靈水0458", "kind": "靈水", "rarity": "良品", "buy": 3249, "sell": 2339, "level": 2, "value": 73},
+    459: {"name": "精品靈果0459", "kind": "靈果", "rarity": "精品", "buy": 3267, "sell": 2352, "level": 2, "value": 74},
+    460: {"name": "靈品靈花0460", "kind": "靈花", "rarity": "靈品", "buy": 3285, "sell": 2365, "level": 2, "value": 75},
+    461: {"name": "玄品靈草0461", "kind": "靈草", "rarity": "玄品", "buy": 3303, "sell": 2378, "level": 2, "value": 76},
+    462: {"name": "地品丹藥0462", "kind": "丹藥", "rarity": "地品", "buy": 3321, "sell": 2391, "level": 2, "value": 77},
+    463: {"name": "天品礦石0463", "kind": "礦石", "rarity": "天品", "buy": 3339, "sell": 2404, "level": 2, "value": 78},
+    464: {"name": "仙品符籙0464", "kind": "符籙", "rarity": "仙品", "buy": 3357, "sell": 2417, "level": 2, "value": 79},
+    465: {"name": "凡品法寶材料0465", "kind": "法寶材料", "rarity": "凡品", "buy": 3375, "sell": 2430, "level": 2, "value": 80},
+    466: {"name": "良品妖獸材料0466", "kind": "妖獸材料", "rarity": "良品", "buy": 3393, "sell": 2442, "level": 2, "value": 81},
+    467: {"name": "精品靈木0467", "kind": "靈木", "rarity": "精品", "buy": 3411, "sell": 2455, "level": 2, "value": 82},
+    468: {"name": "靈品靈水0468", "kind": "靈水", "rarity": "靈品", "buy": 3286, "sell": 2365, "level": 2, "value": 83},
+    469: {"name": "玄品靈果0469", "kind": "靈果", "rarity": "玄品", "buy": 3304, "sell": 2378, "level": 2, "value": 84},
+    470: {"name": "地品靈花0470", "kind": "靈花", "rarity": "地品", "buy": 3322, "sell": 2391, "level": 2, "value": 85},
+    471: {"name": "天品靈草0471", "kind": "靈草", "rarity": "天品", "buy": 3340, "sell": 2404, "level": 2, "value": 86},
+    472: {"name": "仙品丹藥0472", "kind": "丹藥", "rarity": "仙品", "buy": 3358, "sell": 2417, "level": 2, "value": 87},
+    473: {"name": "凡品礦石0473", "kind": "礦石", "rarity": "凡品", "buy": 3376, "sell": 2430, "level": 2, "value": 88},
+    474: {"name": "良品符籙0474", "kind": "符籙", "rarity": "良品", "buy": 3394, "sell": 2443, "level": 2, "value": 89},
+    475: {"name": "精品法寶材料0475", "kind": "法寶材料", "rarity": "精品", "buy": 3412, "sell": 2456, "level": 2, "value": 90},
+    476: {"name": "靈品妖獸材料0476", "kind": "妖獸材料", "rarity": "靈品", "buy": 3430, "sell": 2469, "level": 2, "value": 91},
+    477: {"name": "玄品靈木0477", "kind": "靈木", "rarity": "玄品", "buy": 3448, "sell": 2482, "level": 2, "value": 92},
+    478: {"name": "地品靈水0478", "kind": "靈水", "rarity": "地品", "buy": 3466, "sell": 2495, "level": 2, "value": 93},
+    479: {"name": "天品靈果0479", "kind": "靈果", "rarity": "天品", "buy": 3484, "sell": 2508, "level": 2, "value": 94},
+    480: {"name": "仙品靈花0480", "kind": "靈花", "rarity": "仙品", "buy": 3502, "sell": 2521, "level": 2, "value": 95},
+    481: {"name": "凡品靈草0481", "kind": "靈草", "rarity": "凡品", "buy": 3377, "sell": 2431, "level": 2, "value": 96},
+    482: {"name": "良品丹藥0482", "kind": "丹藥", "rarity": "良品", "buy": 3395, "sell": 2444, "level": 2, "value": 97},
+    483: {"name": "精品礦石0483", "kind": "礦石", "rarity": "精品", "buy": 3413, "sell": 2457, "level": 2, "value": 98},
+    484: {"name": "靈品符籙0484", "kind": "符籙", "rarity": "靈品", "buy": 3431, "sell": 2470, "level": 2, "value": 99},
+    485: {"name": "玄品法寶材料0485", "kind": "法寶材料", "rarity": "玄品", "buy": 3449, "sell": 2483, "level": 2, "value": 3},
+    486: {"name": "地品妖獸材料0486", "kind": "妖獸材料", "rarity": "地品", "buy": 3467, "sell": 2496, "level": 2, "value": 4},
+    487: {"name": "天品靈木0487", "kind": "靈木", "rarity": "天品", "buy": 3485, "sell": 2509, "level": 2, "value": 5},
+    488: {"name": "仙品靈水0488", "kind": "靈水", "rarity": "仙品", "buy": 3503, "sell": 2522, "level": 2, "value": 6},
+    489: {"name": "凡品靈果0489", "kind": "靈果", "rarity": "凡品", "buy": 3521, "sell": 2535, "level": 2, "value": 7},
+    490: {"name": "良品靈花0490", "kind": "靈花", "rarity": "良品", "buy": 3539, "sell": 2548, "level": 2, "value": 8},
+    491: {"name": "精品靈草0491", "kind": "靈草", "rarity": "精品", "buy": 3557, "sell": 2561, "level": 2, "value": 9},
+    492: {"name": "靈品丹藥0492", "kind": "丹藥", "rarity": "靈品", "buy": 3575, "sell": 2574, "level": 2, "value": 10},
+    493: {"name": "玄品礦石0493", "kind": "礦石", "rarity": "玄品", "buy": 3593, "sell": 2586, "level": 2, "value": 11},
+    494: {"name": "地品符籙0494", "kind": "符籙", "rarity": "地品", "buy": 3468, "sell": 2496, "level": 2, "value": 12},
+    495: {"name": "天品法寶材料0495", "kind": "法寶材料", "rarity": "天品", "buy": 3486, "sell": 2509, "level": 2, "value": 13},
+    496: {"name": "仙品妖獸材料0496", "kind": "妖獸材料", "rarity": "仙品", "buy": 3504, "sell": 2522, "level": 2, "value": 14},
+    497: {"name": "凡品靈木0497", "kind": "靈木", "rarity": "凡品", "buy": 3522, "sell": 2535, "level": 2, "value": 15},
+    498: {"name": "良品靈水0498", "kind": "靈水", "rarity": "良品", "buy": 3540, "sell": 2548, "level": 2, "value": 16},
+    499: {"name": "精品靈果0499", "kind": "靈果", "rarity": "精品", "buy": 3558, "sell": 2561, "level": 2, "value": 17},
+    500: {"name": "靈品靈花0500", "kind": "靈花", "rarity": "靈品", "buy": 3576, "sell": 2574, "level": 2, "value": 18},
+    501: {"name": "玄品靈草0501", "kind": "靈草", "rarity": "玄品", "buy": 3594, "sell": 2587, "level": 2, "value": 19},
+    502: {"name": "地品丹藥0502", "kind": "丹藥", "rarity": "地品", "buy": 3612, "sell": 2600, "level": 2, "value": 20},
+    503: {"name": "天品礦石0503", "kind": "礦石", "rarity": "天品", "buy": 3630, "sell": 2613, "level": 2, "value": 21},
+    504: {"name": "仙品符籙0504", "kind": "符籙", "rarity": "仙品", "buy": 3648, "sell": 2626, "level": 2, "value": 22},
+    505: {"name": "凡品法寶材料0505", "kind": "法寶材料", "rarity": "凡品", "buy": 3666, "sell": 2639, "level": 2, "value": 23},
+    506: {"name": "良品妖獸材料0506", "kind": "妖獸材料", "rarity": "良品", "buy": 3684, "sell": 2652, "level": 2, "value": 24},
+    507: {"name": "精品靈木0507", "kind": "靈木", "rarity": "精品", "buy": 3559, "sell": 2562, "level": 2, "value": 25},
+    508: {"name": "靈品靈水0508", "kind": "靈水", "rarity": "靈品", "buy": 3577, "sell": 2575, "level": 2, "value": 26},
+    509: {"name": "玄品靈果0509", "kind": "靈果", "rarity": "玄品", "buy": 3595, "sell": 2588, "level": 2, "value": 27},
+    510: {"name": "地品靈花0510", "kind": "靈花", "rarity": "地品", "buy": 3613, "sell": 2601, "level": 2, "value": 28},
+    511: {"name": "天品靈草0511", "kind": "靈草", "rarity": "天品", "buy": 3631, "sell": 2614, "level": 2, "value": 29},
+    512: {"name": "仙品丹藥0512", "kind": "丹藥", "rarity": "仙品", "buy": 3649, "sell": 2627, "level": 2, "value": 30},
+    513: {"name": "凡品礦石0513", "kind": "礦石", "rarity": "凡品", "buy": 3667, "sell": 2640, "level": 2, "value": 31},
+    514: {"name": "良品符籙0514", "kind": "符籙", "rarity": "良品", "buy": 3685, "sell": 2653, "level": 2, "value": 32},
+    515: {"name": "精品法寶材料0515", "kind": "法寶材料", "rarity": "精品", "buy": 3703, "sell": 2666, "level": 2, "value": 33},
+    516: {"name": "靈品妖獸材料0516", "kind": "妖獸材料", "rarity": "靈品", "buy": 3721, "sell": 2679, "level": 2, "value": 34},
+    517: {"name": "玄品靈木0517", "kind": "靈木", "rarity": "玄品", "buy": 3739, "sell": 2692, "level": 2, "value": 35},
+    518: {"name": "地品靈水0518", "kind": "靈水", "rarity": "地品", "buy": 3757, "sell": 2705, "level": 2, "value": 36},
+    519: {"name": "天品靈果0519", "kind": "靈果", "rarity": "天品", "buy": 3775, "sell": 2718, "level": 2, "value": 37},
+    520: {"name": "仙品靈花0520", "kind": "靈花", "rarity": "仙品", "buy": 3650, "sell": 2628, "level": 2, "value": 38},
+    521: {"name": "凡品靈草0521", "kind": "靈草", "rarity": "凡品", "buy": 3668, "sell": 2640, "level": 2, "value": 39},
+    522: {"name": "良品丹藥0522", "kind": "丹藥", "rarity": "良品", "buy": 3686, "sell": 2653, "level": 2, "value": 40},
+    523: {"name": "精品礦石0523", "kind": "礦石", "rarity": "精品", "buy": 3704, "sell": 2666, "level": 2, "value": 41},
+    524: {"name": "靈品符籙0524", "kind": "符籙", "rarity": "靈品", "buy": 3722, "sell": 2679, "level": 2, "value": 42},
+    525: {"name": "玄品法寶材料0525", "kind": "法寶材料", "rarity": "玄品", "buy": 3740, "sell": 2692, "level": 2, "value": 43},
+    526: {"name": "地品妖獸材料0526", "kind": "妖獸材料", "rarity": "地品", "buy": 3758, "sell": 2705, "level": 2, "value": 44},
+    527: {"name": "天品靈木0527", "kind": "靈木", "rarity": "天品", "buy": 3776, "sell": 2718, "level": 2, "value": 45},
+    528: {"name": "仙品靈水0528", "kind": "靈水", "rarity": "仙品", "buy": 3794, "sell": 2731, "level": 2, "value": 46},
+    529: {"name": "凡品靈果0529", "kind": "靈果", "rarity": "凡品", "buy": 3812, "sell": 2744, "level": 2, "value": 47},
+    530: {"name": "良品靈花0530", "kind": "靈花", "rarity": "良品", "buy": 3830, "sell": 2757, "level": 2, "value": 48},
+    531: {"name": "精品靈草0531", "kind": "靈草", "rarity": "精品", "buy": 3848, "sell": 2770, "level": 2, "value": 49},
+    532: {"name": "靈品丹藥0532", "kind": "丹藥", "rarity": "靈品", "buy": 3866, "sell": 2783, "level": 2, "value": 50},
+    533: {"name": "玄品礦石0533", "kind": "礦石", "rarity": "玄品", "buy": 3741, "sell": 2693, "level": 2, "value": 51},
+    534: {"name": "地品符籙0534", "kind": "符籙", "rarity": "地品", "buy": 3759, "sell": 2706, "level": 2, "value": 52},
+    535: {"name": "天品法寶材料0535", "kind": "法寶材料", "rarity": "天品", "buy": 3777, "sell": 2719, "level": 2, "value": 53},
+    536: {"name": "仙品妖獸材料0536", "kind": "妖獸材料", "rarity": "仙品", "buy": 3795, "sell": 2732, "level": 2, "value": 54},
+    537: {"name": "凡品靈木0537", "kind": "靈木", "rarity": "凡品", "buy": 3813, "sell": 2745, "level": 2, "value": 55},
+    538: {"name": "良品靈水0538", "kind": "靈水", "rarity": "良品", "buy": 3831, "sell": 2758, "level": 2, "value": 56},
+    539: {"name": "精品靈果0539", "kind": "靈果", "rarity": "精品", "buy": 3849, "sell": 2771, "level": 2, "value": 57},
+    540: {"name": "靈品靈花0540", "kind": "靈花", "rarity": "靈品", "buy": 3867, "sell": 2784, "level": 2, "value": 58},
+    541: {"name": "玄品靈草0541", "kind": "靈草", "rarity": "玄品", "buy": 3885, "sell": 2797, "level": 2, "value": 59},
+    542: {"name": "地品丹藥0542", "kind": "丹藥", "rarity": "地品", "buy": 3903, "sell": 2810, "level": 2, "value": 60},
+    543: {"name": "天品礦石0543", "kind": "礦石", "rarity": "天品", "buy": 3921, "sell": 2823, "level": 2, "value": 61},
+    544: {"name": "仙品符籙0544", "kind": "符籙", "rarity": "仙品", "buy": 3939, "sell": 2836, "level": 2, "value": 62},
+    545: {"name": "凡品法寶材料0545", "kind": "法寶材料", "rarity": "凡品", "buy": 3957, "sell": 2849, "level": 2, "value": 63},
+    546: {"name": "良品妖獸材料0546", "kind": "妖獸材料", "rarity": "良品", "buy": 3832, "sell": 2759, "level": 2, "value": 64},
+    547: {"name": "精品靈木0547", "kind": "靈木", "rarity": "精品", "buy": 3850, "sell": 2772, "level": 2, "value": 65},
+    548: {"name": "靈品靈水0548", "kind": "靈水", "rarity": "靈品", "buy": 3868, "sell": 2784, "level": 2, "value": 66},
+    549: {"name": "玄品靈果0549", "kind": "靈果", "rarity": "玄品", "buy": 3886, "sell": 2797, "level": 2, "value": 67},
+    550: {"name": "地品靈花0550", "kind": "靈花", "rarity": "地品", "buy": 3904, "sell": 2810, "level": 2, "value": 68},
+    551: {"name": "天品靈草0551", "kind": "靈草", "rarity": "天品", "buy": 3922, "sell": 2823, "level": 2, "value": 69},
+    552: {"name": "仙品丹藥0552", "kind": "丹藥", "rarity": "仙品", "buy": 3940, "sell": 2836, "level": 2, "value": 70},
+    553: {"name": "凡品礦石0553", "kind": "礦石", "rarity": "凡品", "buy": 3958, "sell": 2849, "level": 2, "value": 71},
+    554: {"name": "良品符籙0554", "kind": "符籙", "rarity": "良品", "buy": 3976, "sell": 2862, "level": 2, "value": 72},
+    555: {"name": "精品法寶材料0555", "kind": "法寶材料", "rarity": "精品", "buy": 3994, "sell": 2875, "level": 2, "value": 73},
+    556: {"name": "靈品妖獸材料0556", "kind": "妖獸材料", "rarity": "靈品", "buy": 4012, "sell": 2888, "level": 2, "value": 74},
+    557: {"name": "玄品靈木0557", "kind": "靈木", "rarity": "玄品", "buy": 4030, "sell": 2901, "level": 2, "value": 75},
+    558: {"name": "地品靈水0558", "kind": "靈水", "rarity": "地品", "buy": 4048, "sell": 2914, "level": 2, "value": 76},
+    559: {"name": "天品靈果0559", "kind": "靈果", "rarity": "天品", "buy": 3923, "sell": 2824, "level": 2, "value": 77},
+    560: {"name": "仙品靈花0560", "kind": "靈花", "rarity": "仙品", "buy": 3941, "sell": 2837, "level": 2, "value": 78},
+    561: {"name": "凡品靈草0561", "kind": "靈草", "rarity": "凡品", "buy": 3959, "sell": 2850, "level": 2, "value": 79},
+    562: {"name": "良品丹藥0562", "kind": "丹藥", "rarity": "良品", "buy": 3977, "sell": 2863, "level": 2, "value": 80},
+    563: {"name": "精品礦石0563", "kind": "礦石", "rarity": "精品", "buy": 3995, "sell": 2876, "level": 2, "value": 81},
+    564: {"name": "靈品符籙0564", "kind": "符籙", "rarity": "靈品", "buy": 4013, "sell": 2889, "level": 2, "value": 82},
+    565: {"name": "玄品法寶材料0565", "kind": "法寶材料", "rarity": "玄品", "buy": 4031, "sell": 2902, "level": 2, "value": 83},
+    566: {"name": "地品妖獸材料0566", "kind": "妖獸材料", "rarity": "地品", "buy": 4049, "sell": 2915, "level": 2, "value": 84},
+    567: {"name": "天品靈木0567", "kind": "靈木", "rarity": "天品", "buy": 4067, "sell": 2928, "level": 2, "value": 85},
+    568: {"name": "仙品靈水0568", "kind": "靈水", "rarity": "仙品", "buy": 4085, "sell": 2941, "level": 2, "value": 86},
+    569: {"name": "凡品靈果0569", "kind": "靈果", "rarity": "凡品", "buy": 4103, "sell": 2954, "level": 2, "value": 87},
+    570: {"name": "良品靈花0570", "kind": "靈花", "rarity": "良品", "buy": 4121, "sell": 2967, "level": 2, "value": 88},
+    571: {"name": "精品靈草0571", "kind": "靈草", "rarity": "精品", "buy": 4139, "sell": 2980, "level": 2, "value": 89},
+    572: {"name": "靈品丹藥0572", "kind": "丹藥", "rarity": "靈品", "buy": 4014, "sell": 2890, "level": 2, "value": 90},
+    573: {"name": "玄品礦石0573", "kind": "礦石", "rarity": "玄品", "buy": 4032, "sell": 2903, "level": 2, "value": 91},
+    574: {"name": "地品符籙0574", "kind": "符籙", "rarity": "地品", "buy": 4050, "sell": 2916, "level": 2, "value": 92},
+    575: {"name": "天品法寶材料0575", "kind": "法寶材料", "rarity": "天品", "buy": 4068, "sell": 2928, "level": 2, "value": 93},
+    576: {"name": "仙品妖獸材料0576", "kind": "妖獸材料", "rarity": "仙品", "buy": 4086, "sell": 2941, "level": 2, "value": 94},
+    577: {"name": "凡品靈木0577", "kind": "靈木", "rarity": "凡品", "buy": 4104, "sell": 2954, "level": 2, "value": 95},
+    578: {"name": "良品靈水0578", "kind": "靈水", "rarity": "良品", "buy": 4122, "sell": 2967, "level": 2, "value": 96},
+    579: {"name": "精品靈果0579", "kind": "靈果", "rarity": "精品", "buy": 4140, "sell": 2980, "level": 2, "value": 97},
+    580: {"name": "靈品靈花0580", "kind": "靈花", "rarity": "靈品", "buy": 4158, "sell": 2993, "level": 2, "value": 98},
+    581: {"name": "玄品靈草0581", "kind": "靈草", "rarity": "玄品", "buy": 4176, "sell": 3006, "level": 2, "value": 99},
+    582: {"name": "地品丹藥0582", "kind": "丹藥", "rarity": "地品", "buy": 4194, "sell": 3019, "level": 2, "value": 3},
+    583: {"name": "天品礦石0583", "kind": "礦石", "rarity": "天品", "buy": 4212, "sell": 3032, "level": 2, "value": 4},
+    584: {"name": "仙品符籙0584", "kind": "符籙", "rarity": "仙品", "buy": 4230, "sell": 3045, "level": 2, "value": 5},
+    585: {"name": "凡品法寶材料0585", "kind": "法寶材料", "rarity": "凡品", "buy": 4105, "sell": 2955, "level": 2, "value": 6},
+    586: {"name": "良品妖獸材料0586", "kind": "妖獸材料", "rarity": "良品", "buy": 4123, "sell": 2968, "level": 2, "value": 7},
+    587: {"name": "精品靈木0587", "kind": "靈木", "rarity": "精品", "buy": 4141, "sell": 2981, "level": 2, "value": 8},
+    588: {"name": "靈品靈水0588", "kind": "靈水", "rarity": "靈品", "buy": 4159, "sell": 2994, "level": 2, "value": 9},
+    589: {"name": "玄品靈果0589", "kind": "靈果", "rarity": "玄品", "buy": 4177, "sell": 3007, "level": 2, "value": 10},
+    590: {"name": "地品靈花0590", "kind": "靈花", "rarity": "地品", "buy": 4195, "sell": 3020, "level": 2, "value": 11},
+    591: {"name": "天品靈草0591", "kind": "靈草", "rarity": "天品", "buy": 4213, "sell": 3033, "level": 2, "value": 12},
+    592: {"name": "仙品丹藥0592", "kind": "丹藥", "rarity": "仙品", "buy": 4231, "sell": 3046, "level": 2, "value": 13},
+    593: {"name": "凡品礦石0593", "kind": "礦石", "rarity": "凡品", "buy": 4249, "sell": 3059, "level": 2, "value": 14},
+    594: {"name": "良品符籙0594", "kind": "符籙", "rarity": "良品", "buy": 4267, "sell": 3072, "level": 2, "value": 15},
+    595: {"name": "精品法寶材料0595", "kind": "法寶材料", "rarity": "精品", "buy": 4285, "sell": 3085, "level": 2, "value": 16},
+    596: {"name": "靈品妖獸材料0596", "kind": "妖獸材料", "rarity": "靈品", "buy": 4303, "sell": 3098, "level": 2, "value": 17},
+    597: {"name": "玄品靈木0597", "kind": "靈木", "rarity": "玄品", "buy": 4321, "sell": 3111, "level": 2, "value": 18},
+    598: {"name": "地品靈水0598", "kind": "靈水", "rarity": "地品", "buy": 4196, "sell": 3021, "level": 2, "value": 19},
+    599: {"name": "天品靈果0599", "kind": "靈果", "rarity": "天品", "buy": 4214, "sell": 3034, "level": 2, "value": 20},
+    600: {"name": "仙品靈花0600", "kind": "靈花", "rarity": "仙品", "buy": 4232, "sell": 3047, "level": 2, "value": 21},
+    601: {"name": "凡品靈草0601", "kind": "靈草", "rarity": "凡品", "buy": 4250, "sell": 3060, "level": 3, "value": 22},
+    602: {"name": "良品丹藥0602", "kind": "丹藥", "rarity": "良品", "buy": 4268, "sell": 3072, "level": 3, "value": 23},
+    603: {"name": "精品礦石0603", "kind": "礦石", "rarity": "精品", "buy": 4286, "sell": 3085, "level": 3, "value": 24},
+    604: {"name": "靈品符籙0604", "kind": "符籙", "rarity": "靈品", "buy": 4304, "sell": 3098, "level": 3, "value": 25},
+    605: {"name": "玄品法寶材料0605", "kind": "法寶材料", "rarity": "玄品", "buy": 4322, "sell": 3111, "level": 3, "value": 26},
+    606: {"name": "地品妖獸材料0606", "kind": "妖獸材料", "rarity": "地品", "buy": 4340, "sell": 3124, "level": 3, "value": 27},
+    607: {"name": "天品靈木0607", "kind": "靈木", "rarity": "天品", "buy": 4358, "sell": 3137, "level": 3, "value": 28},
+    608: {"name": "仙品靈水0608", "kind": "靈水", "rarity": "仙品", "buy": 4376, "sell": 3150, "level": 3, "value": 29},
+    609: {"name": "凡品靈果0609", "kind": "靈果", "rarity": "凡品", "buy": 4394, "sell": 3163, "level": 3, "value": 30},
+    610: {"name": "良品靈花0610", "kind": "靈花", "rarity": "良品", "buy": 4412, "sell": 3176, "level": 3, "value": 31},
+    611: {"name": "精品靈草0611", "kind": "靈草", "rarity": "精品", "buy": 4287, "sell": 3086, "level": 3, "value": 32},
+    612: {"name": "靈品丹藥0612", "kind": "丹藥", "rarity": "靈品", "buy": 4305, "sell": 3099, "level": 3, "value": 33},
+    613: {"name": "玄品礦石0613", "kind": "礦石", "rarity": "玄品", "buy": 4323, "sell": 3112, "level": 3, "value": 34},
+    614: {"name": "地品符籙0614", "kind": "符籙", "rarity": "地品", "buy": 4341, "sell": 3125, "level": 3, "value": 35},
+    615: {"name": "天品法寶材料0615", "kind": "法寶材料", "rarity": "天品", "buy": 4359, "sell": 3138, "level": 3, "value": 36},
+    616: {"name": "仙品妖獸材料0616", "kind": "妖獸材料", "rarity": "仙品", "buy": 4377, "sell": 3151, "level": 3, "value": 37},
+    617: {"name": "凡品靈木0617", "kind": "靈木", "rarity": "凡品", "buy": 4395, "sell": 3164, "level": 3, "value": 38},
+    618: {"name": "良品靈水0618", "kind": "靈水", "rarity": "良品", "buy": 4413, "sell": 3177, "level": 3, "value": 39},
+    619: {"name": "精品靈果0619", "kind": "靈果", "rarity": "精品", "buy": 4431, "sell": 3190, "level": 3, "value": 40},
+    620: {"name": "靈品靈花0620", "kind": "靈花", "rarity": "靈品", "buy": 4449, "sell": 3203, "level": 3, "value": 41},
+    621: {"name": "玄品靈草0621", "kind": "靈草", "rarity": "玄品", "buy": 4467, "sell": 3216, "level": 3, "value": 42},
+    622: {"name": "地品丹藥0622", "kind": "丹藥", "rarity": "地品", "buy": 4485, "sell": 3229, "level": 3, "value": 43},
+    623: {"name": "天品礦石0623", "kind": "礦石", "rarity": "天品", "buy": 4503, "sell": 3242, "level": 3, "value": 44},
+    624: {"name": "仙品符籙0624", "kind": "符籙", "rarity": "仙品", "buy": 4378, "sell": 3152, "level": 3, "value": 45},
+    625: {"name": "凡品法寶材料0625", "kind": "法寶材料", "rarity": "凡品", "buy": 4396, "sell": 3165, "level": 3, "value": 46},
+    626: {"name": "良品妖獸材料0626", "kind": "妖獸材料", "rarity": "良品", "buy": 4414, "sell": 3178, "level": 3, "value": 47},
+    627: {"name": "精品靈木0627", "kind": "靈木", "rarity": "精品", "buy": 4432, "sell": 3191, "level": 3, "value": 48},
+    628: {"name": "靈品靈水0628", "kind": "靈水", "rarity": "靈品", "buy": 4450, "sell": 3204, "level": 3, "value": 49},
+    629: {"name": "玄品靈果0629", "kind": "靈果", "rarity": "玄品", "buy": 4468, "sell": 3216, "level": 3, "value": 50},
+    630: {"name": "地品靈花0630", "kind": "靈花", "rarity": "地品", "buy": 4486, "sell": 3229, "level": 3, "value": 51},
+    631: {"name": "天品靈草0631", "kind": "靈草", "rarity": "天品", "buy": 4504, "sell": 3242, "level": 3, "value": 52},
+    632: {"name": "仙品丹藥0632", "kind": "丹藥", "rarity": "仙品", "buy": 4522, "sell": 3255, "level": 3, "value": 53},
+    633: {"name": "凡品礦石0633", "kind": "礦石", "rarity": "凡品", "buy": 4540, "sell": 3268, "level": 3, "value": 54},
+    634: {"name": "良品符籙0634", "kind": "符籙", "rarity": "良品", "buy": 4558, "sell": 3281, "level": 3, "value": 55},
+    635: {"name": "精品法寶材料0635", "kind": "法寶材料", "rarity": "精品", "buy": 4576, "sell": 3294, "level": 3, "value": 56},
+    636: {"name": "靈品妖獸材料0636", "kind": "妖獸材料", "rarity": "靈品", "buy": 4594, "sell": 3307, "level": 3, "value": 57},
+    637: {"name": "玄品靈木0637", "kind": "靈木", "rarity": "玄品", "buy": 4469, "sell": 3217, "level": 3, "value": 58},
+    638: {"name": "地品靈水0638", "kind": "靈水", "rarity": "地品", "buy": 4487, "sell": 3230, "level": 3, "value": 59},
+    639: {"name": "天品靈果0639", "kind": "靈果", "rarity": "天品", "buy": 4505, "sell": 3243, "level": 3, "value": 60},
+    640: {"name": "仙品靈花0640", "kind": "靈花", "rarity": "仙品", "buy": 4523, "sell": 3256, "level": 3, "value": 61},
+    641: {"name": "凡品靈草0641", "kind": "靈草", "rarity": "凡品", "buy": 4541, "sell": 3269, "level": 3, "value": 62},
+    642: {"name": "良品丹藥0642", "kind": "丹藥", "rarity": "良品", "buy": 4559, "sell": 3282, "level": 3, "value": 63},
+    643: {"name": "精品礦石0643", "kind": "礦石", "rarity": "精品", "buy": 4577, "sell": 3295, "level": 3, "value": 64},
+    644: {"name": "靈品符籙0644", "kind": "符籙", "rarity": "靈品", "buy": 4595, "sell": 3308, "level": 3, "value": 65},
+    645: {"name": "玄品法寶材料0645", "kind": "法寶材料", "rarity": "玄品", "buy": 4613, "sell": 3321, "level": 3, "value": 66},
+    646: {"name": "地品妖獸材料0646", "kind": "妖獸材料", "rarity": "地品", "buy": 4631, "sell": 3334, "level": 3, "value": 67},
+    647: {"name": "天品靈木0647", "kind": "靈木", "rarity": "天品", "buy": 4649, "sell": 3347, "level": 3, "value": 68},
+    648: {"name": "仙品靈水0648", "kind": "靈水", "rarity": "仙品", "buy": 4667, "sell": 3360, "level": 3, "value": 69},
+    649: {"name": "凡品靈果0649", "kind": "靈果", "rarity": "凡品", "buy": 4685, "sell": 3373, "level": 3, "value": 70},
+    650: {"name": "良品靈花0650", "kind": "靈花", "rarity": "良品", "buy": 4560, "sell": 3283, "level": 3, "value": 71},
+    651: {"name": "精品靈草0651", "kind": "靈草", "rarity": "精品", "buy": 4578, "sell": 3296, "level": 3, "value": 72},
+    652: {"name": "靈品丹藥0652", "kind": "丹藥", "rarity": "靈品", "buy": 4596, "sell": 3309, "level": 3, "value": 73},
+    653: {"name": "玄品礦石0653", "kind": "礦石", "rarity": "玄品", "buy": 4614, "sell": 3322, "level": 3, "value": 74},
+    654: {"name": "地品符籙0654", "kind": "符籙", "rarity": "地品", "buy": 4632, "sell": 3335, "level": 3, "value": 75},
+    655: {"name": "天品法寶材料0655", "kind": "法寶材料", "rarity": "天品", "buy": 4650, "sell": 3348, "level": 3, "value": 76},
+    656: {"name": "仙品妖獸材料0656", "kind": "妖獸材料", "rarity": "仙品", "buy": 4668, "sell": 3360, "level": 3, "value": 77},
+    657: {"name": "凡品靈木0657", "kind": "靈木", "rarity": "凡品", "buy": 4686, "sell": 3373, "level": 3, "value": 78},
+    658: {"name": "良品靈水0658", "kind": "靈水", "rarity": "良品", "buy": 4704, "sell": 3386, "level": 3, "value": 79},
+    659: {"name": "精品靈果0659", "kind": "靈果", "rarity": "精品", "buy": 4722, "sell": 3399, "level": 3, "value": 80},
+    660: {"name": "靈品靈花0660", "kind": "靈花", "rarity": "靈品", "buy": 4740, "sell": 3412, "level": 3, "value": 81},
+    661: {"name": "玄品靈草0661", "kind": "靈草", "rarity": "玄品", "buy": 4758, "sell": 3425, "level": 3, "value": 82},
+    662: {"name": "地品丹藥0662", "kind": "丹藥", "rarity": "地品", "buy": 4776, "sell": 3438, "level": 3, "value": 83},
+    663: {"name": "天品礦石0663", "kind": "礦石", "rarity": "天品", "buy": 4651, "sell": 3348, "level": 3, "value": 84},
+    664: {"name": "仙品符籙0664", "kind": "符籙", "rarity": "仙品", "buy": 4669, "sell": 3361, "level": 3, "value": 85},
+    665: {"name": "凡品法寶材料0665", "kind": "法寶材料", "rarity": "凡品", "buy": 4687, "sell": 3374, "level": 3, "value": 86},
+    666: {"name": "良品妖獸材料0666", "kind": "妖獸材料", "rarity": "良品", "buy": 4705, "sell": 3387, "level": 3, "value": 87},
+    667: {"name": "精品靈木0667", "kind": "靈木", "rarity": "精品", "buy": 4723, "sell": 3400, "level": 3, "value": 88},
+    668: {"name": "靈品靈水0668", "kind": "靈水", "rarity": "靈品", "buy": 4741, "sell": 3413, "level": 3, "value": 89},
+    669: {"name": "玄品靈果0669", "kind": "靈果", "rarity": "玄品", "buy": 4759, "sell": 3426, "level": 3, "value": 90},
+    670: {"name": "地品靈花0670", "kind": "靈花", "rarity": "地品", "buy": 4777, "sell": 3439, "level": 3, "value": 91},
+    671: {"name": "天品靈草0671", "kind": "靈草", "rarity": "天品", "buy": 4795, "sell": 3452, "level": 3, "value": 92},
+    672: {"name": "仙品丹藥0672", "kind": "丹藥", "rarity": "仙品", "buy": 4813, "sell": 3465, "level": 3, "value": 93},
+    673: {"name": "凡品礦石0673", "kind": "礦石", "rarity": "凡品", "buy": 4831, "sell": 3478, "level": 3, "value": 94},
+    674: {"name": "良品符籙0674", "kind": "符籙", "rarity": "良品", "buy": 4849, "sell": 3491, "level": 3, "value": 95},
+    675: {"name": "精品法寶材料0675", "kind": "法寶材料", "rarity": "精品", "buy": 4867, "sell": 3504, "level": 3, "value": 96},
+    676: {"name": "靈品妖獸材料0676", "kind": "妖獸材料", "rarity": "靈品", "buy": 4742, "sell": 3414, "level": 3, "value": 97},
+    677: {"name": "玄品靈木0677", "kind": "靈木", "rarity": "玄品", "buy": 4760, "sell": 3427, "level": 3, "value": 98},
+    678: {"name": "地品靈水0678", "kind": "靈水", "rarity": "地品", "buy": 4778, "sell": 3440, "level": 3, "value": 99},
+    679: {"name": "天品靈果0679", "kind": "靈果", "rarity": "天品", "buy": 4796, "sell": 3453, "level": 3, "value": 3},
+    680: {"name": "仙品靈花0680", "kind": "靈花", "rarity": "仙品", "buy": 4814, "sell": 3466, "level": 3, "value": 4},
+    681: {"name": "凡品靈草0681", "kind": "靈草", "rarity": "凡品", "buy": 4832, "sell": 3479, "level": 3, "value": 5},
+    682: {"name": "良品丹藥0682", "kind": "丹藥", "rarity": "良品", "buy": 4850, "sell": 3492, "level": 3, "value": 6},
+    683: {"name": "精品礦石0683", "kind": "礦石", "rarity": "精品", "buy": 4868, "sell": 3504, "level": 3, "value": 7},
+    684: {"name": "靈品符籙0684", "kind": "符籙", "rarity": "靈品", "buy": 4886, "sell": 3517, "level": 3, "value": 8},
+    685: {"name": "玄品法寶材料0685", "kind": "法寶材料", "rarity": "玄品", "buy": 4904, "sell": 3530, "level": 3, "value": 9},
+    686: {"name": "地品妖獸材料0686", "kind": "妖獸材料", "rarity": "地品", "buy": 4922, "sell": 3543, "level": 3, "value": 10},
+    687: {"name": "天品靈木0687", "kind": "靈木", "rarity": "天品", "buy": 4940, "sell": 3556, "level": 3, "value": 11},
+    688: {"name": "仙品靈水0688", "kind": "靈水", "rarity": "仙品", "buy": 4958, "sell": 3569, "level": 3, "value": 12},
+    689: {"name": "凡品靈果0689", "kind": "靈果", "rarity": "凡品", "buy": 4833, "sell": 3479, "level": 3, "value": 13},
+    690: {"name": "良品靈花0690", "kind": "靈花", "rarity": "良品", "buy": 4851, "sell": 3492, "level": 3, "value": 14},
+    691: {"name": "精品靈草0691", "kind": "靈草", "rarity": "精品", "buy": 4869, "sell": 3505, "level": 3, "value": 15},
+    692: {"name": "靈品丹藥0692", "kind": "丹藥", "rarity": "靈品", "buy": 4887, "sell": 3518, "level": 3, "value": 16},
+    693: {"name": "玄品礦石0693", "kind": "礦石", "rarity": "玄品", "buy": 4905, "sell": 3531, "level": 3, "value": 17},
+    694: {"name": "地品符籙0694", "kind": "符籙", "rarity": "地品", "buy": 4923, "sell": 3544, "level": 3, "value": 18},
+    695: {"name": "天品法寶材料0695", "kind": "法寶材料", "rarity": "天品", "buy": 4941, "sell": 3557, "level": 3, "value": 19},
+    696: {"name": "仙品妖獸材料0696", "kind": "妖獸材料", "rarity": "仙品", "buy": 4959, "sell": 3570, "level": 3, "value": 20},
+    697: {"name": "凡品靈木0697", "kind": "靈木", "rarity": "凡品", "buy": 4977, "sell": 3583, "level": 3, "value": 21},
+    698: {"name": "良品靈水0698", "kind": "靈水", "rarity": "良品", "buy": 4995, "sell": 3596, "level": 3, "value": 22},
+    699: {"name": "精品靈果0699", "kind": "靈果", "rarity": "精品", "buy": 5013, "sell": 3609, "level": 3, "value": 23},
+    700: {"name": "靈品靈花0700", "kind": "靈花", "rarity": "靈品", "buy": 5031, "sell": 3622, "level": 3, "value": 24},
+    701: {"name": "玄品靈草0701", "kind": "靈草", "rarity": "玄品", "buy": 5049, "sell": 3635, "level": 3, "value": 25},
+    702: {"name": "地品丹藥0702", "kind": "丹藥", "rarity": "地品", "buy": 4924, "sell": 3545, "level": 3, "value": 26},
+    703: {"name": "天品礦石0703", "kind": "礦石", "rarity": "天品", "buy": 4942, "sell": 3558, "level": 3, "value": 27},
+    704: {"name": "仙品符籙0704", "kind": "符籙", "rarity": "仙品", "buy": 4960, "sell": 3571, "level": 3, "value": 28},
+    705: {"name": "凡品法寶材料0705", "kind": "法寶材料", "rarity": "凡品", "buy": 4978, "sell": 3584, "level": 3, "value": 29},
+    706: {"name": "良品妖獸材料0706", "kind": "妖獸材料", "rarity": "良品", "buy": 4996, "sell": 3597, "level": 3, "value": 30},
+    707: {"name": "精品靈木0707", "kind": "靈木", "rarity": "精品", "buy": 5014, "sell": 3610, "level": 3, "value": 31},
+    708: {"name": "靈品靈水0708", "kind": "靈水", "rarity": "靈品", "buy": 5032, "sell": 3623, "level": 3, "value": 32},
+    709: {"name": "玄品靈果0709", "kind": "靈果", "rarity": "玄品", "buy": 5050, "sell": 3636, "level": 3, "value": 33},
+    710: {"name": "地品靈花0710", "kind": "靈花", "rarity": "地品", "buy": 5068, "sell": 3648, "level": 3, "value": 34},
+    711: {"name": "天品靈草0711", "kind": "靈草", "rarity": "天品", "buy": 5086, "sell": 3661, "level": 3, "value": 35},
+    712: {"name": "仙品丹藥0712", "kind": "丹藥", "rarity": "仙品", "buy": 5104, "sell": 3674, "level": 3, "value": 36},
+    713: {"name": "凡品礦石0713", "kind": "礦石", "rarity": "凡品", "buy": 5122, "sell": 3687, "level": 3, "value": 37},
+    714: {"name": "良品符籙0714", "kind": "符籙", "rarity": "良品", "buy": 5140, "sell": 3700, "level": 3, "value": 38},
+    715: {"name": "精品法寶材料0715", "kind": "法寶材料", "rarity": "精品", "buy": 5015, "sell": 3610, "level": 3, "value": 39},
+    716: {"name": "靈品妖獸材料0716", "kind": "妖獸材料", "rarity": "靈品", "buy": 5033, "sell": 3623, "level": 3, "value": 40},
+    717: {"name": "玄品靈木0717", "kind": "靈木", "rarity": "玄品", "buy": 5051, "sell": 3636, "level": 3, "value": 41},
+    718: {"name": "地品靈水0718", "kind": "靈水", "rarity": "地品", "buy": 5069, "sell": 3649, "level": 3, "value": 42},
+    719: {"name": "天品靈果0719", "kind": "靈果", "rarity": "天品", "buy": 5087, "sell": 3662, "level": 3, "value": 43},
+    720: {"name": "仙品靈花0720", "kind": "靈花", "rarity": "仙品", "buy": 5105, "sell": 3675, "level": 3, "value": 44},
+    721: {"name": "凡品靈草0721", "kind": "靈草", "rarity": "凡品", "buy": 5123, "sell": 3688, "level": 3, "value": 45},
+    722: {"name": "良品丹藥0722", "kind": "丹藥", "rarity": "良品", "buy": 5141, "sell": 3701, "level": 3, "value": 46},
+    723: {"name": "精品礦石0723", "kind": "礦石", "rarity": "精品", "buy": 5159, "sell": 3714, "level": 3, "value": 47},
+    724: {"name": "靈品符籙0724", "kind": "符籙", "rarity": "靈品", "buy": 5177, "sell": 3727, "level": 3, "value": 48},
+    725: {"name": "玄品法寶材料0725", "kind": "法寶材料", "rarity": "玄品", "buy": 5195, "sell": 3740, "level": 3, "value": 49},
+    726: {"name": "地品妖獸材料0726", "kind": "妖獸材料", "rarity": "地品", "buy": 5213, "sell": 3753, "level": 3, "value": 50},
+    727: {"name": "天品靈木0727", "kind": "靈木", "rarity": "天品", "buy": 5231, "sell": 3766, "level": 3, "value": 51},
+    728: {"name": "仙品靈水0728", "kind": "靈水", "rarity": "仙品", "buy": 5106, "sell": 3676, "level": 3, "value": 52},
+    729: {"name": "凡品靈果0729", "kind": "靈果", "rarity": "凡品", "buy": 5124, "sell": 3689, "level": 3, "value": 53},
+    730: {"name": "良品靈花0730", "kind": "靈花", "rarity": "良品", "buy": 5142, "sell": 3702, "level": 3, "value": 54},
+    731: {"name": "精品靈草0731", "kind": "靈草", "rarity": "精品", "buy": 5160, "sell": 3715, "level": 3, "value": 55},
+    732: {"name": "靈品丹藥0732", "kind": "丹藥", "rarity": "靈品", "buy": 5178, "sell": 3728, "level": 3, "value": 56},
+    733: {"name": "玄品礦石0733", "kind": "礦石", "rarity": "玄品", "buy": 5196, "sell": 3741, "level": 3, "value": 57},
+    734: {"name": "地品符籙0734", "kind": "符籙", "rarity": "地品", "buy": 5214, "sell": 3754, "level": 3, "value": 58},
+    735: {"name": "天品法寶材料0735", "kind": "法寶材料", "rarity": "天品", "buy": 5232, "sell": 3767, "level": 3, "value": 59},
+    736: {"name": "仙品妖獸材料0736", "kind": "妖獸材料", "rarity": "仙品", "buy": 5250, "sell": 3780, "level": 3, "value": 60},
+    737: {"name": "凡品靈木0737", "kind": "靈木", "rarity": "凡品", "buy": 5268, "sell": 3792, "level": 3, "value": 61},
+    738: {"name": "良品靈水0738", "kind": "靈水", "rarity": "良品", "buy": 5286, "sell": 3805, "level": 3, "value": 62},
+    739: {"name": "精品靈果0739", "kind": "靈果", "rarity": "精品", "buy": 5304, "sell": 3818, "level": 3, "value": 63},
+    740: {"name": "靈品靈花0740", "kind": "靈花", "rarity": "靈品", "buy": 5322, "sell": 3831, "level": 3, "value": 64},
+    741: {"name": "玄品靈草0741", "kind": "靈草", "rarity": "玄品", "buy": 5197, "sell": 3741, "level": 3, "value": 65},
+    742: {"name": "地品丹藥0742", "kind": "丹藥", "rarity": "地品", "buy": 5215, "sell": 3754, "level": 3, "value": 66},
+    743: {"name": "天品礦石0743", "kind": "礦石", "rarity": "天品", "buy": 5233, "sell": 3767, "level": 3, "value": 67},
+    744: {"name": "仙品符籙0744", "kind": "符籙", "rarity": "仙品", "buy": 5251, "sell": 3780, "level": 3, "value": 68},
+    745: {"name": "凡品法寶材料0745", "kind": "法寶材料", "rarity": "凡品", "buy": 5269, "sell": 3793, "level": 3, "value": 69},
+    746: {"name": "良品妖獸材料0746", "kind": "妖獸材料", "rarity": "良品", "buy": 5287, "sell": 3806, "level": 3, "value": 70},
+    747: {"name": "精品靈木0747", "kind": "靈木", "rarity": "精品", "buy": 5305, "sell": 3819, "level": 3, "value": 71},
+    748: {"name": "靈品靈水0748", "kind": "靈水", "rarity": "靈品", "buy": 5323, "sell": 3832, "level": 3, "value": 72},
+    749: {"name": "玄品靈果0749", "kind": "靈果", "rarity": "玄品", "buy": 5341, "sell": 3845, "level": 3, "value": 73},
+    750: {"name": "地品靈花0750", "kind": "靈花", "rarity": "地品", "buy": 5359, "sell": 3858, "level": 3, "value": 74},
+    751: {"name": "天品靈草0751", "kind": "靈草", "rarity": "天品", "buy": 5377, "sell": 3871, "level": 3, "value": 75},
+    752: {"name": "仙品丹藥0752", "kind": "丹藥", "rarity": "仙品", "buy": 5395, "sell": 3884, "level": 3, "value": 76},
+    753: {"name": "凡品礦石0753", "kind": "礦石", "rarity": "凡品", "buy": 5413, "sell": 3897, "level": 3, "value": 77},
+    754: {"name": "良品符籙0754", "kind": "符籙", "rarity": "良品", "buy": 5288, "sell": 3807, "level": 3, "value": 78},
+    755: {"name": "精品法寶材料0755", "kind": "法寶材料", "rarity": "精品", "buy": 5306, "sell": 3820, "level": 3, "value": 79},
+    756: {"name": "靈品妖獸材料0756", "kind": "妖獸材料", "rarity": "靈品", "buy": 5324, "sell": 3833, "level": 3, "value": 80},
+    757: {"name": "玄品靈木0757", "kind": "靈木", "rarity": "玄品", "buy": 5342, "sell": 3846, "level": 3, "value": 81},
+    758: {"name": "地品靈水0758", "kind": "靈水", "rarity": "地品", "buy": 5360, "sell": 3859, "level": 3, "value": 82},
+    759: {"name": "天品靈果0759", "kind": "靈果", "rarity": "天品", "buy": 5378, "sell": 3872, "level": 3, "value": 83},
+    760: {"name": "仙品靈花0760", "kind": "靈花", "rarity": "仙品", "buy": 5396, "sell": 3885, "level": 3, "value": 84},
+    761: {"name": "凡品靈草0761", "kind": "靈草", "rarity": "凡品", "buy": 5414, "sell": 3898, "level": 3, "value": 85},
+    762: {"name": "良品丹藥0762", "kind": "丹藥", "rarity": "良品", "buy": 5432, "sell": 3911, "level": 3, "value": 86},
+    763: {"name": "精品礦石0763", "kind": "礦石", "rarity": "精品", "buy": 5450, "sell": 3924, "level": 3, "value": 87},
+    764: {"name": "靈品符籙0764", "kind": "符籙", "rarity": "靈品", "buy": 5468, "sell": 3936, "level": 3, "value": 88},
+    765: {"name": "玄品法寶材料0765", "kind": "法寶材料", "rarity": "玄品", "buy": 5486, "sell": 3949, "level": 3, "value": 89},
+    766: {"name": "地品妖獸材料0766", "kind": "妖獸材料", "rarity": "地品", "buy": 5504, "sell": 3962, "level": 3, "value": 90},
+    767: {"name": "天品靈木0767", "kind": "靈木", "rarity": "天品", "buy": 5379, "sell": 3872, "level": 3, "value": 91},
+    768: {"name": "仙品靈水0768", "kind": "靈水", "rarity": "仙品", "buy": 5397, "sell": 3885, "level": 3, "value": 92},
+    769: {"name": "凡品靈果0769", "kind": "靈果", "rarity": "凡品", "buy": 5415, "sell": 3898, "level": 3, "value": 93},
+    770: {"name": "良品靈花0770", "kind": "靈花", "rarity": "良品", "buy": 5433, "sell": 3911, "level": 3, "value": 94},
+    771: {"name": "精品靈草0771", "kind": "靈草", "rarity": "精品", "buy": 5451, "sell": 3924, "level": 3, "value": 95},
+    772: {"name": "靈品丹藥0772", "kind": "丹藥", "rarity": "靈品", "buy": 5469, "sell": 3937, "level": 3, "value": 96},
+    773: {"name": "玄品礦石0773", "kind": "礦石", "rarity": "玄品", "buy": 5487, "sell": 3950, "level": 3, "value": 97},
+    774: {"name": "地品符籙0774", "kind": "符籙", "rarity": "地品", "buy": 5505, "sell": 3963, "level": 3, "value": 98},
+    775: {"name": "天品法寶材料0775", "kind": "法寶材料", "rarity": "天品", "buy": 5523, "sell": 3976, "level": 3, "value": 99},
+    776: {"name": "仙品妖獸材料0776", "kind": "妖獸材料", "rarity": "仙品", "buy": 5541, "sell": 3989, "level": 3, "value": 3},
+    777: {"name": "凡品靈木0777", "kind": "靈木", "rarity": "凡品", "buy": 5559, "sell": 4002, "level": 3, "value": 4},
+    778: {"name": "良品靈水0778", "kind": "靈水", "rarity": "良品", "buy": 5577, "sell": 4015, "level": 3, "value": 5},
+    779: {"name": "精品靈果0779", "kind": "靈果", "rarity": "精品", "buy": 5595, "sell": 4028, "level": 3, "value": 6},
+    780: {"name": "靈品靈花0780", "kind": "靈花", "rarity": "靈品", "buy": 5470, "sell": 3938, "level": 3, "value": 7},
+    781: {"name": "玄品靈草0781", "kind": "靈草", "rarity": "玄品", "buy": 5488, "sell": 3951, "level": 3, "value": 8},
+    782: {"name": "地品丹藥0782", "kind": "丹藥", "rarity": "地品", "buy": 5506, "sell": 3964, "level": 3, "value": 9},
+    783: {"name": "天品礦石0783", "kind": "礦石", "rarity": "天品", "buy": 5524, "sell": 3977, "level": 3, "value": 10},
+    784: {"name": "仙品符籙0784", "kind": "符籙", "rarity": "仙品", "buy": 5542, "sell": 3990, "level": 3, "value": 11},
+    785: {"name": "凡品法寶材料0785", "kind": "法寶材料", "rarity": "凡品", "buy": 5560, "sell": 4003, "level": 3, "value": 12},
+    786: {"name": "良品妖獸材料0786", "kind": "妖獸材料", "rarity": "良品", "buy": 5578, "sell": 4016, "level": 3, "value": 13},
+    787: {"name": "精品靈木0787", "kind": "靈木", "rarity": "精品", "buy": 5596, "sell": 4029, "level": 3, "value": 14},
+    788: {"name": "靈品靈水0788", "kind": "靈水", "rarity": "靈品", "buy": 5614, "sell": 4042, "level": 3, "value": 15},
+    789: {"name": "玄品靈果0789", "kind": "靈果", "rarity": "玄品", "buy": 5632, "sell": 4055, "level": 3, "value": 16},
+    790: {"name": "地品靈花0790", "kind": "靈花", "rarity": "地品", "buy": 5650, "sell": 4068, "level": 3, "value": 17},
+    791: {"name": "天品靈草0791", "kind": "靈草", "rarity": "天品", "buy": 5668, "sell": 4080, "level": 3, "value": 18},
+    792: {"name": "仙品丹藥0792", "kind": "丹藥", "rarity": "仙品", "buy": 5686, "sell": 4093, "level": 3, "value": 19},
+    793: {"name": "凡品礦石0793", "kind": "礦石", "rarity": "凡品", "buy": 5561, "sell": 4003, "level": 3, "value": 20},
+    794: {"name": "良品符籙0794", "kind": "符籙", "rarity": "良品", "buy": 5579, "sell": 4016, "level": 3, "value": 21},
+    795: {"name": "精品法寶材料0795", "kind": "法寶材料", "rarity": "精品", "buy": 5597, "sell": 4029, "level": 3, "value": 22},
+    796: {"name": "靈品妖獸材料0796", "kind": "妖獸材料", "rarity": "靈品", "buy": 5615, "sell": 4042, "level": 3, "value": 23},
+    797: {"name": "玄品靈木0797", "kind": "靈木", "rarity": "玄品", "buy": 5633, "sell": 4055, "level": 3, "value": 24},
+    798: {"name": "地品靈水0798", "kind": "靈水", "rarity": "地品", "buy": 5651, "sell": 4068, "level": 3, "value": 25},
+    799: {"name": "天品靈果0799", "kind": "靈果", "rarity": "天品", "buy": 5669, "sell": 4081, "level": 3, "value": 26},
+    800: {"name": "仙品靈花0800", "kind": "靈花", "rarity": "仙品", "buy": 5687, "sell": 4094, "level": 3, "value": 27},
+    801: {"name": "凡品靈草0801", "kind": "靈草", "rarity": "凡品", "buy": 5705, "sell": 4107, "level": 4, "value": 28},
+    802: {"name": "良品丹藥0802", "kind": "丹藥", "rarity": "良品", "buy": 5723, "sell": 4120, "level": 4, "value": 29},
+    803: {"name": "精品礦石0803", "kind": "礦石", "rarity": "精品", "buy": 5741, "sell": 4133, "level": 4, "value": 30},
+    804: {"name": "靈品符籙0804", "kind": "符籙", "rarity": "靈品", "buy": 5759, "sell": 4146, "level": 4, "value": 31},
+    805: {"name": "玄品法寶材料0805", "kind": "法寶材料", "rarity": "玄品", "buy": 5777, "sell": 4159, "level": 4, "value": 32},
+    806: {"name": "地品妖獸材料0806", "kind": "妖獸材料", "rarity": "地品", "buy": 5652, "sell": 4069, "level": 4, "value": 33},
+    807: {"name": "天品靈木0807", "kind": "靈木", "rarity": "天品", "buy": 5670, "sell": 4082, "level": 4, "value": 34},
+    808: {"name": "仙品靈水0808", "kind": "靈水", "rarity": "仙品", "buy": 5688, "sell": 4095, "level": 4, "value": 35},
+    809: {"name": "凡品靈果0809", "kind": "靈果", "rarity": "凡品", "buy": 5706, "sell": 4108, "level": 4, "value": 36},
+    810: {"name": "良品靈花0810", "kind": "靈花", "rarity": "良品", "buy": 5724, "sell": 4121, "level": 4, "value": 37},
+    811: {"name": "精品靈草0811", "kind": "靈草", "rarity": "精品", "buy": 5742, "sell": 4134, "level": 4, "value": 38},
+    812: {"name": "靈品丹藥0812", "kind": "丹藥", "rarity": "靈品", "buy": 5760, "sell": 4147, "level": 4, "value": 39},
+    813: {"name": "玄品礦石0813", "kind": "礦石", "rarity": "玄品", "buy": 5778, "sell": 4160, "level": 4, "value": 40},
+    814: {"name": "地品符籙0814", "kind": "符籙", "rarity": "地品", "buy": 5796, "sell": 4173, "level": 4, "value": 41},
+    815: {"name": "天品法寶材料0815", "kind": "法寶材料", "rarity": "天品", "buy": 5814, "sell": 4186, "level": 4, "value": 42},
+    816: {"name": "仙品妖獸材料0816", "kind": "妖獸材料", "rarity": "仙品", "buy": 5832, "sell": 4199, "level": 4, "value": 43},
+    817: {"name": "凡品靈木0817", "kind": "靈木", "rarity": "凡品", "buy": 5850, "sell": 4212, "level": 4, "value": 44},
+    818: {"name": "良品靈水0818", "kind": "靈水", "rarity": "良品", "buy": 5868, "sell": 4224, "level": 4, "value": 45},
+    819: {"name": "精品靈果0819", "kind": "靈果", "rarity": "精品", "buy": 5743, "sell": 4134, "level": 4, "value": 46},
+    820: {"name": "靈品靈花0820", "kind": "靈花", "rarity": "靈品", "buy": 5761, "sell": 4147, "level": 4, "value": 47},
+    821: {"name": "玄品靈草0821", "kind": "靈草", "rarity": "玄品", "buy": 5779, "sell": 4160, "level": 4, "value": 48},
+    822: {"name": "地品丹藥0822", "kind": "丹藥", "rarity": "地品", "buy": 5797, "sell": 4173, "level": 4, "value": 49},
+    823: {"name": "天品礦石0823", "kind": "礦石", "rarity": "天品", "buy": 5815, "sell": 4186, "level": 4, "value": 50},
+    824: {"name": "仙品符籙0824", "kind": "符籙", "rarity": "仙品", "buy": 5833, "sell": 4199, "level": 4, "value": 51},
+    825: {"name": "凡品法寶材料0825", "kind": "法寶材料", "rarity": "凡品", "buy": 5851, "sell": 4212, "level": 4, "value": 52},
+    826: {"name": "良品妖獸材料0826", "kind": "妖獸材料", "rarity": "良品", "buy": 5869, "sell": 4225, "level": 4, "value": 53},
+    827: {"name": "精品靈木0827", "kind": "靈木", "rarity": "精品", "buy": 5887, "sell": 4238, "level": 4, "value": 54},
+    828: {"name": "靈品靈水0828", "kind": "靈水", "rarity": "靈品", "buy": 5905, "sell": 4251, "level": 4, "value": 55},
+    829: {"name": "玄品靈果0829", "kind": "靈果", "rarity": "玄品", "buy": 5923, "sell": 4264, "level": 4, "value": 56},
+    830: {"name": "地品靈花0830", "kind": "靈花", "rarity": "地品", "buy": 5941, "sell": 4277, "level": 4, "value": 57},
+    831: {"name": "天品靈草0831", "kind": "靈草", "rarity": "天品", "buy": 5959, "sell": 4290, "level": 4, "value": 58},
+    832: {"name": "仙品丹藥0832", "kind": "丹藥", "rarity": "仙品", "buy": 5834, "sell": 4200, "level": 4, "value": 59},
+    833: {"name": "凡品礦石0833", "kind": "礦石", "rarity": "凡品", "buy": 5852, "sell": 4213, "level": 4, "value": 60},
+    834: {"name": "良品符籙0834", "kind": "符籙", "rarity": "良品", "buy": 5870, "sell": 4226, "level": 4, "value": 61},
+    835: {"name": "精品法寶材料0835", "kind": "法寶材料", "rarity": "精品", "buy": 5888, "sell": 4239, "level": 4, "value": 62},
+    836: {"name": "靈品妖獸材料0836", "kind": "妖獸材料", "rarity": "靈品", "buy": 5906, "sell": 4252, "level": 4, "value": 63},
+    837: {"name": "玄品靈木0837", "kind": "靈木", "rarity": "玄品", "buy": 5924, "sell": 4265, "level": 4, "value": 64},
+    838: {"name": "地品靈水0838", "kind": "靈水", "rarity": "地品", "buy": 5942, "sell": 4278, "level": 4, "value": 65},
+    839: {"name": "天品靈果0839", "kind": "靈果", "rarity": "天品", "buy": 5960, "sell": 4291, "level": 4, "value": 66},
+    840: {"name": "仙品靈花0840", "kind": "靈花", "rarity": "仙品", "buy": 5978, "sell": 4304, "level": 4, "value": 67},
+    841: {"name": "凡品靈草0841", "kind": "靈草", "rarity": "凡品", "buy": 5996, "sell": 4317, "level": 4, "value": 68},
+    842: {"name": "良品丹藥0842", "kind": "丹藥", "rarity": "良品", "buy": 6014, "sell": 4330, "level": 4, "value": 69},
+    843: {"name": "精品礦石0843", "kind": "礦石", "rarity": "精品", "buy": 6032, "sell": 4343, "level": 4, "value": 70},
+    844: {"name": "靈品符籙0844", "kind": "符籙", "rarity": "靈品", "buy": 6050, "sell": 4356, "level": 4, "value": 71},
+    845: {"name": "玄品法寶材料0845", "kind": "法寶材料", "rarity": "玄品", "buy": 5925, "sell": 4266, "level": 4, "value": 72},
+    846: {"name": "地品妖獸材料0846", "kind": "妖獸材料", "rarity": "地品", "buy": 5943, "sell": 4278, "level": 4, "value": 73},
+    847: {"name": "天品靈木0847", "kind": "靈木", "rarity": "天品", "buy": 5961, "sell": 4291, "level": 4, "value": 74},
+    848: {"name": "仙品靈水0848", "kind": "靈水", "rarity": "仙品", "buy": 5979, "sell": 4304, "level": 4, "value": 75},
+    849: {"name": "凡品靈果0849", "kind": "靈果", "rarity": "凡品", "buy": 5997, "sell": 4317, "level": 4, "value": 76},
+    850: {"name": "良品靈花0850", "kind": "靈花", "rarity": "良品", "buy": 6015, "sell": 4330, "level": 4, "value": 77},
+    851: {"name": "精品靈草0851", "kind": "靈草", "rarity": "精品", "buy": 6033, "sell": 4343, "level": 4, "value": 78},
+    852: {"name": "靈品丹藥0852", "kind": "丹藥", "rarity": "靈品", "buy": 6051, "sell": 4356, "level": 4, "value": 79},
+    853: {"name": "玄品礦石0853", "kind": "礦石", "rarity": "玄品", "buy": 6069, "sell": 4369, "level": 4, "value": 80},
+    854: {"name": "地品符籙0854", "kind": "符籙", "rarity": "地品", "buy": 6087, "sell": 4382, "level": 4, "value": 81},
+    855: {"name": "天品法寶材料0855", "kind": "法寶材料", "rarity": "天品", "buy": 6105, "sell": 4395, "level": 4, "value": 82},
+    856: {"name": "仙品妖獸材料0856", "kind": "妖獸材料", "rarity": "仙品", "buy": 6123, "sell": 4408, "level": 4, "value": 83},
+    857: {"name": "凡品靈木0857", "kind": "靈木", "rarity": "凡品", "buy": 6141, "sell": 4421, "level": 4, "value": 84},
+    858: {"name": "良品靈水0858", "kind": "靈水", "rarity": "良品", "buy": 6016, "sell": 4331, "level": 4, "value": 85},
+    859: {"name": "精品靈果0859", "kind": "靈果", "rarity": "精品", "buy": 6034, "sell": 4344, "level": 4, "value": 86},
+    860: {"name": "靈品靈花0860", "kind": "靈花", "rarity": "靈品", "buy": 6052, "sell": 4357, "level": 4, "value": 87},
+    861: {"name": "玄品靈草0861", "kind": "靈草", "rarity": "玄品", "buy": 6070, "sell": 4370, "level": 4, "value": 88},
+    862: {"name": "地品丹藥0862", "kind": "丹藥", "rarity": "地品", "buy": 6088, "sell": 4383, "level": 4, "value": 89},
+    863: {"name": "天品礦石0863", "kind": "礦石", "rarity": "天品", "buy": 6106, "sell": 4396, "level": 4, "value": 90},
+    864: {"name": "仙品符籙0864", "kind": "符籙", "rarity": "仙品", "buy": 6124, "sell": 4409, "level": 4, "value": 91},
+    865: {"name": "凡品法寶材料0865", "kind": "法寶材料", "rarity": "凡品", "buy": 6142, "sell": 4422, "level": 4, "value": 92},
+    866: {"name": "良品妖獸材料0866", "kind": "妖獸材料", "rarity": "良品", "buy": 6160, "sell": 4435, "level": 4, "value": 93},
+    867: {"name": "精品靈木0867", "kind": "靈木", "rarity": "精品", "buy": 6178, "sell": 4448, "level": 4, "value": 94},
+    868: {"name": "靈品靈水0868", "kind": "靈水", "rarity": "靈品", "buy": 6196, "sell": 4461, "level": 4, "value": 95},
+    869: {"name": "玄品靈果0869", "kind": "靈果", "rarity": "玄品", "buy": 6214, "sell": 4474, "level": 4, "value": 96},
+    870: {"name": "地品靈花0870", "kind": "靈花", "rarity": "地品", "buy": 6232, "sell": 4487, "level": 4, "value": 97},
+    871: {"name": "天品靈草0871", "kind": "靈草", "rarity": "天品", "buy": 6107, "sell": 4397, "level": 4, "value": 98},
+    872: {"name": "仙品丹藥0872", "kind": "丹藥", "rarity": "仙品", "buy": 6125, "sell": 4410, "level": 4, "value": 99},
+    873: {"name": "凡品礦石0873", "kind": "礦石", "rarity": "凡品", "buy": 6143, "sell": 4422, "level": 4, "value": 3},
+    874: {"name": "良品符籙0874", "kind": "符籙", "rarity": "良品", "buy": 6161, "sell": 4435, "level": 4, "value": 4},
+    875: {"name": "精品法寶材料0875", "kind": "法寶材料", "rarity": "精品", "buy": 6179, "sell": 4448, "level": 4, "value": 5},
+    876: {"name": "靈品妖獸材料0876", "kind": "妖獸材料", "rarity": "靈品", "buy": 6197, "sell": 4461, "level": 4, "value": 6},
+    877: {"name": "玄品靈木0877", "kind": "靈木", "rarity": "玄品", "buy": 6215, "sell": 4474, "level": 4, "value": 7},
+    878: {"name": "地品靈水0878", "kind": "靈水", "rarity": "地品", "buy": 6233, "sell": 4487, "level": 4, "value": 8},
+    879: {"name": "天品靈果0879", "kind": "靈果", "rarity": "天品", "buy": 6251, "sell": 4500, "level": 4, "value": 9},
+    880: {"name": "仙品靈花0880", "kind": "靈花", "rarity": "仙品", "buy": 6269, "sell": 4513, "level": 4, "value": 10},
+    881: {"name": "凡品靈草0881", "kind": "靈草", "rarity": "凡品", "buy": 6287, "sell": 4526, "level": 4, "value": 11},
+    882: {"name": "良品丹藥0882", "kind": "丹藥", "rarity": "良品", "buy": 6305, "sell": 4539, "level": 4, "value": 12},
+    883: {"name": "精品礦石0883", "kind": "礦石", "rarity": "精品", "buy": 6323, "sell": 4552, "level": 4, "value": 13},
+    884: {"name": "靈品符籙0884", "kind": "符籙", "rarity": "靈品", "buy": 6198, "sell": 4462, "level": 4, "value": 14},
+    885: {"name": "玄品法寶材料0885", "kind": "法寶材料", "rarity": "玄品", "buy": 6216, "sell": 4475, "level": 4, "value": 15},
+    886: {"name": "地品妖獸材料0886", "kind": "妖獸材料", "rarity": "地品", "buy": 6234, "sell": 4488, "level": 4, "value": 16},
+    887: {"name": "天品靈木0887", "kind": "靈木", "rarity": "天品", "buy": 6252, "sell": 4501, "level": 4, "value": 17},
+    888: {"name": "仙品靈水0888", "kind": "靈水", "rarity": "仙品", "buy": 6270, "sell": 4514, "level": 4, "value": 18},
+    889: {"name": "凡品靈果0889", "kind": "靈果", "rarity": "凡品", "buy": 6288, "sell": 4527, "level": 4, "value": 19},
+    890: {"name": "良品靈花0890", "kind": "靈花", "rarity": "良品", "buy": 6306, "sell": 4540, "level": 4, "value": 20},
+    891: {"name": "精品靈草0891", "kind": "靈草", "rarity": "精品", "buy": 6324, "sell": 4553, "level": 4, "value": 21},
+    892: {"name": "靈品丹藥0892", "kind": "丹藥", "rarity": "靈品", "buy": 6342, "sell": 4566, "level": 4, "value": 22},
+    893: {"name": "玄品礦石0893", "kind": "礦石", "rarity": "玄品", "buy": 6360, "sell": 4579, "level": 4, "value": 23},
+    894: {"name": "地品符籙0894", "kind": "符籙", "rarity": "地品", "buy": 6378, "sell": 4592, "level": 4, "value": 24},
+    895: {"name": "天品法寶材料0895", "kind": "法寶材料", "rarity": "天品", "buy": 6396, "sell": 4605, "level": 4, "value": 25},
+    896: {"name": "仙品妖獸材料0896", "kind": "妖獸材料", "rarity": "仙品", "buy": 6414, "sell": 4618, "level": 4, "value": 26},
+    897: {"name": "凡品靈木0897", "kind": "靈木", "rarity": "凡品", "buy": 6289, "sell": 4528, "level": 4, "value": 27},
+    898: {"name": "良品靈水0898", "kind": "靈水", "rarity": "良品", "buy": 6307, "sell": 4541, "level": 4, "value": 28},
+    899: {"name": "精品靈果0899", "kind": "靈果", "rarity": "精品", "buy": 6325, "sell": 4554, "level": 4, "value": 29},
+    900: {"name": "靈品靈花0900", "kind": "靈花", "rarity": "靈品", "buy": 6343, "sell": 4566, "level": 4, "value": 30},
+    901: {"name": "玄品靈草0901", "kind": "靈草", "rarity": "玄品", "buy": 6361, "sell": 4579, "level": 4, "value": 31},
+    902: {"name": "地品丹藥0902", "kind": "丹藥", "rarity": "地品", "buy": 6379, "sell": 4592, "level": 4, "value": 32},
+    903: {"name": "天品礦石0903", "kind": "礦石", "rarity": "天品", "buy": 6397, "sell": 4605, "level": 4, "value": 33},
+    904: {"name": "仙品符籙0904", "kind": "符籙", "rarity": "仙品", "buy": 6415, "sell": 4618, "level": 4, "value": 34},
+    905: {"name": "凡品法寶材料0905", "kind": "法寶材料", "rarity": "凡品", "buy": 6433, "sell": 4631, "level": 4, "value": 35},
+    906: {"name": "良品妖獸材料0906", "kind": "妖獸材料", "rarity": "良品", "buy": 6451, "sell": 4644, "level": 4, "value": 36},
+    907: {"name": "精品靈木0907", "kind": "靈木", "rarity": "精品", "buy": 6469, "sell": 4657, "level": 4, "value": 37},
+    908: {"name": "靈品靈水0908", "kind": "靈水", "rarity": "靈品", "buy": 6487, "sell": 4670, "level": 4, "value": 38},
+    909: {"name": "玄品靈果0909", "kind": "靈果", "rarity": "玄品", "buy": 6505, "sell": 4683, "level": 4, "value": 39},
+    910: {"name": "地品靈花0910", "kind": "靈花", "rarity": "地品", "buy": 6380, "sell": 4593, "level": 4, "value": 40},
+    911: {"name": "天品靈草0911", "kind": "靈草", "rarity": "天品", "buy": 6398, "sell": 4606, "level": 4, "value": 41},
+    912: {"name": "仙品丹藥0912", "kind": "丹藥", "rarity": "仙品", "buy": 6416, "sell": 4619, "level": 4, "value": 42},
+    913: {"name": "凡品礦石0913", "kind": "礦石", "rarity": "凡品", "buy": 6434, "sell": 4632, "level": 4, "value": 43},
+    914: {"name": "良品符籙0914", "kind": "符籙", "rarity": "良品", "buy": 6452, "sell": 4645, "level": 4, "value": 44},
+    915: {"name": "精品法寶材料0915", "kind": "法寶材料", "rarity": "精品", "buy": 6470, "sell": 4658, "level": 4, "value": 45},
+    916: {"name": "靈品妖獸材料0916", "kind": "妖獸材料", "rarity": "靈品", "buy": 6488, "sell": 4671, "level": 4, "value": 46},
+    917: {"name": "玄品靈木0917", "kind": "靈木", "rarity": "玄品", "buy": 6506, "sell": 4684, "level": 4, "value": 47},
+    918: {"name": "地品靈水0918", "kind": "靈水", "rarity": "地品", "buy": 6524, "sell": 4697, "level": 4, "value": 48},
+    919: {"name": "天品靈果0919", "kind": "靈果", "rarity": "天品", "buy": 6542, "sell": 4710, "level": 4, "value": 49},
+    920: {"name": "仙品靈花0920", "kind": "靈花", "rarity": "仙品", "buy": 6560, "sell": 4723, "level": 4, "value": 50},
+    921: {"name": "凡品靈草0921", "kind": "靈草", "rarity": "凡品", "buy": 6578, "sell": 4736, "level": 4, "value": 51},
+    922: {"name": "良品丹藥0922", "kind": "丹藥", "rarity": "良品", "buy": 6596, "sell": 4749, "level": 4, "value": 52},
+    923: {"name": "精品礦石0923", "kind": "礦石", "rarity": "精品", "buy": 6471, "sell": 4659, "level": 4, "value": 53},
+    924: {"name": "靈品符籙0924", "kind": "符籙", "rarity": "靈品", "buy": 6489, "sell": 4672, "level": 4, "value": 54},
+    925: {"name": "玄品法寶材料0925", "kind": "法寶材料", "rarity": "玄品", "buy": 6507, "sell": 4685, "level": 4, "value": 55},
+    926: {"name": "地品妖獸材料0926", "kind": "妖獸材料", "rarity": "地品", "buy": 6525, "sell": 4698, "level": 4, "value": 56},
+    927: {"name": "天品靈木0927", "kind": "靈木", "rarity": "天品", "buy": 6543, "sell": 4710, "level": 4, "value": 57},
+    928: {"name": "仙品靈水0928", "kind": "靈水", "rarity": "仙品", "buy": 6561, "sell": 4723, "level": 4, "value": 58},
+    929: {"name": "凡品靈果0929", "kind": "靈果", "rarity": "凡品", "buy": 6579, "sell": 4736, "level": 4, "value": 59},
+    930: {"name": "良品靈花0930", "kind": "靈花", "rarity": "良品", "buy": 6597, "sell": 4749, "level": 4, "value": 60},
+    931: {"name": "精品靈草0931", "kind": "靈草", "rarity": "精品", "buy": 6615, "sell": 4762, "level": 4, "value": 61},
+    932: {"name": "靈品丹藥0932", "kind": "丹藥", "rarity": "靈品", "buy": 6633, "sell": 4775, "level": 4, "value": 62},
+    933: {"name": "玄品礦石0933", "kind": "礦石", "rarity": "玄品", "buy": 6651, "sell": 4788, "level": 4, "value": 63},
+    934: {"name": "地品符籙0934", "kind": "符籙", "rarity": "地品", "buy": 6669, "sell": 4801, "level": 4, "value": 64},
+    935: {"name": "天品法寶材料0935", "kind": "法寶材料", "rarity": "天品", "buy": 6687, "sell": 4814, "level": 4, "value": 65},
+    936: {"name": "仙品妖獸材料0936", "kind": "妖獸材料", "rarity": "仙品", "buy": 6562, "sell": 4724, "level": 4, "value": 66},
+    937: {"name": "凡品靈木0937", "kind": "靈木", "rarity": "凡品", "buy": 6580, "sell": 4737, "level": 4, "value": 67},
+    938: {"name": "良品靈水0938", "kind": "靈水", "rarity": "良品", "buy": 6598, "sell": 4750, "level": 4, "value": 68},
+    939: {"name": "精品靈果0939", "kind": "靈果", "rarity": "精品", "buy": 6616, "sell": 4763, "level": 4, "value": 69},
+    940: {"name": "靈品靈花0940", "kind": "靈花", "rarity": "靈品", "buy": 6634, "sell": 4776, "level": 4, "value": 70},
+    941: {"name": "玄品靈草0941", "kind": "靈草", "rarity": "玄品", "buy": 6652, "sell": 4789, "level": 4, "value": 71},
+    942: {"name": "地品丹藥0942", "kind": "丹藥", "rarity": "地品", "buy": 6670, "sell": 4802, "level": 4, "value": 72},
+    943: {"name": "天品礦石0943", "kind": "礦石", "rarity": "天品", "buy": 6688, "sell": 4815, "level": 4, "value": 73},
+    944: {"name": "仙品符籙0944", "kind": "符籙", "rarity": "仙品", "buy": 6706, "sell": 4828, "level": 4, "value": 74},
+    945: {"name": "凡品法寶材料0945", "kind": "法寶材料", "rarity": "凡品", "buy": 6724, "sell": 4841, "level": 4, "value": 75},
+    946: {"name": "良品妖獸材料0946", "kind": "妖獸材料", "rarity": "良品", "buy": 6742, "sell": 4854, "level": 4, "value": 76},
+    947: {"name": "精品靈木0947", "kind": "靈木", "rarity": "精品", "buy": 6760, "sell": 4867, "level": 4, "value": 77},
+    948: {"name": "靈品靈水0948", "kind": "靈水", "rarity": "靈品", "buy": 6778, "sell": 4880, "level": 4, "value": 78},
+    949: {"name": "玄品靈果0949", "kind": "靈果", "rarity": "玄品", "buy": 6653, "sell": 4790, "level": 4, "value": 79},
+    950: {"name": "地品靈花0950", "kind": "靈花", "rarity": "地品", "buy": 6671, "sell": 4803, "level": 4, "value": 80},
+    951: {"name": "天品靈草0951", "kind": "靈草", "rarity": "天品", "buy": 6689, "sell": 4816, "level": 4, "value": 81},
+    952: {"name": "仙品丹藥0952", "kind": "丹藥", "rarity": "仙品", "buy": 6707, "sell": 4829, "level": 4, "value": 82},
+    953: {"name": "凡品礦石0953", "kind": "礦石", "rarity": "凡品", "buy": 6725, "sell": 4842, "level": 4, "value": 83},
+    954: {"name": "良品符籙0954", "kind": "符籙", "rarity": "良品", "buy": 6743, "sell": 4854, "level": 4, "value": 84},
+    955: {"name": "精品法寶材料0955", "kind": "法寶材料", "rarity": "精品", "buy": 6761, "sell": 4867, "level": 4, "value": 85},
+    956: {"name": "靈品妖獸材料0956", "kind": "妖獸材料", "rarity": "靈品", "buy": 6779, "sell": 4880, "level": 4, "value": 86},
+    957: {"name": "玄品靈木0957", "kind": "靈木", "rarity": "玄品", "buy": 6797, "sell": 4893, "level": 4, "value": 87},
+    958: {"name": "地品靈水0958", "kind": "靈水", "rarity": "地品", "buy": 6815, "sell": 4906, "level": 4, "value": 88},
+    959: {"name": "天品靈果0959", "kind": "靈果", "rarity": "天品", "buy": 6833, "sell": 4919, "level": 4, "value": 89},
+    960: {"name": "仙品靈花0960", "kind": "靈花", "rarity": "仙品", "buy": 6851, "sell": 4932, "level": 4, "value": 90},
+    961: {"name": "凡品靈草0961", "kind": "靈草", "rarity": "凡品", "buy": 6869, "sell": 4945, "level": 4, "value": 91},
+    962: {"name": "良品丹藥0962", "kind": "丹藥", "rarity": "良品", "buy": 6744, "sell": 4855, "level": 4, "value": 92},
+    963: {"name": "精品礦石0963", "kind": "礦石", "rarity": "精品", "buy": 6762, "sell": 4868, "level": 4, "value": 93},
+    964: {"name": "靈品符籙0964", "kind": "符籙", "rarity": "靈品", "buy": 6780, "sell": 4881, "level": 4, "value": 94},
+    965: {"name": "玄品法寶材料0965", "kind": "法寶材料", "rarity": "玄品", "buy": 6798, "sell": 4894, "level": 4, "value": 95},
+    966: {"name": "地品妖獸材料0966", "kind": "妖獸材料", "rarity": "地品", "buy": 6816, "sell": 4907, "level": 4, "value": 96},
+    967: {"name": "天品靈木0967", "kind": "靈木", "rarity": "天品", "buy": 6834, "sell": 4920, "level": 4, "value": 97},
+    968: {"name": "仙品靈水0968", "kind": "靈水", "rarity": "仙品", "buy": 6852, "sell": 4933, "level": 4, "value": 98},
+    969: {"name": "凡品靈果0969", "kind": "靈果", "rarity": "凡品", "buy": 6870, "sell": 4946, "level": 4, "value": 99},
+    970: {"name": "良品靈花0970", "kind": "靈花", "rarity": "良品", "buy": 6888, "sell": 4959, "level": 4, "value": 3},
+    971: {"name": "精品靈草0971", "kind": "靈草", "rarity": "精品", "buy": 6906, "sell": 4972, "level": 4, "value": 4},
+    972: {"name": "靈品丹藥0972", "kind": "丹藥", "rarity": "靈品", "buy": 6924, "sell": 4985, "level": 4, "value": 5},
+    973: {"name": "玄品礦石0973", "kind": "礦石", "rarity": "玄品", "buy": 6942, "sell": 4998, "level": 4, "value": 6},
+    974: {"name": "地品符籙0974", "kind": "符籙", "rarity": "地品", "buy": 6960, "sell": 5011, "level": 4, "value": 7},
+    975: {"name": "天品法寶材料0975", "kind": "法寶材料", "rarity": "天品", "buy": 6835, "sell": 4921, "level": 4, "value": 8},
+    976: {"name": "仙品妖獸材料0976", "kind": "妖獸材料", "rarity": "仙品", "buy": 6853, "sell": 4934, "level": 4, "value": 9},
+    977: {"name": "凡品靈木0977", "kind": "靈木", "rarity": "凡品", "buy": 6871, "sell": 4947, "level": 4, "value": 10},
+    978: {"name": "良品靈水0978", "kind": "靈水", "rarity": "良品", "buy": 6889, "sell": 4960, "level": 4, "value": 11},
+    979: {"name": "精品靈果0979", "kind": "靈果", "rarity": "精品", "buy": 6907, "sell": 4973, "level": 4, "value": 12},
+    980: {"name": "靈品靈花0980", "kind": "靈花", "rarity": "靈品", "buy": 6925, "sell": 4986, "level": 4, "value": 13},
+    981: {"name": "玄品靈草0981", "kind": "靈草", "rarity": "玄品", "buy": 6943, "sell": 4998, "level": 4, "value": 14},
+    982: {"name": "地品丹藥0982", "kind": "丹藥", "rarity": "地品", "buy": 6961, "sell": 5011, "level": 4, "value": 15},
+    983: {"name": "天品礦石0983", "kind": "礦石", "rarity": "天品", "buy": 6979, "sell": 5024, "level": 4, "value": 16},
+    984: {"name": "仙品符籙0984", "kind": "符籙", "rarity": "仙品", "buy": 6997, "sell": 5037, "level": 4, "value": 17},
+    985: {"name": "凡品法寶材料0985", "kind": "法寶材料", "rarity": "凡品", "buy": 7015, "sell": 5050, "level": 4, "value": 18},
+    986: {"name": "良品妖獸材料0986", "kind": "妖獸材料", "rarity": "良品", "buy": 7033, "sell": 5063, "level": 4, "value": 19},
+    987: {"name": "精品靈木0987", "kind": "靈木", "rarity": "精品", "buy": 7051, "sell": 5076, "level": 4, "value": 20},
+    988: {"name": "靈品靈水0988", "kind": "靈水", "rarity": "靈品", "buy": 6926, "sell": 4986, "level": 4, "value": 21},
+    989: {"name": "玄品靈果0989", "kind": "靈果", "rarity": "玄品", "buy": 6944, "sell": 4999, "level": 4, "value": 22},
+    990: {"name": "地品靈花0990", "kind": "靈花", "rarity": "地品", "buy": 6962, "sell": 5012, "level": 4, "value": 23},
+    991: {"name": "天品靈草0991", "kind": "靈草", "rarity": "天品", "buy": 6980, "sell": 5025, "level": 4, "value": 24},
+    992: {"name": "仙品丹藥0992", "kind": "丹藥", "rarity": "仙品", "buy": 6998, "sell": 5038, "level": 4, "value": 25},
+    993: {"name": "凡品礦石0993", "kind": "礦石", "rarity": "凡品", "buy": 7016, "sell": 5051, "level": 4, "value": 26},
+    994: {"name": "良品符籙0994", "kind": "符籙", "rarity": "良品", "buy": 7034, "sell": 5064, "level": 4, "value": 27},
+    995: {"name": "精品法寶材料0995", "kind": "法寶材料", "rarity": "精品", "buy": 7052, "sell": 5077, "level": 4, "value": 28},
+    996: {"name": "靈品妖獸材料0996", "kind": "妖獸材料", "rarity": "靈品", "buy": 7070, "sell": 5090, "level": 4, "value": 29},
+    997: {"name": "玄品靈木0997", "kind": "靈木", "rarity": "玄品", "buy": 7088, "sell": 5103, "level": 4, "value": 30},
+    998: {"name": "地品靈水0998", "kind": "靈水", "rarity": "地品", "buy": 7106, "sell": 5116, "level": 4, "value": 31},
+    999: {"name": "天品靈果0999", "kind": "靈果", "rarity": "天品", "buy": 7124, "sell": 5129, "level": 4, "value": 32},
+    1000: {"name": "仙品靈花1000", "kind": "靈花", "rarity": "仙品", "buy": 7142, "sell": 5142, "level": 4, "value": 33},
+    1001: {"name": "凡品靈草1001", "kind": "靈草", "rarity": "凡品", "buy": 7017, "sell": 5052, "level": 5, "value": 34},
+    1002: {"name": "良品丹藥1002", "kind": "丹藥", "rarity": "良品", "buy": 7035, "sell": 5065, "level": 5, "value": 35},
+    1003: {"name": "精品礦石1003", "kind": "礦石", "rarity": "精品", "buy": 7053, "sell": 5078, "level": 5, "value": 36},
+    1004: {"name": "靈品符籙1004", "kind": "符籙", "rarity": "靈品", "buy": 7071, "sell": 5091, "level": 5, "value": 37},
+    1005: {"name": "玄品法寶材料1005", "kind": "法寶材料", "rarity": "玄品", "buy": 7089, "sell": 5104, "level": 5, "value": 38},
+    1006: {"name": "地品妖獸材料1006", "kind": "妖獸材料", "rarity": "地品", "buy": 7107, "sell": 5117, "level": 5, "value": 39},
+    1007: {"name": "天品靈木1007", "kind": "靈木", "rarity": "天品", "buy": 7125, "sell": 5130, "level": 5, "value": 40},
+    1008: {"name": "仙品靈水1008", "kind": "靈水", "rarity": "仙品", "buy": 7143, "sell": 5142, "level": 5, "value": 41},
+    1009: {"name": "凡品靈果1009", "kind": "靈果", "rarity": "凡品", "buy": 7161, "sell": 5155, "level": 5, "value": 42},
+    1010: {"name": "良品靈花1010", "kind": "靈花", "rarity": "良品", "buy": 7179, "sell": 5168, "level": 5, "value": 43},
+    1011: {"name": "精品靈草1011", "kind": "靈草", "rarity": "精品", "buy": 7197, "sell": 5181, "level": 5, "value": 44},
+    1012: {"name": "靈品丹藥1012", "kind": "丹藥", "rarity": "靈品", "buy": 7215, "sell": 5194, "level": 5, "value": 45},
+    1013: {"name": "玄品礦石1013", "kind": "礦石", "rarity": "玄品", "buy": 7233, "sell": 5207, "level": 5, "value": 46},
+    1014: {"name": "地品符籙1014", "kind": "符籙", "rarity": "地品", "buy": 7108, "sell": 5117, "level": 5, "value": 47},
+    1015: {"name": "天品法寶材料1015", "kind": "法寶材料", "rarity": "天品", "buy": 7126, "sell": 5130, "level": 5, "value": 48},
+    1016: {"name": "仙品妖獸材料1016", "kind": "妖獸材料", "rarity": "仙品", "buy": 7144, "sell": 5143, "level": 5, "value": 49},
+    1017: {"name": "凡品靈木1017", "kind": "靈木", "rarity": "凡品", "buy": 7162, "sell": 5156, "level": 5, "value": 50},
+    1018: {"name": "良品靈水1018", "kind": "靈水", "rarity": "良品", "buy": 7180, "sell": 5169, "level": 5, "value": 51},
+    1019: {"name": "精品靈果1019", "kind": "靈果", "rarity": "精品", "buy": 7198, "sell": 5182, "level": 5, "value": 52},
+    1020: {"name": "靈品靈花1020", "kind": "靈花", "rarity": "靈品", "buy": 7216, "sell": 5195, "level": 5, "value": 53},
+    1021: {"name": "玄品靈草1021", "kind": "靈草", "rarity": "玄品", "buy": 7234, "sell": 5208, "level": 5, "value": 54},
+    1022: {"name": "地品丹藥1022", "kind": "丹藥", "rarity": "地品", "buy": 7252, "sell": 5221, "level": 5, "value": 55},
+    1023: {"name": "天品礦石1023", "kind": "礦石", "rarity": "天品", "buy": 7270, "sell": 5234, "level": 5, "value": 56},
+    1024: {"name": "仙品符籙1024", "kind": "符籙", "rarity": "仙品", "buy": 7288, "sell": 5247, "level": 5, "value": 57},
+    1025: {"name": "凡品法寶材料1025", "kind": "法寶材料", "rarity": "凡品", "buy": 7306, "sell": 5260, "level": 5, "value": 58},
+    1026: {"name": "良品妖獸材料1026", "kind": "妖獸材料", "rarity": "良品", "buy": 7324, "sell": 5273, "level": 5, "value": 59},
+    1027: {"name": "精品靈木1027", "kind": "靈木", "rarity": "精品", "buy": 7199, "sell": 5183, "level": 5, "value": 60},
+    1028: {"name": "靈品靈水1028", "kind": "靈水", "rarity": "靈品", "buy": 7217, "sell": 5196, "level": 5, "value": 61},
+    1029: {"name": "玄品靈果1029", "kind": "靈果", "rarity": "玄品", "buy": 7235, "sell": 5209, "level": 5, "value": 62},
+    1030: {"name": "地品靈花1030", "kind": "靈花", "rarity": "地品", "buy": 7253, "sell": 5222, "level": 5, "value": 63},
+    1031: {"name": "天品靈草1031", "kind": "靈草", "rarity": "天品", "buy": 7271, "sell": 5235, "level": 5, "value": 64},
+    1032: {"name": "仙品丹藥1032", "kind": "丹藥", "rarity": "仙品", "buy": 7289, "sell": 5248, "level": 5, "value": 65},
+    1033: {"name": "凡品礦石1033", "kind": "礦石", "rarity": "凡品", "buy": 7307, "sell": 5261, "level": 5, "value": 66},
+    1034: {"name": "良品符籙1034", "kind": "符籙", "rarity": "良品", "buy": 7325, "sell": 5274, "level": 5, "value": 67},
+    1035: {"name": "精品法寶材料1035", "kind": "法寶材料", "rarity": "精品", "buy": 7343, "sell": 5286, "level": 5, "value": 68},
+    1036: {"name": "靈品妖獸材料1036", "kind": "妖獸材料", "rarity": "靈品", "buy": 7361, "sell": 5299, "level": 5, "value": 69},
+    1037: {"name": "玄品靈木1037", "kind": "靈木", "rarity": "玄品", "buy": 7379, "sell": 5312, "level": 5, "value": 70},
+    1038: {"name": "地品靈水1038", "kind": "靈水", "rarity": "地品", "buy": 7397, "sell": 5325, "level": 5, "value": 71},
+    1039: {"name": "天品靈果1039", "kind": "靈果", "rarity": "天品", "buy": 7415, "sell": 5338, "level": 5, "value": 72},
+    1040: {"name": "仙品靈花1040", "kind": "靈花", "rarity": "仙品", "buy": 7290, "sell": 5248, "level": 5, "value": 73},
+    1041: {"name": "凡品靈草1041", "kind": "靈草", "rarity": "凡品", "buy": 7308, "sell": 5261, "level": 5, "value": 74},
+    1042: {"name": "良品丹藥1042", "kind": "丹藥", "rarity": "良品", "buy": 7326, "sell": 5274, "level": 5, "value": 75},
+    1043: {"name": "精品礦石1043", "kind": "礦石", "rarity": "精品", "buy": 7344, "sell": 5287, "level": 5, "value": 76},
+    1044: {"name": "靈品符籙1044", "kind": "符籙", "rarity": "靈品", "buy": 7362, "sell": 5300, "level": 5, "value": 77},
+    1045: {"name": "玄品法寶材料1045", "kind": "法寶材料", "rarity": "玄品", "buy": 7380, "sell": 5313, "level": 5, "value": 78},
+    1046: {"name": "地品妖獸材料1046", "kind": "妖獸材料", "rarity": "地品", "buy": 7398, "sell": 5326, "level": 5, "value": 79},
+    1047: {"name": "天品靈木1047", "kind": "靈木", "rarity": "天品", "buy": 7416, "sell": 5339, "level": 5, "value": 80},
+    1048: {"name": "仙品靈水1048", "kind": "靈水", "rarity": "仙品", "buy": 7434, "sell": 5352, "level": 5, "value": 81},
+    1049: {"name": "凡品靈果1049", "kind": "靈果", "rarity": "凡品", "buy": 7452, "sell": 5365, "level": 5, "value": 82},
+    1050: {"name": "良品靈花1050", "kind": "靈花", "rarity": "良品", "buy": 7470, "sell": 5378, "level": 5, "value": 83},
+    1051: {"name": "精品靈草1051", "kind": "靈草", "rarity": "精品", "buy": 7488, "sell": 5391, "level": 5, "value": 84},
+    1052: {"name": "靈品丹藥1052", "kind": "丹藥", "rarity": "靈品", "buy": 7506, "sell": 5404, "level": 5, "value": 85},
+    1053: {"name": "玄品礦石1053", "kind": "礦石", "rarity": "玄品", "buy": 7381, "sell": 5314, "level": 5, "value": 86},
+    1054: {"name": "地品符籙1054", "kind": "符籙", "rarity": "地品", "buy": 7399, "sell": 5327, "level": 5, "value": 87},
+    1055: {"name": "天品法寶材料1055", "kind": "法寶材料", "rarity": "天品", "buy": 7417, "sell": 5340, "level": 5, "value": 88},
+    1056: {"name": "仙品妖獸材料1056", "kind": "妖獸材料", "rarity": "仙品", "buy": 7435, "sell": 5353, "level": 5, "value": 89},
+    1057: {"name": "凡品靈木1057", "kind": "靈木", "rarity": "凡品", "buy": 7453, "sell": 5366, "level": 5, "value": 90},
+    1058: {"name": "良品靈水1058", "kind": "靈水", "rarity": "良品", "buy": 7471, "sell": 5379, "level": 5, "value": 91},
+    1059: {"name": "精品靈果1059", "kind": "靈果", "rarity": "精品", "buy": 7489, "sell": 5392, "level": 5, "value": 92},
+    1060: {"name": "靈品靈花1060", "kind": "靈花", "rarity": "靈品", "buy": 7507, "sell": 5405, "level": 5, "value": 93},
+    1061: {"name": "玄品靈草1061", "kind": "靈草", "rarity": "玄品", "buy": 7525, "sell": 5418, "level": 5, "value": 94},
+    1062: {"name": "地品丹藥1062", "kind": "丹藥", "rarity": "地品", "buy": 7543, "sell": 5430, "level": 5, "value": 95},
+    1063: {"name": "天品礦石1063", "kind": "礦石", "rarity": "天品", "buy": 7561, "sell": 5443, "level": 5, "value": 96},
+    1064: {"name": "仙品符籙1064", "kind": "符籙", "rarity": "仙品", "buy": 7579, "sell": 5456, "level": 5, "value": 97},
+    1065: {"name": "凡品法寶材料1065", "kind": "法寶材料", "rarity": "凡品", "buy": 7597, "sell": 5469, "level": 5, "value": 98},
+    1066: {"name": "良品妖獸材料1066", "kind": "妖獸材料", "rarity": "良品", "buy": 7472, "sell": 5379, "level": 5, "value": 99},
+    1067: {"name": "精品靈木1067", "kind": "靈木", "rarity": "精品", "buy": 7490, "sell": 5392, "level": 5, "value": 3},
+    1068: {"name": "靈品靈水1068", "kind": "靈水", "rarity": "靈品", "buy": 7508, "sell": 5405, "level": 5, "value": 4},
+    1069: {"name": "玄品靈果1069", "kind": "靈果", "rarity": "玄品", "buy": 7526, "sell": 5418, "level": 5, "value": 5},
+    1070: {"name": "地品靈花1070", "kind": "靈花", "rarity": "地品", "buy": 7544, "sell": 5431, "level": 5, "value": 6},
+    1071: {"name": "天品靈草1071", "kind": "靈草", "rarity": "天品", "buy": 7562, "sell": 5444, "level": 5, "value": 7},
+    1072: {"name": "仙品丹藥1072", "kind": "丹藥", "rarity": "仙品", "buy": 7580, "sell": 5457, "level": 5, "value": 8},
+    1073: {"name": "凡品礦石1073", "kind": "礦石", "rarity": "凡品", "buy": 7598, "sell": 5470, "level": 5, "value": 9},
+    1074: {"name": "良品符籙1074", "kind": "符籙", "rarity": "良品", "buy": 7616, "sell": 5483, "level": 5, "value": 10},
+    1075: {"name": "精品法寶材料1075", "kind": "法寶材料", "rarity": "精品", "buy": 7634, "sell": 5496, "level": 5, "value": 11},
+    1076: {"name": "靈品妖獸材料1076", "kind": "妖獸材料", "rarity": "靈品", "buy": 7652, "sell": 5509, "level": 5, "value": 12},
+    1077: {"name": "玄品靈木1077", "kind": "靈木", "rarity": "玄品", "buy": 7670, "sell": 5522, "level": 5, "value": 13},
+    1078: {"name": "地品靈水1078", "kind": "靈水", "rarity": "地品", "buy": 7688, "sell": 5535, "level": 5, "value": 14},
+    1079: {"name": "天品靈果1079", "kind": "靈果", "rarity": "天品", "buy": 7563, "sell": 5445, "level": 5, "value": 15},
+    1080: {"name": "仙品靈花1080", "kind": "靈花", "rarity": "仙品", "buy": 7581, "sell": 5458, "level": 5, "value": 16},
+    1081: {"name": "凡品靈草1081", "kind": "靈草", "rarity": "凡品", "buy": 7599, "sell": 5471, "level": 5, "value": 17},
+    1082: {"name": "良品丹藥1082", "kind": "丹藥", "rarity": "良品", "buy": 7617, "sell": 5484, "level": 5, "value": 18},
+    1083: {"name": "精品礦石1083", "kind": "礦石", "rarity": "精品", "buy": 7635, "sell": 5497, "level": 5, "value": 19},
+    1084: {"name": "靈品符籙1084", "kind": "符籙", "rarity": "靈品", "buy": 7653, "sell": 5510, "level": 5, "value": 20},
+    1085: {"name": "玄品法寶材料1085", "kind": "法寶材料", "rarity": "玄品", "buy": 7671, "sell": 5523, "level": 5, "value": 21},
+    1086: {"name": "地品妖獸材料1086", "kind": "妖獸材料", "rarity": "地品", "buy": 7689, "sell": 5536, "level": 5, "value": 22},
+    1087: {"name": "天品靈木1087", "kind": "靈木", "rarity": "天品", "buy": 7707, "sell": 5549, "level": 5, "value": 23},
+    1088: {"name": "仙品靈水1088", "kind": "靈水", "rarity": "仙品", "buy": 7725, "sell": 5562, "level": 5, "value": 24},
+    1089: {"name": "凡品靈果1089", "kind": "靈果", "rarity": "凡品", "buy": 7743, "sell": 5574, "level": 5, "value": 25},
+    1090: {"name": "良品靈花1090", "kind": "靈花", "rarity": "良品", "buy": 7761, "sell": 5587, "level": 5, "value": 26},
+    1091: {"name": "精品靈草1091", "kind": "靈草", "rarity": "精品", "buy": 7779, "sell": 5600, "level": 5, "value": 27},
+    1092: {"name": "靈品丹藥1092", "kind": "丹藥", "rarity": "靈品", "buy": 7654, "sell": 5510, "level": 5, "value": 28},
+    1093: {"name": "玄品礦石1093", "kind": "礦石", "rarity": "玄品", "buy": 7672, "sell": 5523, "level": 5, "value": 29},
+    1094: {"name": "地品符籙1094", "kind": "符籙", "rarity": "地品", "buy": 7690, "sell": 5536, "level": 5, "value": 30},
+    1095: {"name": "天品法寶材料1095", "kind": "法寶材料", "rarity": "天品", "buy": 7708, "sell": 5549, "level": 5, "value": 31},
+    1096: {"name": "仙品妖獸材料1096", "kind": "妖獸材料", "rarity": "仙品", "buy": 7726, "sell": 5562, "level": 5, "value": 32},
+    1097: {"name": "凡品靈木1097", "kind": "靈木", "rarity": "凡品", "buy": 7744, "sell": 5575, "level": 5, "value": 33},
+    1098: {"name": "良品靈水1098", "kind": "靈水", "rarity": "良品", "buy": 7762, "sell": 5588, "level": 5, "value": 34},
+    1099: {"name": "精品靈果1099", "kind": "靈果", "rarity": "精品", "buy": 7780, "sell": 5601, "level": 5, "value": 35},
+    1100: {"name": "靈品靈花1100", "kind": "靈花", "rarity": "靈品", "buy": 7798, "sell": 5614, "level": 5, "value": 36},
+    1101: {"name": "玄品靈草1101", "kind": "靈草", "rarity": "玄品", "buy": 7816, "sell": 5627, "level": 5, "value": 37},
+    1102: {"name": "地品丹藥1102", "kind": "丹藥", "rarity": "地品", "buy": 7834, "sell": 5640, "level": 5, "value": 38},
+    1103: {"name": "天品礦石1103", "kind": "礦石", "rarity": "天品", "buy": 7852, "sell": 5653, "level": 5, "value": 39},
+    1104: {"name": "仙品符籙1104", "kind": "符籙", "rarity": "仙品", "buy": 7870, "sell": 5666, "level": 5, "value": 40},
+    1105: {"name": "凡品法寶材料1105", "kind": "法寶材料", "rarity": "凡品", "buy": 7745, "sell": 5576, "level": 5, "value": 41},
+    1106: {"name": "良品妖獸材料1106", "kind": "妖獸材料", "rarity": "良品", "buy": 7763, "sell": 5589, "level": 5, "value": 42},
+    1107: {"name": "精品靈木1107", "kind": "靈木", "rarity": "精品", "buy": 7781, "sell": 5602, "level": 5, "value": 43},
+    1108: {"name": "靈品靈水1108", "kind": "靈水", "rarity": "靈品", "buy": 7799, "sell": 5615, "level": 5, "value": 44},
+    1109: {"name": "玄品靈果1109", "kind": "靈果", "rarity": "玄品", "buy": 7817, "sell": 5628, "level": 5, "value": 45},
+    1110: {"name": "地品靈花1110", "kind": "靈花", "rarity": "地品", "buy": 7835, "sell": 5641, "level": 5, "value": 46},
+    1111: {"name": "天品靈草1111", "kind": "靈草", "rarity": "天品", "buy": 7853, "sell": 5654, "level": 5, "value": 47},
+    1112: {"name": "仙品丹藥1112", "kind": "丹藥", "rarity": "仙品", "buy": 7871, "sell": 5667, "level": 5, "value": 48},
+    1113: {"name": "凡品礦石1113", "kind": "礦石", "rarity": "凡品", "buy": 7889, "sell": 5680, "level": 5, "value": 49},
+    1114: {"name": "良品符籙1114", "kind": "符籙", "rarity": "良品", "buy": 7907, "sell": 5693, "level": 5, "value": 50},
+    1115: {"name": "精品法寶材料1115", "kind": "法寶材料", "rarity": "精品", "buy": 7925, "sell": 5706, "level": 5, "value": 51},
+    1116: {"name": "靈品妖獸材料1116", "kind": "妖獸材料", "rarity": "靈品", "buy": 7943, "sell": 5718, "level": 5, "value": 52},
+    1117: {"name": "玄品靈木1117", "kind": "靈木", "rarity": "玄品", "buy": 7961, "sell": 5731, "level": 5, "value": 53},
+    1118: {"name": "地品靈水1118", "kind": "靈水", "rarity": "地品", "buy": 7836, "sell": 5641, "level": 5, "value": 54},
+    1119: {"name": "天品靈果1119", "kind": "靈果", "rarity": "天品", "buy": 7854, "sell": 5654, "level": 5, "value": 55},
+    1120: {"name": "仙品靈花1120", "kind": "靈花", "rarity": "仙品", "buy": 7872, "sell": 5667, "level": 5, "value": 56},
+    1121: {"name": "凡品靈草1121", "kind": "靈草", "rarity": "凡品", "buy": 7890, "sell": 5680, "level": 5, "value": 57},
+    1122: {"name": "良品丹藥1122", "kind": "丹藥", "rarity": "良品", "buy": 7908, "sell": 5693, "level": 5, "value": 58},
+    1123: {"name": "精品礦石1123", "kind": "礦石", "rarity": "精品", "buy": 7926, "sell": 5706, "level": 5, "value": 59},
+    1124: {"name": "靈品符籙1124", "kind": "符籙", "rarity": "靈品", "buy": 7944, "sell": 5719, "level": 5, "value": 60},
+    1125: {"name": "玄品法寶材料1125", "kind": "法寶材料", "rarity": "玄品", "buy": 7962, "sell": 5732, "level": 5, "value": 61},
+    1126: {"name": "地品妖獸材料1126", "kind": "妖獸材料", "rarity": "地品", "buy": 7980, "sell": 5745, "level": 5, "value": 62},
+    1127: {"name": "天品靈木1127", "kind": "靈木", "rarity": "天品", "buy": 7998, "sell": 5758, "level": 5, "value": 63},
+    1128: {"name": "仙品靈水1128", "kind": "靈水", "rarity": "仙品", "buy": 8016, "sell": 5771, "level": 5, "value": 64},
+    1129: {"name": "凡品靈果1129", "kind": "靈果", "rarity": "凡品", "buy": 8034, "sell": 5784, "level": 5, "value": 65},
+    1130: {"name": "良品靈花1130", "kind": "靈花", "rarity": "良品", "buy": 8052, "sell": 5797, "level": 5, "value": 66},
+    1131: {"name": "精品靈草1131", "kind": "靈草", "rarity": "精品", "buy": 7927, "sell": 5707, "level": 5, "value": 67},
+    1132: {"name": "靈品丹藥1132", "kind": "丹藥", "rarity": "靈品", "buy": 7945, "sell": 5720, "level": 5, "value": 68},
+    1133: {"name": "玄品礦石1133", "kind": "礦石", "rarity": "玄品", "buy": 7963, "sell": 5733, "level": 5, "value": 69},
+    1134: {"name": "地品符籙1134", "kind": "符籙", "rarity": "地品", "buy": 7981, "sell": 5746, "level": 5, "value": 70},
+    1135: {"name": "天品法寶材料1135", "kind": "法寶材料", "rarity": "天品", "buy": 7999, "sell": 5759, "level": 5, "value": 71},
+    1136: {"name": "仙品妖獸材料1136", "kind": "妖獸材料", "rarity": "仙品", "buy": 8017, "sell": 5772, "level": 5, "value": 72},
+    1137: {"name": "凡品靈木1137", "kind": "靈木", "rarity": "凡品", "buy": 8035, "sell": 5785, "level": 5, "value": 73},
+    1138: {"name": "良品靈水1138", "kind": "靈水", "rarity": "良品", "buy": 8053, "sell": 5798, "level": 5, "value": 74},
+    1139: {"name": "精品靈果1139", "kind": "靈果", "rarity": "精品", "buy": 8071, "sell": 5811, "level": 5, "value": 75},
+    1140: {"name": "靈品靈花1140", "kind": "靈花", "rarity": "靈品", "buy": 8089, "sell": 5824, "level": 5, "value": 76},
+    1141: {"name": "玄品靈草1141", "kind": "靈草", "rarity": "玄品", "buy": 8107, "sell": 5837, "level": 5, "value": 77},
+    1142: {"name": "地品丹藥1142", "kind": "丹藥", "rarity": "地品", "buy": 8125, "sell": 5850, "level": 5, "value": 78},
+    1143: {"name": "天品礦石1143", "kind": "礦石", "rarity": "天品", "buy": 8143, "sell": 5862, "level": 5, "value": 79},
+    1144: {"name": "仙品符籙1144", "kind": "符籙", "rarity": "仙品", "buy": 8018, "sell": 5772, "level": 5, "value": 80},
+    1145: {"name": "凡品法寶材料1145", "kind": "法寶材料", "rarity": "凡品", "buy": 8036, "sell": 5785, "level": 5, "value": 81},
+    1146: {"name": "良品妖獸材料1146", "kind": "妖獸材料", "rarity": "良品", "buy": 8054, "sell": 5798, "level": 5, "value": 82},
+    1147: {"name": "精品靈木1147", "kind": "靈木", "rarity": "精品", "buy": 8072, "sell": 5811, "level": 5, "value": 83},
+    1148: {"name": "靈品靈水1148", "kind": "靈水", "rarity": "靈品", "buy": 8090, "sell": 5824, "level": 5, "value": 84},
+    1149: {"name": "玄品靈果1149", "kind": "靈果", "rarity": "玄品", "buy": 8108, "sell": 5837, "level": 5, "value": 85},
+    1150: {"name": "地品靈花1150", "kind": "靈花", "rarity": "地品", "buy": 8126, "sell": 5850, "level": 5, "value": 86},
+    1151: {"name": "天品靈草1151", "kind": "靈草", "rarity": "天品", "buy": 8144, "sell": 5863, "level": 5, "value": 87},
+    1152: {"name": "仙品丹藥1152", "kind": "丹藥", "rarity": "仙品", "buy": 8162, "sell": 5876, "level": 5, "value": 88},
+    1153: {"name": "凡品礦石1153", "kind": "礦石", "rarity": "凡品", "buy": 8180, "sell": 5889, "level": 5, "value": 89},
+    1154: {"name": "良品符籙1154", "kind": "符籙", "rarity": "良品", "buy": 8198, "sell": 5902, "level": 5, "value": 90},
+    1155: {"name": "精品法寶材料1155", "kind": "法寶材料", "rarity": "精品", "buy": 8216, "sell": 5915, "level": 5, "value": 91},
+    1156: {"name": "靈品妖獸材料1156", "kind": "妖獸材料", "rarity": "靈品", "buy": 8234, "sell": 5928, "level": 5, "value": 92},
+    1157: {"name": "玄品靈木1157", "kind": "靈木", "rarity": "玄品", "buy": 8109, "sell": 5838, "level": 5, "value": 93},
+    1158: {"name": "地品靈水1158", "kind": "靈水", "rarity": "地品", "buy": 8127, "sell": 5851, "level": 5, "value": 94},
+    1159: {"name": "天品靈果1159", "kind": "靈果", "rarity": "天品", "buy": 8145, "sell": 5864, "level": 5, "value": 95},
+    1160: {"name": "仙品靈花1160", "kind": "靈花", "rarity": "仙品", "buy": 8163, "sell": 5877, "level": 5, "value": 96},
+    1161: {"name": "凡品靈草1161", "kind": "靈草", "rarity": "凡品", "buy": 8181, "sell": 5890, "level": 5, "value": 97},
+    1162: {"name": "良品丹藥1162", "kind": "丹藥", "rarity": "良品", "buy": 8199, "sell": 5903, "level": 5, "value": 98},
+    1163: {"name": "精品礦石1163", "kind": "礦石", "rarity": "精品", "buy": 8217, "sell": 5916, "level": 5, "value": 99},
+    1164: {"name": "靈品符籙1164", "kind": "符籙", "rarity": "靈品", "buy": 8235, "sell": 5929, "level": 5, "value": 3},
+    1165: {"name": "玄品法寶材料1165", "kind": "法寶材料", "rarity": "玄品", "buy": 8253, "sell": 5942, "level": 5, "value": 4},
+    1166: {"name": "地品妖獸材料1166", "kind": "妖獸材料", "rarity": "地品", "buy": 8271, "sell": 5955, "level": 5, "value": 5},
+    1167: {"name": "天品靈木1167", "kind": "靈木", "rarity": "天品", "buy": 8289, "sell": 5968, "level": 5, "value": 6},
+    1168: {"name": "仙品靈水1168", "kind": "靈水", "rarity": "仙品", "buy": 8307, "sell": 5981, "level": 5, "value": 7},
+    1169: {"name": "凡品靈果1169", "kind": "靈果", "rarity": "凡品", "buy": 8325, "sell": 5994, "level": 5, "value": 8},
+    1170: {"name": "良品靈花1170", "kind": "靈花", "rarity": "良品", "buy": 8200, "sell": 5904, "level": 5, "value": 9},
+    1171: {"name": "精品靈草1171", "kind": "靈草", "rarity": "精品", "buy": 8218, "sell": 5916, "level": 5, "value": 10},
+    1172: {"name": "靈品丹藥1172", "kind": "丹藥", "rarity": "靈品", "buy": 8236, "sell": 5929, "level": 5, "value": 11},
+    1173: {"name": "玄品礦石1173", "kind": "礦石", "rarity": "玄品", "buy": 8254, "sell": 5942, "level": 5, "value": 12},
+    1174: {"name": "地品符籙1174", "kind": "符籙", "rarity": "地品", "buy": 8272, "sell": 5955, "level": 5, "value": 13},
+    1175: {"name": "天品法寶材料1175", "kind": "法寶材料", "rarity": "天品", "buy": 8290, "sell": 5968, "level": 5, "value": 14},
+    1176: {"name": "仙品妖獸材料1176", "kind": "妖獸材料", "rarity": "仙品", "buy": 8308, "sell": 5981, "level": 5, "value": 15},
+    1177: {"name": "凡品靈木1177", "kind": "靈木", "rarity": "凡品", "buy": 8326, "sell": 5994, "level": 5, "value": 16},
+    1178: {"name": "良品靈水1178", "kind": "靈水", "rarity": "良品", "buy": 8344, "sell": 6007, "level": 5, "value": 17},
+    1179: {"name": "精品靈果1179", "kind": "靈果", "rarity": "精品", "buy": 8362, "sell": 6020, "level": 5, "value": 18},
+    1180: {"name": "靈品靈花1180", "kind": "靈花", "rarity": "靈品", "buy": 8380, "sell": 6033, "level": 5, "value": 19},
+    1181: {"name": "玄品靈草1181", "kind": "靈草", "rarity": "玄品", "buy": 8398, "sell": 6046, "level": 5, "value": 20},
+    1182: {"name": "地品丹藥1182", "kind": "丹藥", "rarity": "地品", "buy": 8416, "sell": 6059, "level": 5, "value": 21},
+    1183: {"name": "天品礦石1183", "kind": "礦石", "rarity": "天品", "buy": 8291, "sell": 5969, "level": 5, "value": 22},
+    1184: {"name": "仙品符籙1184", "kind": "符籙", "rarity": "仙品", "buy": 8309, "sell": 5982, "level": 5, "value": 23},
+    1185: {"name": "凡品法寶材料1185", "kind": "法寶材料", "rarity": "凡品", "buy": 8327, "sell": 5995, "level": 5, "value": 24},
+    1186: {"name": "良品妖獸材料1186", "kind": "妖獸材料", "rarity": "良品", "buy": 8345, "sell": 6008, "level": 5, "value": 25},
+    1187: {"name": "精品靈木1187", "kind": "靈木", "rarity": "精品", "buy": 8363, "sell": 6021, "level": 5, "value": 26},
+    1188: {"name": "靈品靈水1188", "kind": "靈水", "rarity": "靈品", "buy": 8381, "sell": 6034, "level": 5, "value": 27},
+    1189: {"name": "玄品靈果1189", "kind": "靈果", "rarity": "玄品", "buy": 8399, "sell": 6047, "level": 5, "value": 28},
+    1190: {"name": "地品靈花1190", "kind": "靈花", "rarity": "地品", "buy": 8417, "sell": 6060, "level": 5, "value": 29},
+    1191: {"name": "天品靈草1191", "kind": "靈草", "rarity": "天品", "buy": 8435, "sell": 6073, "level": 5, "value": 30},
+    1192: {"name": "仙品丹藥1192", "kind": "丹藥", "rarity": "仙品", "buy": 8453, "sell": 6086, "level": 5, "value": 31},
+    1193: {"name": "凡品礦石1193", "kind": "礦石", "rarity": "凡品", "buy": 8471, "sell": 6099, "level": 5, "value": 32},
+    1194: {"name": "良品符籙1194", "kind": "符籙", "rarity": "良品", "buy": 8489, "sell": 6112, "level": 5, "value": 33},
+    1195: {"name": "精品法寶材料1195", "kind": "法寶材料", "rarity": "精品", "buy": 8507, "sell": 6125, "level": 5, "value": 34},
+    1196: {"name": "靈品妖獸材料1196", "kind": "妖獸材料", "rarity": "靈品", "buy": 8382, "sell": 6035, "level": 5, "value": 35},
+    1197: {"name": "玄品靈木1197", "kind": "靈木", "rarity": "玄品", "buy": 8400, "sell": 6048, "level": 5, "value": 36},
+    1198: {"name": "地品靈水1198", "kind": "靈水", "rarity": "地品", "buy": 8418, "sell": 6060, "level": 5, "value": 37},
+    1199: {"name": "天品靈果1199", "kind": "靈果", "rarity": "天品", "buy": 8436, "sell": 6073, "level": 5, "value": 38},
+    1200: {"name": "仙品靈花1200", "kind": "靈花", "rarity": "仙品", "buy": 8454, "sell": 6086, "level": 5, "value": 39},
+    1201: {"name": "凡品靈草1201", "kind": "靈草", "rarity": "凡品", "buy": 8472, "sell": 6099, "level": 6, "value": 40},
+    1202: {"name": "良品丹藥1202", "kind": "丹藥", "rarity": "良品", "buy": 8490, "sell": 6112, "level": 6, "value": 41},
+    1203: {"name": "精品礦石1203", "kind": "礦石", "rarity": "精品", "buy": 8508, "sell": 6125, "level": 6, "value": 42},
+    1204: {"name": "靈品符籙1204", "kind": "符籙", "rarity": "靈品", "buy": 8526, "sell": 6138, "level": 6, "value": 43},
+    1205: {"name": "玄品法寶材料1205", "kind": "法寶材料", "rarity": "玄品", "buy": 8544, "sell": 6151, "level": 6, "value": 44},
+    1206: {"name": "地品妖獸材料1206", "kind": "妖獸材料", "rarity": "地品", "buy": 8562, "sell": 6164, "level": 6, "value": 45},
+    1207: {"name": "天品靈木1207", "kind": "靈木", "rarity": "天品", "buy": 8580, "sell": 6177, "level": 6, "value": 46},
+    1208: {"name": "仙品靈水1208", "kind": "靈水", "rarity": "仙品", "buy": 8598, "sell": 6190, "level": 6, "value": 47},
+    1209: {"name": "凡品靈果1209", "kind": "靈果", "rarity": "凡品", "buy": 8473, "sell": 6100, "level": 6, "value": 48},
+    1210: {"name": "良品靈花1210", "kind": "靈花", "rarity": "良品", "buy": 8491, "sell": 6113, "level": 6, "value": 49},
+    1211: {"name": "精品靈草1211", "kind": "靈草", "rarity": "精品", "buy": 8509, "sell": 6126, "level": 6, "value": 50},
+    1212: {"name": "靈品丹藥1212", "kind": "丹藥", "rarity": "靈品", "buy": 8527, "sell": 6139, "level": 6, "value": 51},
+    1213: {"name": "玄品礦石1213", "kind": "礦石", "rarity": "玄品", "buy": 8545, "sell": 6152, "level": 6, "value": 52},
+    1214: {"name": "地品符籙1214", "kind": "符籙", "rarity": "地品", "buy": 8563, "sell": 6165, "level": 6, "value": 53},
+    1215: {"name": "天品法寶材料1215", "kind": "法寶材料", "rarity": "天品", "buy": 8581, "sell": 6178, "level": 6, "value": 54},
+    1216: {"name": "仙品妖獸材料1216", "kind": "妖獸材料", "rarity": "仙品", "buy": 8599, "sell": 6191, "level": 6, "value": 55},
+    1217: {"name": "凡品靈木1217", "kind": "靈木", "rarity": "凡品", "buy": 8617, "sell": 6204, "level": 6, "value": 56},
+    1218: {"name": "良品靈水1218", "kind": "靈水", "rarity": "良品", "buy": 8635, "sell": 6217, "level": 6, "value": 57},
+    1219: {"name": "精品靈果1219", "kind": "靈果", "rarity": "精品", "buy": 8653, "sell": 6230, "level": 6, "value": 58},
+    1220: {"name": "靈品靈花1220", "kind": "靈花", "rarity": "靈品", "buy": 8671, "sell": 6243, "level": 6, "value": 59},
+    1221: {"name": "玄品靈草1221", "kind": "靈草", "rarity": "玄品", "buy": 8689, "sell": 6256, "level": 6, "value": 60},
+    1222: {"name": "地品丹藥1222", "kind": "丹藥", "rarity": "地品", "buy": 8564, "sell": 6166, "level": 6, "value": 61},
+    1223: {"name": "天品礦石1223", "kind": "礦石", "rarity": "天品", "buy": 8582, "sell": 6179, "level": 6, "value": 62},
+    1224: {"name": "仙品符籙1224", "kind": "符籙", "rarity": "仙品", "buy": 8600, "sell": 6192, "level": 6, "value": 63},
+    1225: {"name": "凡品法寶材料1225", "kind": "法寶材料", "rarity": "凡品", "buy": 8618, "sell": 6204, "level": 6, "value": 64},
+    1226: {"name": "良品妖獸材料1226", "kind": "妖獸材料", "rarity": "良品", "buy": 8636, "sell": 6217, "level": 6, "value": 65},
+    1227: {"name": "精品靈木1227", "kind": "靈木", "rarity": "精品", "buy": 8654, "sell": 6230, "level": 6, "value": 66},
+    1228: {"name": "靈品靈水1228", "kind": "靈水", "rarity": "靈品", "buy": 8672, "sell": 6243, "level": 6, "value": 67},
+    1229: {"name": "玄品靈果1229", "kind": "靈果", "rarity": "玄品", "buy": 8690, "sell": 6256, "level": 6, "value": 68},
+    1230: {"name": "地品靈花1230", "kind": "靈花", "rarity": "地品", "buy": 8708, "sell": 6269, "level": 6, "value": 69},
+    1231: {"name": "天品靈草1231", "kind": "靈草", "rarity": "天品", "buy": 8726, "sell": 6282, "level": 6, "value": 70},
+    1232: {"name": "仙品丹藥1232", "kind": "丹藥", "rarity": "仙品", "buy": 8744, "sell": 6295, "level": 6, "value": 71},
+    1233: {"name": "凡品礦石1233", "kind": "礦石", "rarity": "凡品", "buy": 8762, "sell": 6308, "level": 6, "value": 72},
+    1234: {"name": "良品符籙1234", "kind": "符籙", "rarity": "良品", "buy": 8780, "sell": 6321, "level": 6, "value": 73},
+    1235: {"name": "精品法寶材料1235", "kind": "法寶材料", "rarity": "精品", "buy": 8655, "sell": 6231, "level": 6, "value": 74},
+    1236: {"name": "靈品妖獸材料1236", "kind": "妖獸材料", "rarity": "靈品", "buy": 8673, "sell": 6244, "level": 6, "value": 75},
+    1237: {"name": "玄品靈木1237", "kind": "靈木", "rarity": "玄品", "buy": 8691, "sell": 6257, "level": 6, "value": 76},
+    1238: {"name": "地品靈水1238", "kind": "靈水", "rarity": "地品", "buy": 8709, "sell": 6270, "level": 6, "value": 77},
+    1239: {"name": "天品靈果1239", "kind": "靈果", "rarity": "天品", "buy": 8727, "sell": 6283, "level": 6, "value": 78},
+    1240: {"name": "仙品靈花1240", "kind": "靈花", "rarity": "仙品", "buy": 8745, "sell": 6296, "level": 6, "value": 79},
+    1241: {"name": "凡品靈草1241", "kind": "靈草", "rarity": "凡品", "buy": 8763, "sell": 6309, "level": 6, "value": 80},
+    1242: {"name": "良品丹藥1242", "kind": "丹藥", "rarity": "良品", "buy": 8781, "sell": 6322, "level": 6, "value": 81},
+    1243: {"name": "精品礦石1243", "kind": "礦石", "rarity": "精品", "buy": 8799, "sell": 6335, "level": 6, "value": 82},
+    1244: {"name": "靈品符籙1244", "kind": "符籙", "rarity": "靈品", "buy": 8817, "sell": 6348, "level": 6, "value": 83},
+    1245: {"name": "玄品法寶材料1245", "kind": "法寶材料", "rarity": "玄品", "buy": 8835, "sell": 6361, "level": 6, "value": 84},
+    1246: {"name": "地品妖獸材料1246", "kind": "妖獸材料", "rarity": "地品", "buy": 8853, "sell": 6374, "level": 6, "value": 85},
+    1247: {"name": "天品靈木1247", "kind": "靈木", "rarity": "天品", "buy": 8871, "sell": 6387, "level": 6, "value": 86},
+    1248: {"name": "仙品靈水1248", "kind": "靈水", "rarity": "仙品", "buy": 8746, "sell": 6297, "level": 6, "value": 87},
+    1249: {"name": "凡品靈果1249", "kind": "靈果", "rarity": "凡品", "buy": 8764, "sell": 6310, "level": 6, "value": 88},
+    1250: {"name": "良品靈花1250", "kind": "靈花", "rarity": "良品", "buy": 8782, "sell": 6323, "level": 6, "value": 89},
+    1251: {"name": "精品靈草1251", "kind": "靈草", "rarity": "精品", "buy": 8800, "sell": 6336, "level": 6, "value": 90},
+    1252: {"name": "靈品丹藥1252", "kind": "丹藥", "rarity": "靈品", "buy": 8818, "sell": 6348, "level": 6, "value": 91},
+    1253: {"name": "玄品礦石1253", "kind": "礦石", "rarity": "玄品", "buy": 8836, "sell": 6361, "level": 6, "value": 92},
+    1254: {"name": "地品符籙1254", "kind": "符籙", "rarity": "地品", "buy": 8854, "sell": 6374, "level": 6, "value": 93},
+    1255: {"name": "天品法寶材料1255", "kind": "法寶材料", "rarity": "天品", "buy": 8872, "sell": 6387, "level": 6, "value": 94},
+    1256: {"name": "仙品妖獸材料1256", "kind": "妖獸材料", "rarity": "仙品", "buy": 8890, "sell": 6400, "level": 6, "value": 95},
+    1257: {"name": "凡品靈木1257", "kind": "靈木", "rarity": "凡品", "buy": 8908, "sell": 6413, "level": 6, "value": 96},
+    1258: {"name": "良品靈水1258", "kind": "靈水", "rarity": "良品", "buy": 8926, "sell": 6426, "level": 6, "value": 97},
+    1259: {"name": "精品靈果1259", "kind": "靈果", "rarity": "精品", "buy": 8944, "sell": 6439, "level": 6, "value": 98},
+    1260: {"name": "靈品靈花1260", "kind": "靈花", "rarity": "靈品", "buy": 8962, "sell": 6452, "level": 6, "value": 99},
+    1261: {"name": "玄品靈草1261", "kind": "靈草", "rarity": "玄品", "buy": 8837, "sell": 6362, "level": 6, "value": 3},
+    1262: {"name": "地品丹藥1262", "kind": "丹藥", "rarity": "地品", "buy": 8855, "sell": 6375, "level": 6, "value": 4},
+    1263: {"name": "天品礦石1263", "kind": "礦石", "rarity": "天品", "buy": 8873, "sell": 6388, "level": 6, "value": 5},
+    1264: {"name": "仙品符籙1264", "kind": "符籙", "rarity": "仙品", "buy": 8891, "sell": 6401, "level": 6, "value": 6},
+    1265: {"name": "凡品法寶材料1265", "kind": "法寶材料", "rarity": "凡品", "buy": 8909, "sell": 6414, "level": 6, "value": 7},
+    1266: {"name": "良品妖獸材料1266", "kind": "妖獸材料", "rarity": "良品", "buy": 8927, "sell": 6427, "level": 6, "value": 8},
+    1267: {"name": "精品靈木1267", "kind": "靈木", "rarity": "精品", "buy": 8945, "sell": 6440, "level": 6, "value": 9},
+    1268: {"name": "靈品靈水1268", "kind": "靈水", "rarity": "靈品", "buy": 8963, "sell": 6453, "level": 6, "value": 10},
+    1269: {"name": "玄品靈果1269", "kind": "靈果", "rarity": "玄品", "buy": 8981, "sell": 6466, "level": 6, "value": 11},
+    1270: {"name": "地品靈花1270", "kind": "靈花", "rarity": "地品", "buy": 8999, "sell": 6479, "level": 6, "value": 12},
+    1271: {"name": "天品靈草1271", "kind": "靈草", "rarity": "天品", "buy": 9017, "sell": 6492, "level": 6, "value": 13},
+    1272: {"name": "仙品丹藥1272", "kind": "丹藥", "rarity": "仙品", "buy": 9035, "sell": 6505, "level": 6, "value": 14},
+    1273: {"name": "凡品礦石1273", "kind": "礦石", "rarity": "凡品", "buy": 9053, "sell": 6518, "level": 6, "value": 15},
+    1274: {"name": "良品符籙1274", "kind": "符籙", "rarity": "良品", "buy": 8928, "sell": 6428, "level": 6, "value": 16},
+    1275: {"name": "精品法寶材料1275", "kind": "法寶材料", "rarity": "精品", "buy": 8946, "sell": 6441, "level": 6, "value": 17},
+    1276: {"name": "靈品妖獸材料1276", "kind": "妖獸材料", "rarity": "靈品", "buy": 8964, "sell": 6454, "level": 6, "value": 18},
+    1277: {"name": "玄品靈木1277", "kind": "靈木", "rarity": "玄品", "buy": 8982, "sell": 6467, "level": 6, "value": 19},
+    1278: {"name": "地品靈水1278", "kind": "靈水", "rarity": "地品", "buy": 9000, "sell": 6480, "level": 6, "value": 20},
+    1279: {"name": "天品靈果1279", "kind": "靈果", "rarity": "天品", "buy": 9018, "sell": 6492, "level": 6, "value": 21},
+    1280: {"name": "仙品靈花1280", "kind": "靈花", "rarity": "仙品", "buy": 9036, "sell": 6505, "level": 6, "value": 22},
+    1281: {"name": "凡品靈草1281", "kind": "靈草", "rarity": "凡品", "buy": 9054, "sell": 6518, "level": 6, "value": 23},
+    1282: {"name": "良品丹藥1282", "kind": "丹藥", "rarity": "良品", "buy": 9072, "sell": 6531, "level": 6, "value": 24},
+    1283: {"name": "精品礦石1283", "kind": "礦石", "rarity": "精品", "buy": 9090, "sell": 6544, "level": 6, "value": 25},
+    1284: {"name": "靈品符籙1284", "kind": "符籙", "rarity": "靈品", "buy": 9108, "sell": 6557, "level": 6, "value": 26},
+    1285: {"name": "玄品法寶材料1285", "kind": "法寶材料", "rarity": "玄品", "buy": 9126, "sell": 6570, "level": 6, "value": 27},
+    1286: {"name": "地品妖獸材料1286", "kind": "妖獸材料", "rarity": "地品", "buy": 9144, "sell": 6583, "level": 6, "value": 28},
+    1287: {"name": "天品靈木1287", "kind": "靈木", "rarity": "天品", "buy": 9019, "sell": 6493, "level": 6, "value": 29},
+    1288: {"name": "仙品靈水1288", "kind": "靈水", "rarity": "仙品", "buy": 9037, "sell": 6506, "level": 6, "value": 30},
+    1289: {"name": "凡品靈果1289", "kind": "靈果", "rarity": "凡品", "buy": 9055, "sell": 6519, "level": 6, "value": 31},
+    1290: {"name": "良品靈花1290", "kind": "靈花", "rarity": "良品", "buy": 9073, "sell": 6532, "level": 6, "value": 32},
+    1291: {"name": "精品靈草1291", "kind": "靈草", "rarity": "精品", "buy": 9091, "sell": 6545, "level": 6, "value": 33},
+    1292: {"name": "靈品丹藥1292", "kind": "丹藥", "rarity": "靈品", "buy": 9109, "sell": 6558, "level": 6, "value": 34},
+    1293: {"name": "玄品礦石1293", "kind": "礦石", "rarity": "玄品", "buy": 9127, "sell": 6571, "level": 6, "value": 35},
+    1294: {"name": "地品符籙1294", "kind": "符籙", "rarity": "地品", "buy": 9145, "sell": 6584, "level": 6, "value": 36},
+    1295: {"name": "天品法寶材料1295", "kind": "法寶材料", "rarity": "天品", "buy": 9163, "sell": 6597, "level": 6, "value": 37},
+    1296: {"name": "仙品妖獸材料1296", "kind": "妖獸材料", "rarity": "仙品", "buy": 9181, "sell": 6610, "level": 6, "value": 38},
+    1297: {"name": "凡品靈木1297", "kind": "靈木", "rarity": "凡品", "buy": 9199, "sell": 6623, "level": 6, "value": 39},
+    1298: {"name": "良品靈水1298", "kind": "靈水", "rarity": "良品", "buy": 9217, "sell": 6636, "level": 6, "value": 40},
+    1299: {"name": "精品靈果1299", "kind": "靈果", "rarity": "精品", "buy": 9235, "sell": 6649, "level": 6, "value": 41},
+    1300: {"name": "靈品靈花1300", "kind": "靈花", "rarity": "靈品", "buy": 9110, "sell": 6559, "level": 6, "value": 42},
+    1301: {"name": "玄品靈草1301", "kind": "靈草", "rarity": "玄品", "buy": 9128, "sell": 6572, "level": 6, "value": 43},
+    1302: {"name": "地品丹藥1302", "kind": "丹藥", "rarity": "地品", "buy": 9146, "sell": 6585, "level": 6, "value": 44},
+    1303: {"name": "天品礦石1303", "kind": "礦石", "rarity": "天品", "buy": 9164, "sell": 6598, "level": 6, "value": 45},
+    1304: {"name": "仙品符籙1304", "kind": "符籙", "rarity": "仙品", "buy": 9182, "sell": 6611, "level": 6, "value": 46},
+    1305: {"name": "凡品法寶材料1305", "kind": "法寶材料", "rarity": "凡品", "buy": 9200, "sell": 6624, "level": 6, "value": 47},
+    1306: {"name": "良品妖獸材料1306", "kind": "妖獸材料", "rarity": "良品", "buy": 9218, "sell": 6636, "level": 6, "value": 48},
+    1307: {"name": "精品靈木1307", "kind": "靈木", "rarity": "精品", "buy": 9236, "sell": 6649, "level": 6, "value": 49},
+    1308: {"name": "靈品靈水1308", "kind": "靈水", "rarity": "靈品", "buy": 9254, "sell": 6662, "level": 6, "value": 50},
+    1309: {"name": "玄品靈果1309", "kind": "靈果", "rarity": "玄品", "buy": 9272, "sell": 6675, "level": 6, "value": 51},
+    1310: {"name": "地品靈花1310", "kind": "靈花", "rarity": "地品", "buy": 9290, "sell": 6688, "level": 6, "value": 52},
+    1311: {"name": "天品靈草1311", "kind": "靈草", "rarity": "天品", "buy": 9308, "sell": 6701, "level": 6, "value": 53},
+    1312: {"name": "仙品丹藥1312", "kind": "丹藥", "rarity": "仙品", "buy": 9326, "sell": 6714, "level": 6, "value": 54},
+    1313: {"name": "凡品礦石1313", "kind": "礦石", "rarity": "凡品", "buy": 9201, "sell": 6624, "level": 6, "value": 55},
+    1314: {"name": "良品符籙1314", "kind": "符籙", "rarity": "良品", "buy": 9219, "sell": 6637, "level": 6, "value": 56},
+    1315: {"name": "精品法寶材料1315", "kind": "法寶材料", "rarity": "精品", "buy": 9237, "sell": 6650, "level": 6, "value": 57},
+    1316: {"name": "靈品妖獸材料1316", "kind": "妖獸材料", "rarity": "靈品", "buy": 9255, "sell": 6663, "level": 6, "value": 58},
+    1317: {"name": "玄品靈木1317", "kind": "靈木", "rarity": "玄品", "buy": 9273, "sell": 6676, "level": 6, "value": 59},
+    1318: {"name": "地品靈水1318", "kind": "靈水", "rarity": "地品", "buy": 9291, "sell": 6689, "level": 6, "value": 60},
+    1319: {"name": "天品靈果1319", "kind": "靈果", "rarity": "天品", "buy": 9309, "sell": 6702, "level": 6, "value": 61},
+    1320: {"name": "仙品靈花1320", "kind": "靈花", "rarity": "仙品", "buy": 9327, "sell": 6715, "level": 6, "value": 62},
+    1321: {"name": "凡品靈草1321", "kind": "靈草", "rarity": "凡品", "buy": 9345, "sell": 6728, "level": 6, "value": 63},
+    1322: {"name": "良品丹藥1322", "kind": "丹藥", "rarity": "良品", "buy": 9363, "sell": 6741, "level": 6, "value": 64},
+    1323: {"name": "精品礦石1323", "kind": "礦石", "rarity": "精品", "buy": 9381, "sell": 6754, "level": 6, "value": 65},
+    1324: {"name": "靈品符籙1324", "kind": "符籙", "rarity": "靈品", "buy": 9399, "sell": 6767, "level": 6, "value": 66},
+    1325: {"name": "玄品法寶材料1325", "kind": "法寶材料", "rarity": "玄品", "buy": 9417, "sell": 6780, "level": 6, "value": 67},
+    1326: {"name": "地品妖獸材料1326", "kind": "妖獸材料", "rarity": "地品", "buy": 9292, "sell": 6690, "level": 6, "value": 68},
+    1327: {"name": "天品靈木1327", "kind": "靈木", "rarity": "天品", "buy": 9310, "sell": 6703, "level": 6, "value": 69},
+    1328: {"name": "仙品靈水1328", "kind": "靈水", "rarity": "仙品", "buy": 9328, "sell": 6716, "level": 6, "value": 70},
+    1329: {"name": "凡品靈果1329", "kind": "靈果", "rarity": "凡品", "buy": 9346, "sell": 6729, "level": 6, "value": 71},
+    1330: {"name": "良品靈花1330", "kind": "靈花", "rarity": "良品", "buy": 9364, "sell": 6742, "level": 6, "value": 72},
+    1331: {"name": "精品靈草1331", "kind": "靈草", "rarity": "精品", "buy": 9382, "sell": 6755, "level": 6, "value": 73},
+    1332: {"name": "靈品丹藥1332", "kind": "丹藥", "rarity": "靈品", "buy": 9400, "sell": 6768, "level": 6, "value": 74},
+    1333: {"name": "玄品礦石1333", "kind": "礦石", "rarity": "玄品", "buy": 9418, "sell": 6780, "level": 6, "value": 75},
+    1334: {"name": "地品符籙1334", "kind": "符籙", "rarity": "地品", "buy": 9436, "sell": 6793, "level": 6, "value": 76},
+    1335: {"name": "天品法寶材料1335", "kind": "法寶材料", "rarity": "天品", "buy": 9454, "sell": 6806, "level": 6, "value": 77},
+    1336: {"name": "仙品妖獸材料1336", "kind": "妖獸材料", "rarity": "仙品", "buy": 9472, "sell": 6819, "level": 6, "value": 78},
+    1337: {"name": "凡品靈木1337", "kind": "靈木", "rarity": "凡品", "buy": 9490, "sell": 6832, "level": 6, "value": 79},
+    1338: {"name": "良品靈水1338", "kind": "靈水", "rarity": "良品", "buy": 9508, "sell": 6845, "level": 6, "value": 80},
+    1339: {"name": "精品靈果1339", "kind": "靈果", "rarity": "精品", "buy": 9383, "sell": 6755, "level": 6, "value": 81},
+    1340: {"name": "靈品靈花1340", "kind": "靈花", "rarity": "靈品", "buy": 9401, "sell": 6768, "level": 6, "value": 82},
+    1341: {"name": "玄品靈草1341", "kind": "靈草", "rarity": "玄品", "buy": 9419, "sell": 6781, "level": 6, "value": 83},
+    1342: {"name": "地品丹藥1342", "kind": "丹藥", "rarity": "地品", "buy": 9437, "sell": 6794, "level": 6, "value": 84},
+    1343: {"name": "天品礦石1343", "kind": "礦石", "rarity": "天品", "buy": 9455, "sell": 6807, "level": 6, "value": 85},
+    1344: {"name": "仙品符籙1344", "kind": "符籙", "rarity": "仙品", "buy": 9473, "sell": 6820, "level": 6, "value": 86},
+    1345: {"name": "凡品法寶材料1345", "kind": "法寶材料", "rarity": "凡品", "buy": 9491, "sell": 6833, "level": 6, "value": 87},
+    1346: {"name": "良品妖獸材料1346", "kind": "妖獸材料", "rarity": "良品", "buy": 9509, "sell": 6846, "level": 6, "value": 88},
+    1347: {"name": "精品靈木1347", "kind": "靈木", "rarity": "精品", "buy": 9527, "sell": 6859, "level": 6, "value": 89},
+    1348: {"name": "靈品靈水1348", "kind": "靈水", "rarity": "靈品", "buy": 9545, "sell": 6872, "level": 6, "value": 90},
+    1349: {"name": "玄品靈果1349", "kind": "靈果", "rarity": "玄品", "buy": 9563, "sell": 6885, "level": 6, "value": 91},
+    1350: {"name": "地品靈花1350", "kind": "靈花", "rarity": "地品", "buy": 9581, "sell": 6898, "level": 6, "value": 92},
+    1351: {"name": "天品靈草1351", "kind": "靈草", "rarity": "天品", "buy": 9599, "sell": 6911, "level": 6, "value": 93},
+    1352: {"name": "仙品丹藥1352", "kind": "丹藥", "rarity": "仙品", "buy": 9474, "sell": 6821, "level": 6, "value": 94},
+    1353: {"name": "凡品礦石1353", "kind": "礦石", "rarity": "凡品", "buy": 9492, "sell": 6834, "level": 6, "value": 95},
+    1354: {"name": "良品符籙1354", "kind": "符籙", "rarity": "良品", "buy": 9510, "sell": 6847, "level": 6, "value": 96},
+    1355: {"name": "精品法寶材料1355", "kind": "法寶材料", "rarity": "精品", "buy": 9528, "sell": 6860, "level": 6, "value": 97},
+    1356: {"name": "靈品妖獸材料1356", "kind": "妖獸材料", "rarity": "靈品", "buy": 9546, "sell": 6873, "level": 6, "value": 98},
+    1357: {"name": "玄品靈木1357", "kind": "靈木", "rarity": "玄品", "buy": 9564, "sell": 6886, "level": 6, "value": 99},
+    1358: {"name": "地品靈水1358", "kind": "靈水", "rarity": "地品", "buy": 9582, "sell": 6899, "level": 6, "value": 3},
+    1359: {"name": "天品靈果1359", "kind": "靈果", "rarity": "天品", "buy": 9600, "sell": 6912, "level": 6, "value": 4},
+    1360: {"name": "仙品靈花1360", "kind": "靈花", "rarity": "仙品", "buy": 9618, "sell": 6924, "level": 6, "value": 5},
+    1361: {"name": "凡品靈草1361", "kind": "靈草", "rarity": "凡品", "buy": 9636, "sell": 6937, "level": 6, "value": 6},
+    1362: {"name": "良品丹藥1362", "kind": "丹藥", "rarity": "良品", "buy": 9654, "sell": 6950, "level": 6, "value": 7},
+    1363: {"name": "精品礦石1363", "kind": "礦石", "rarity": "精品", "buy": 9672, "sell": 6963, "level": 6, "value": 8},
+    1364: {"name": "靈品符籙1364", "kind": "符籙", "rarity": "靈品", "buy": 9690, "sell": 6976, "level": 6, "value": 9},
+    1365: {"name": "玄品法寶材料1365", "kind": "法寶材料", "rarity": "玄品", "buy": 9565, "sell": 6886, "level": 6, "value": 10},
+    1366: {"name": "地品妖獸材料1366", "kind": "妖獸材料", "rarity": "地品", "buy": 9583, "sell": 6899, "level": 6, "value": 11},
+    1367: {"name": "天品靈木1367", "kind": "靈木", "rarity": "天品", "buy": 9601, "sell": 6912, "level": 6, "value": 12},
+    1368: {"name": "仙品靈水1368", "kind": "靈水", "rarity": "仙品", "buy": 9619, "sell": 6925, "level": 6, "value": 13},
+    1369: {"name": "凡品靈果1369", "kind": "靈果", "rarity": "凡品", "buy": 9637, "sell": 6938, "level": 6, "value": 14},
+    1370: {"name": "良品靈花1370", "kind": "靈花", "rarity": "良品", "buy": 9655, "sell": 6951, "level": 6, "value": 15},
+    1371: {"name": "精品靈草1371", "kind": "靈草", "rarity": "精品", "buy": 9673, "sell": 6964, "level": 6, "value": 16},
+    1372: {"name": "靈品丹藥1372", "kind": "丹藥", "rarity": "靈品", "buy": 9691, "sell": 6977, "level": 6, "value": 17},
+    1373: {"name": "玄品礦石1373", "kind": "礦石", "rarity": "玄品", "buy": 9709, "sell": 6990, "level": 6, "value": 18},
+    1374: {"name": "地品符籙1374", "kind": "符籙", "rarity": "地品", "buy": 9727, "sell": 7003, "level": 6, "value": 19},
+    1375: {"name": "天品法寶材料1375", "kind": "法寶材料", "rarity": "天品", "buy": 9745, "sell": 7016, "level": 6, "value": 20},
+    1376: {"name": "仙品妖獸材料1376", "kind": "妖獸材料", "rarity": "仙品", "buy": 9763, "sell": 7029, "level": 6, "value": 21},
+    1377: {"name": "凡品靈木1377", "kind": "靈木", "rarity": "凡品", "buy": 9781, "sell": 7042, "level": 6, "value": 22},
+    1378: {"name": "良品靈水1378", "kind": "靈水", "rarity": "良品", "buy": 9656, "sell": 6952, "level": 6, "value": 23},
+    1379: {"name": "精品靈果1379", "kind": "靈果", "rarity": "精品", "buy": 9674, "sell": 6965, "level": 6, "value": 24},
+    1380: {"name": "靈品靈花1380", "kind": "靈花", "rarity": "靈品", "buy": 9692, "sell": 6978, "level": 6, "value": 25},
+    1381: {"name": "玄品靈草1381", "kind": "靈草", "rarity": "玄品", "buy": 9710, "sell": 6991, "level": 6, "value": 26},
+    1382: {"name": "地品丹藥1382", "kind": "丹藥", "rarity": "地品", "buy": 9728, "sell": 7004, "level": 6, "value": 27},
+    1383: {"name": "天品礦石1383", "kind": "礦石", "rarity": "天品", "buy": 9746, "sell": 7017, "level": 6, "value": 28},
+    1384: {"name": "仙品符籙1384", "kind": "符籙", "rarity": "仙品", "buy": 9764, "sell": 7030, "level": 6, "value": 29},
+    1385: {"name": "凡品法寶材料1385", "kind": "法寶材料", "rarity": "凡品", "buy": 9782, "sell": 7043, "level": 6, "value": 30},
+    1386: {"name": "良品妖獸材料1386", "kind": "妖獸材料", "rarity": "良品", "buy": 9800, "sell": 7056, "level": 6, "value": 31},
+    1387: {"name": "精品靈木1387", "kind": "靈木", "rarity": "精品", "buy": 9818, "sell": 7068, "level": 6, "value": 32},
+    1388: {"name": "靈品靈水1388", "kind": "靈水", "rarity": "靈品", "buy": 9836, "sell": 7081, "level": 6, "value": 33},
+    1389: {"name": "玄品靈果1389", "kind": "靈果", "rarity": "玄品", "buy": 9854, "sell": 7094, "level": 6, "value": 34},
+    1390: {"name": "地品靈花1390", "kind": "靈花", "rarity": "地品", "buy": 9872, "sell": 7107, "level": 6, "value": 35},
+    1391: {"name": "天品靈草1391", "kind": "靈草", "rarity": "天品", "buy": 9747, "sell": 7017, "level": 6, "value": 36},
+    1392: {"name": "仙品丹藥1392", "kind": "丹藥", "rarity": "仙品", "buy": 9765, "sell": 7030, "level": 6, "value": 37},
+    1393: {"name": "凡品礦石1393", "kind": "礦石", "rarity": "凡品", "buy": 9783, "sell": 7043, "level": 6, "value": 38},
+    1394: {"name": "良品符籙1394", "kind": "符籙", "rarity": "良品", "buy": 9801, "sell": 7056, "level": 6, "value": 39},
+    1395: {"name": "精品法寶材料1395", "kind": "法寶材料", "rarity": "精品", "buy": 9819, "sell": 7069, "level": 6, "value": 40},
+    1396: {"name": "靈品妖獸材料1396", "kind": "妖獸材料", "rarity": "靈品", "buy": 9837, "sell": 7082, "level": 6, "value": 41},
+    1397: {"name": "玄品靈木1397", "kind": "靈木", "rarity": "玄品", "buy": 9855, "sell": 7095, "level": 6, "value": 42},
+    1398: {"name": "地品靈水1398", "kind": "靈水", "rarity": "地品", "buy": 9873, "sell": 7108, "level": 6, "value": 43},
+    1399: {"name": "天品靈果1399", "kind": "靈果", "rarity": "天品", "buy": 9891, "sell": 7121, "level": 6, "value": 44},
+    1400: {"name": "仙品靈花1400", "kind": "靈花", "rarity": "仙品", "buy": 9909, "sell": 7134, "level": 6, "value": 45},
+    1401: {"name": "凡品靈草1401", "kind": "靈草", "rarity": "凡品", "buy": 9927, "sell": 7147, "level": 7, "value": 46},
+    1402: {"name": "良品丹藥1402", "kind": "丹藥", "rarity": "良品", "buy": 9945, "sell": 7160, "level": 7, "value": 47},
+    1403: {"name": "精品礦石1403", "kind": "礦石", "rarity": "精品", "buy": 9963, "sell": 7173, "level": 7, "value": 48},
+    1404: {"name": "靈品符籙1404", "kind": "符籙", "rarity": "靈品", "buy": 9838, "sell": 7083, "level": 7, "value": 49},
+    1405: {"name": "玄品法寶材料1405", "kind": "法寶材料", "rarity": "玄品", "buy": 9856, "sell": 7096, "level": 7, "value": 50},
+    1406: {"name": "地品妖獸材料1406", "kind": "妖獸材料", "rarity": "地品", "buy": 9874, "sell": 7109, "level": 7, "value": 51},
+    1407: {"name": "天品靈木1407", "kind": "靈木", "rarity": "天品", "buy": 9892, "sell": 7122, "level": 7, "value": 52},
+    1408: {"name": "仙品靈水1408", "kind": "靈水", "rarity": "仙品", "buy": 9910, "sell": 7135, "level": 7, "value": 53},
+    1409: {"name": "凡品靈果1409", "kind": "靈果", "rarity": "凡品", "buy": 9928, "sell": 7148, "level": 7, "value": 54},
+    1410: {"name": "良品靈花1410", "kind": "靈花", "rarity": "良品", "buy": 9946, "sell": 7161, "level": 7, "value": 55},
+    1411: {"name": "精品靈草1411", "kind": "靈草", "rarity": "精品", "buy": 9964, "sell": 7174, "level": 7, "value": 56},
+    1412: {"name": "靈品丹藥1412", "kind": "丹藥", "rarity": "靈品", "buy": 9982, "sell": 7187, "level": 7, "value": 57},
+    1413: {"name": "玄品礦石1413", "kind": "礦石", "rarity": "玄品", "buy": 10000, "sell": 7200, "level": 7, "value": 58},
+    1414: {"name": "地品符籙1414", "kind": "符籙", "rarity": "地品", "buy": 10018, "sell": 7212, "level": 7, "value": 59},
+    1415: {"name": "天品法寶材料1415", "kind": "法寶材料", "rarity": "天品", "buy": 10036, "sell": 7225, "level": 7, "value": 60},
+    1416: {"name": "仙品妖獸材料1416", "kind": "妖獸材料", "rarity": "仙品", "buy": 10054, "sell": 7238, "level": 7, "value": 61},
+    1417: {"name": "凡品靈木1417", "kind": "靈木", "rarity": "凡品", "buy": 9929, "sell": 7148, "level": 7, "value": 62},
+    1418: {"name": "良品靈水1418", "kind": "靈水", "rarity": "良品", "buy": 9947, "sell": 7161, "level": 7, "value": 63},
+    1419: {"name": "精品靈果1419", "kind": "靈果", "rarity": "精品", "buy": 9965, "sell": 7174, "level": 7, "value": 64},
+    1420: {"name": "靈品靈花1420", "kind": "靈花", "rarity": "靈品", "buy": 9983, "sell": 7187, "level": 7, "value": 65},
+    1421: {"name": "玄品靈草1421", "kind": "靈草", "rarity": "玄品", "buy": 10001, "sell": 7200, "level": 7, "value": 66},
+    1422: {"name": "地品丹藥1422", "kind": "丹藥", "rarity": "地品", "buy": 10019, "sell": 7213, "level": 7, "value": 67},
+    1423: {"name": "天品礦石1423", "kind": "礦石", "rarity": "天品", "buy": 10037, "sell": 7226, "level": 7, "value": 68},
+    1424: {"name": "仙品符籙1424", "kind": "符籙", "rarity": "仙品", "buy": 10055, "sell": 7239, "level": 7, "value": 69},
+    1425: {"name": "凡品法寶材料1425", "kind": "法寶材料", "rarity": "凡品", "buy": 10073, "sell": 7252, "level": 7, "value": 70},
+    1426: {"name": "良品妖獸材料1426", "kind": "妖獸材料", "rarity": "良品", "buy": 10091, "sell": 7265, "level": 7, "value": 71},
+    1427: {"name": "精品靈木1427", "kind": "靈木", "rarity": "精品", "buy": 10109, "sell": 7278, "level": 7, "value": 72},
+    1428: {"name": "靈品靈水1428", "kind": "靈水", "rarity": "靈品", "buy": 10127, "sell": 7291, "level": 7, "value": 73},
+    1429: {"name": "玄品靈果1429", "kind": "靈果", "rarity": "玄品", "buy": 10145, "sell": 7304, "level": 7, "value": 74},
+    1430: {"name": "地品靈花1430", "kind": "靈花", "rarity": "地品", "buy": 10020, "sell": 7214, "level": 7, "value": 75},
+    1431: {"name": "天品靈草1431", "kind": "靈草", "rarity": "天品", "buy": 10038, "sell": 7227, "level": 7, "value": 76},
+    1432: {"name": "仙品丹藥1432", "kind": "丹藥", "rarity": "仙品", "buy": 10056, "sell": 7240, "level": 7, "value": 77},
+    1433: {"name": "凡品礦石1433", "kind": "礦石", "rarity": "凡品", "buy": 10074, "sell": 7253, "level": 7, "value": 78},
+    1434: {"name": "良品符籙1434", "kind": "符籙", "rarity": "良品", "buy": 10092, "sell": 7266, "level": 7, "value": 79},
+    1435: {"name": "精品法寶材料1435", "kind": "法寶材料", "rarity": "精品", "buy": 10110, "sell": 7279, "level": 7, "value": 80},
+    1436: {"name": "靈品妖獸材料1436", "kind": "妖獸材料", "rarity": "靈品", "buy": 10128, "sell": 7292, "level": 7, "value": 81},
+    1437: {"name": "玄品靈木1437", "kind": "靈木", "rarity": "玄品", "buy": 10146, "sell": 7305, "level": 7, "value": 82},
+    1438: {"name": "地品靈水1438", "kind": "靈水", "rarity": "地品", "buy": 10164, "sell": 7318, "level": 7, "value": 83},
+    1439: {"name": "天品靈果1439", "kind": "靈果", "rarity": "天品", "buy": 10182, "sell": 7331, "level": 7, "value": 84},
+    1440: {"name": "仙品靈花1440", "kind": "靈花", "rarity": "仙品", "buy": 10200, "sell": 7344, "level": 7, "value": 85},
+    1441: {"name": "凡品靈草1441", "kind": "靈草", "rarity": "凡品", "buy": 10218, "sell": 7356, "level": 7, "value": 86},
+    1442: {"name": "良品丹藥1442", "kind": "丹藥", "rarity": "良品", "buy": 10236, "sell": 7369, "level": 7, "value": 87},
+    1443: {"name": "精品礦石1443", "kind": "礦石", "rarity": "精品", "buy": 10111, "sell": 7279, "level": 7, "value": 88},
+    1444: {"name": "靈品符籙1444", "kind": "符籙", "rarity": "靈品", "buy": 10129, "sell": 7292, "level": 7, "value": 89},
+    1445: {"name": "玄品法寶材料1445", "kind": "法寶材料", "rarity": "玄品", "buy": 10147, "sell": 7305, "level": 7, "value": 90},
+    1446: {"name": "地品妖獸材料1446", "kind": "妖獸材料", "rarity": "地品", "buy": 10165, "sell": 7318, "level": 7, "value": 91},
+    1447: {"name": "天品靈木1447", "kind": "靈木", "rarity": "天品", "buy": 10183, "sell": 7331, "level": 7, "value": 92},
+    1448: {"name": "仙品靈水1448", "kind": "靈水", "rarity": "仙品", "buy": 10201, "sell": 7344, "level": 7, "value": 93},
+    1449: {"name": "凡品靈果1449", "kind": "靈果", "rarity": "凡品", "buy": 10219, "sell": 7357, "level": 7, "value": 94},
+    1450: {"name": "良品靈花1450", "kind": "靈花", "rarity": "良品", "buy": 10237, "sell": 7370, "level": 7, "value": 95},
+    1451: {"name": "精品靈草1451", "kind": "靈草", "rarity": "精品", "buy": 10255, "sell": 7383, "level": 7, "value": 96},
+    1452: {"name": "靈品丹藥1452", "kind": "丹藥", "rarity": "靈品", "buy": 10273, "sell": 7396, "level": 7, "value": 97},
+    1453: {"name": "玄品礦石1453", "kind": "礦石", "rarity": "玄品", "buy": 10291, "sell": 7409, "level": 7, "value": 98},
+    1454: {"name": "地品符籙1454", "kind": "符籙", "rarity": "地品", "buy": 10309, "sell": 7422, "level": 7, "value": 99},
+    1455: {"name": "天品法寶材料1455", "kind": "法寶材料", "rarity": "天品", "buy": 10327, "sell": 7435, "level": 7, "value": 3},
+    1456: {"name": "仙品妖獸材料1456", "kind": "妖獸材料", "rarity": "仙品", "buy": 10202, "sell": 7345, "level": 7, "value": 4},
+    1457: {"name": "凡品靈木1457", "kind": "靈木", "rarity": "凡品", "buy": 10220, "sell": 7358, "level": 7, "value": 5},
+    1458: {"name": "良品靈水1458", "kind": "靈水", "rarity": "良品", "buy": 10238, "sell": 7371, "level": 7, "value": 6},
+    1459: {"name": "精品靈果1459", "kind": "靈果", "rarity": "精品", "buy": 10256, "sell": 7384, "level": 7, "value": 7},
+    1460: {"name": "靈品靈花1460", "kind": "靈花", "rarity": "靈品", "buy": 10274, "sell": 7397, "level": 7, "value": 8},
+    1461: {"name": "玄品靈草1461", "kind": "靈草", "rarity": "玄品", "buy": 10292, "sell": 7410, "level": 7, "value": 9},
+    1462: {"name": "地品丹藥1462", "kind": "丹藥", "rarity": "地品", "buy": 10310, "sell": 7423, "level": 7, "value": 10},
+    1463: {"name": "天品礦石1463", "kind": "礦石", "rarity": "天品", "buy": 10328, "sell": 7436, "level": 7, "value": 11},
+    1464: {"name": "仙品符籙1464", "kind": "符籙", "rarity": "仙品", "buy": 10346, "sell": 7449, "level": 7, "value": 12},
+    1465: {"name": "凡品法寶材料1465", "kind": "法寶材料", "rarity": "凡品", "buy": 10364, "sell": 7462, "level": 7, "value": 13},
+    1466: {"name": "良品妖獸材料1466", "kind": "妖獸材料", "rarity": "良品", "buy": 10382, "sell": 7475, "level": 7, "value": 14},
+    1467: {"name": "精品靈木1467", "kind": "靈木", "rarity": "精品", "buy": 10400, "sell": 7488, "level": 7, "value": 15},
+    1468: {"name": "靈品靈水1468", "kind": "靈水", "rarity": "靈品", "buy": 10418, "sell": 7500, "level": 7, "value": 16},
+    1469: {"name": "玄品靈果1469", "kind": "靈果", "rarity": "玄品", "buy": 10293, "sell": 7410, "level": 7, "value": 17},
+    1470: {"name": "地品靈花1470", "kind": "靈花", "rarity": "地品", "buy": 10311, "sell": 7423, "level": 7, "value": 18},
+    1471: {"name": "天品靈草1471", "kind": "靈草", "rarity": "天品", "buy": 10329, "sell": 7436, "level": 7, "value": 19},
+    1472: {"name": "仙品丹藥1472", "kind": "丹藥", "rarity": "仙品", "buy": 10347, "sell": 7449, "level": 7, "value": 20},
+    1473: {"name": "凡品礦石1473", "kind": "礦石", "rarity": "凡品", "buy": 10365, "sell": 7462, "level": 7, "value": 21},
+    1474: {"name": "良品符籙1474", "kind": "符籙", "rarity": "良品", "buy": 10383, "sell": 7475, "level": 7, "value": 22},
+    1475: {"name": "精品法寶材料1475", "kind": "法寶材料", "rarity": "精品", "buy": 10401, "sell": 7488, "level": 7, "value": 23},
+    1476: {"name": "靈品妖獸材料1476", "kind": "妖獸材料", "rarity": "靈品", "buy": 10419, "sell": 7501, "level": 7, "value": 24},
+    1477: {"name": "玄品靈木1477", "kind": "靈木", "rarity": "玄品", "buy": 10437, "sell": 7514, "level": 7, "value": 25},
+    1478: {"name": "地品靈水1478", "kind": "靈水", "rarity": "地品", "buy": 10455, "sell": 7527, "level": 7, "value": 26},
+    1479: {"name": "天品靈果1479", "kind": "靈果", "rarity": "天品", "buy": 10473, "sell": 7540, "level": 7, "value": 27},
+    1480: {"name": "仙品靈花1480", "kind": "靈花", "rarity": "仙品", "buy": 10491, "sell": 7553, "level": 7, "value": 28},
+    1481: {"name": "凡品靈草1481", "kind": "靈草", "rarity": "凡品", "buy": 10509, "sell": 7566, "level": 7, "value": 29},
+    1482: {"name": "良品丹藥1482", "kind": "丹藥", "rarity": "良品", "buy": 10384, "sell": 7476, "level": 7, "value": 30},
+    1483: {"name": "精品礦石1483", "kind": "礦石", "rarity": "精品", "buy": 10402, "sell": 7489, "level": 7, "value": 31},
+    1484: {"name": "靈品符籙1484", "kind": "符籙", "rarity": "靈品", "buy": 10420, "sell": 7502, "level": 7, "value": 32},
+    1485: {"name": "玄品法寶材料1485", "kind": "法寶材料", "rarity": "玄品", "buy": 10438, "sell": 7515, "level": 7, "value": 33},
+    1486: {"name": "地品妖獸材料1486", "kind": "妖獸材料", "rarity": "地品", "buy": 10456, "sell": 7528, "level": 7, "value": 34},
+    1487: {"name": "天品靈木1487", "kind": "靈木", "rarity": "天品", "buy": 10474, "sell": 7541, "level": 7, "value": 35},
+    1488: {"name": "仙品靈水1488", "kind": "靈水", "rarity": "仙品", "buy": 10492, "sell": 7554, "level": 7, "value": 36},
+    1489: {"name": "凡品靈果1489", "kind": "靈果", "rarity": "凡品", "buy": 10510, "sell": 7567, "level": 7, "value": 37},
+    1490: {"name": "良品靈花1490", "kind": "靈花", "rarity": "良品", "buy": 10528, "sell": 7580, "level": 7, "value": 38},
+    1491: {"name": "精品靈草1491", "kind": "靈草", "rarity": "精品", "buy": 10546, "sell": 7593, "level": 7, "value": 39},
+    1492: {"name": "靈品丹藥1492", "kind": "丹藥", "rarity": "靈品", "buy": 10564, "sell": 7606, "level": 7, "value": 40},
+    1493: {"name": "玄品礦石1493", "kind": "礦石", "rarity": "玄品", "buy": 10582, "sell": 7619, "level": 7, "value": 41},
+    1494: {"name": "地品符籙1494", "kind": "符籙", "rarity": "地品", "buy": 10600, "sell": 7632, "level": 7, "value": 42},
+    1495: {"name": "天品法寶材料1495", "kind": "法寶材料", "rarity": "天品", "buy": 10475, "sell": 7542, "level": 7, "value": 43},
+    1496: {"name": "仙品妖獸材料1496", "kind": "妖獸材料", "rarity": "仙品", "buy": 10493, "sell": 7554, "level": 7, "value": 44},
+    1497: {"name": "凡品靈木1497", "kind": "靈木", "rarity": "凡品", "buy": 10511, "sell": 7567, "level": 7, "value": 45},
+    1498: {"name": "良品靈水1498", "kind": "靈水", "rarity": "良品", "buy": 10529, "sell": 7580, "level": 7, "value": 46},
+    1499: {"name": "精品靈果1499", "kind": "靈果", "rarity": "精品", "buy": 10547, "sell": 7593, "level": 7, "value": 47},
+    1500: {"name": "靈品靈花1500", "kind": "靈花", "rarity": "靈品", "buy": 10565, "sell": 7606, "level": 7, "value": 48},
+    1501: {"name": "玄品靈草1501", "kind": "靈草", "rarity": "玄品", "buy": 10583, "sell": 7619, "level": 7, "value": 49},
+    1502: {"name": "地品丹藥1502", "kind": "丹藥", "rarity": "地品", "buy": 10601, "sell": 7632, "level": 7, "value": 50},
+    1503: {"name": "天品礦石1503", "kind": "礦石", "rarity": "天品", "buy": 10619, "sell": 7645, "level": 7, "value": 51},
+    1504: {"name": "仙品符籙1504", "kind": "符籙", "rarity": "仙品", "buy": 10637, "sell": 7658, "level": 7, "value": 52},
+    1505: {"name": "凡品法寶材料1505", "kind": "法寶材料", "rarity": "凡品", "buy": 10655, "sell": 7671, "level": 7, "value": 53},
+    1506: {"name": "良品妖獸材料1506", "kind": "妖獸材料", "rarity": "良品", "buy": 10673, "sell": 7684, "level": 7, "value": 54},
+    1507: {"name": "精品靈木1507", "kind": "靈木", "rarity": "精品", "buy": 10691, "sell": 7697, "level": 7, "value": 55},
+    1508: {"name": "靈品靈水1508", "kind": "靈水", "rarity": "靈品", "buy": 10566, "sell": 7607, "level": 7, "value": 56},
+    1509: {"name": "玄品靈果1509", "kind": "靈果", "rarity": "玄品", "buy": 10584, "sell": 7620, "level": 7, "value": 57},
+    1510: {"name": "地品靈花1510", "kind": "靈花", "rarity": "地品", "buy": 10602, "sell": 7633, "level": 7, "value": 58},
+    1511: {"name": "天品靈草1511", "kind": "靈草", "rarity": "天品", "buy": 10620, "sell": 7646, "level": 7, "value": 59},
+    1512: {"name": "仙品丹藥1512", "kind": "丹藥", "rarity": "仙品", "buy": 10638, "sell": 7659, "level": 7, "value": 60},
+    1513: {"name": "凡品礦石1513", "kind": "礦石", "rarity": "凡品", "buy": 10656, "sell": 7672, "level": 7, "value": 61},
+    1514: {"name": "良品符籙1514", "kind": "符籙", "rarity": "良品", "buy": 10674, "sell": 7685, "level": 7, "value": 62},
+    1515: {"name": "精品法寶材料1515", "kind": "法寶材料", "rarity": "精品", "buy": 10692, "sell": 7698, "level": 7, "value": 63},
+    1516: {"name": "靈品妖獸材料1516", "kind": "妖獸材料", "rarity": "靈品", "buy": 10710, "sell": 7711, "level": 7, "value": 64},
+    1517: {"name": "玄品靈木1517", "kind": "靈木", "rarity": "玄品", "buy": 10728, "sell": 7724, "level": 7, "value": 65},
+    1518: {"name": "地品靈水1518", "kind": "靈水", "rarity": "地品", "buy": 10746, "sell": 7737, "level": 7, "value": 66},
+    1519: {"name": "天品靈果1519", "kind": "靈果", "rarity": "天品", "buy": 10764, "sell": 7750, "level": 7, "value": 67},
+    1520: {"name": "仙品靈花1520", "kind": "靈花", "rarity": "仙品", "buy": 10782, "sell": 7763, "level": 7, "value": 68},
+    1521: {"name": "凡品靈草1521", "kind": "靈草", "rarity": "凡品", "buy": 10657, "sell": 7673, "level": 7, "value": 69},
+    1522: {"name": "良品丹藥1522", "kind": "丹藥", "rarity": "良品", "buy": 10675, "sell": 7686, "level": 7, "value": 70},
+    1523: {"name": "精品礦石1523", "kind": "礦石", "rarity": "精品", "buy": 10693, "sell": 7698, "level": 7, "value": 71},
+    1524: {"name": "靈品符籙1524", "kind": "符籙", "rarity": "靈品", "buy": 10711, "sell": 7711, "level": 7, "value": 72},
+    1525: {"name": "玄品法寶材料1525", "kind": "法寶材料", "rarity": "玄品", "buy": 10729, "sell": 7724, "level": 7, "value": 73},
+    1526: {"name": "地品妖獸材料1526", "kind": "妖獸材料", "rarity": "地品", "buy": 10747, "sell": 7737, "level": 7, "value": 74},
+    1527: {"name": "天品靈木1527", "kind": "靈木", "rarity": "天品", "buy": 10765, "sell": 7750, "level": 7, "value": 75},
+    1528: {"name": "仙品靈水1528", "kind": "靈水", "rarity": "仙品", "buy": 10783, "sell": 7763, "level": 7, "value": 76},
+    1529: {"name": "凡品靈果1529", "kind": "靈果", "rarity": "凡品", "buy": 10801, "sell": 7776, "level": 7, "value": 77},
+    1530: {"name": "良品靈花1530", "kind": "靈花", "rarity": "良品", "buy": 10819, "sell": 7789, "level": 7, "value": 78},
+    1531: {"name": "精品靈草1531", "kind": "靈草", "rarity": "精品", "buy": 10837, "sell": 7802, "level": 7, "value": 79},
+    1532: {"name": "靈品丹藥1532", "kind": "丹藥", "rarity": "靈品", "buy": 10855, "sell": 7815, "level": 7, "value": 80},
+    1533: {"name": "玄品礦石1533", "kind": "礦石", "rarity": "玄品", "buy": 10873, "sell": 7828, "level": 7, "value": 81},
+    1534: {"name": "地品符籙1534", "kind": "符籙", "rarity": "地品", "buy": 10748, "sell": 7738, "level": 7, "value": 82},
+    1535: {"name": "天品法寶材料1535", "kind": "法寶材料", "rarity": "天品", "buy": 10766, "sell": 7751, "level": 7, "value": 83},
+    1536: {"name": "仙品妖獸材料1536", "kind": "妖獸材料", "rarity": "仙品", "buy": 10784, "sell": 7764, "level": 7, "value": 84},
+    1537: {"name": "凡品靈木1537", "kind": "靈木", "rarity": "凡品", "buy": 10802, "sell": 7777, "level": 7, "value": 85},
+    1538: {"name": "良品靈水1538", "kind": "靈水", "rarity": "良品", "buy": 10820, "sell": 7790, "level": 7, "value": 86},
+    1539: {"name": "精品靈果1539", "kind": "靈果", "rarity": "精品", "buy": 10838, "sell": 7803, "level": 7, "value": 87},
+    1540: {"name": "靈品靈花1540", "kind": "靈花", "rarity": "靈品", "buy": 10856, "sell": 7816, "level": 7, "value": 88},
+    1541: {"name": "玄品靈草1541", "kind": "靈草", "rarity": "玄品", "buy": 10874, "sell": 7829, "level": 7, "value": 89},
+    1542: {"name": "地品丹藥1542", "kind": "丹藥", "rarity": "地品", "buy": 10892, "sell": 7842, "level": 7, "value": 90},
+    1543: {"name": "天品礦石1543", "kind": "礦石", "rarity": "天品", "buy": 10910, "sell": 7855, "level": 7, "value": 91},
+    1544: {"name": "仙品符籙1544", "kind": "符籙", "rarity": "仙品", "buy": 10928, "sell": 7868, "level": 7, "value": 92},
+    1545: {"name": "凡品法寶材料1545", "kind": "法寶材料", "rarity": "凡品", "buy": 10946, "sell": 7881, "level": 7, "value": 93},
+    1546: {"name": "良品妖獸材料1546", "kind": "妖獸材料", "rarity": "良品", "buy": 10964, "sell": 7894, "level": 7, "value": 94},
+    1547: {"name": "精品靈木1547", "kind": "靈木", "rarity": "精品", "buy": 10839, "sell": 7804, "level": 7, "value": 95},
+    1548: {"name": "靈品靈水1548", "kind": "靈水", "rarity": "靈品", "buy": 10857, "sell": 7817, "level": 7, "value": 96},
+    1549: {"name": "玄品靈果1549", "kind": "靈果", "rarity": "玄品", "buy": 10875, "sell": 7830, "level": 7, "value": 97},
+    1550: {"name": "地品靈花1550", "kind": "靈花", "rarity": "地品", "buy": 10893, "sell": 7842, "level": 7, "value": 98},
+    1551: {"name": "天品靈草1551", "kind": "靈草", "rarity": "天品", "buy": 10911, "sell": 7855, "level": 7, "value": 99},
+    1552: {"name": "仙品丹藥1552", "kind": "丹藥", "rarity": "仙品", "buy": 10929, "sell": 7868, "level": 7, "value": 3},
+    1553: {"name": "凡品礦石1553", "kind": "礦石", "rarity": "凡品", "buy": 10947, "sell": 7881, "level": 7, "value": 4},
+    1554: {"name": "良品符籙1554", "kind": "符籙", "rarity": "良品", "buy": 10965, "sell": 7894, "level": 7, "value": 5},
+    1555: {"name": "精品法寶材料1555", "kind": "法寶材料", "rarity": "精品", "buy": 10983, "sell": 7907, "level": 7, "value": 6},
+    1556: {"name": "靈品妖獸材料1556", "kind": "妖獸材料", "rarity": "靈品", "buy": 11001, "sell": 7920, "level": 7, "value": 7},
+    1557: {"name": "玄品靈木1557", "kind": "靈木", "rarity": "玄品", "buy": 11019, "sell": 7933, "level": 7, "value": 8},
+    1558: {"name": "地品靈水1558", "kind": "靈水", "rarity": "地品", "buy": 11037, "sell": 7946, "level": 7, "value": 9},
+    1559: {"name": "天品靈果1559", "kind": "靈果", "rarity": "天品", "buy": 11055, "sell": 7959, "level": 7, "value": 10},
+    1560: {"name": "仙品靈花1560", "kind": "靈花", "rarity": "仙品", "buy": 10930, "sell": 7869, "level": 7, "value": 11},
+    1561: {"name": "凡品靈草1561", "kind": "靈草", "rarity": "凡品", "buy": 10948, "sell": 7882, "level": 7, "value": 12},
+    1562: {"name": "良品丹藥1562", "kind": "丹藥", "rarity": "良品", "buy": 10966, "sell": 7895, "level": 7, "value": 13},
+    1563: {"name": "精品礦石1563", "kind": "礦石", "rarity": "精品", "buy": 10984, "sell": 7908, "level": 7, "value": 14},
+    1564: {"name": "靈品符籙1564", "kind": "符籙", "rarity": "靈品", "buy": 11002, "sell": 7921, "level": 7, "value": 15},
+    1565: {"name": "玄品法寶材料1565", "kind": "法寶材料", "rarity": "玄品", "buy": 11020, "sell": 7934, "level": 7, "value": 16},
+    1566: {"name": "地品妖獸材料1566", "kind": "妖獸材料", "rarity": "地品", "buy": 11038, "sell": 7947, "level": 7, "value": 17},
+    1567: {"name": "天品靈木1567", "kind": "靈木", "rarity": "天品", "buy": 11056, "sell": 7960, "level": 7, "value": 18},
+    1568: {"name": "仙品靈水1568", "kind": "靈水", "rarity": "仙品", "buy": 11074, "sell": 7973, "level": 7, "value": 19},
+    1569: {"name": "凡品靈果1569", "kind": "靈果", "rarity": "凡品", "buy": 11092, "sell": 7986, "level": 7, "value": 20},
+    1570: {"name": "良品靈花1570", "kind": "靈花", "rarity": "良品", "buy": 11110, "sell": 7999, "level": 7, "value": 21},
+    1571: {"name": "精品靈草1571", "kind": "靈草", "rarity": "精品", "buy": 11128, "sell": 8012, "level": 7, "value": 22},
+    1572: {"name": "靈品丹藥1572", "kind": "丹藥", "rarity": "靈品", "buy": 11146, "sell": 8025, "level": 7, "value": 23},
+    1573: {"name": "玄品礦石1573", "kind": "礦石", "rarity": "玄品", "buy": 11021, "sell": 7935, "level": 7, "value": 24},
+    1574: {"name": "地品符籙1574", "kind": "符籙", "rarity": "地品", "buy": 11039, "sell": 7948, "level": 7, "value": 25},
+    1575: {"name": "天品法寶材料1575", "kind": "法寶材料", "rarity": "天品", "buy": 11057, "sell": 7961, "level": 7, "value": 26},
+    1576: {"name": "仙品妖獸材料1576", "kind": "妖獸材料", "rarity": "仙品", "buy": 11075, "sell": 7974, "level": 7, "value": 27},
+    1577: {"name": "凡品靈木1577", "kind": "靈木", "rarity": "凡品", "buy": 11093, "sell": 7986, "level": 7, "value": 28},
+    1578: {"name": "良品靈水1578", "kind": "靈水", "rarity": "良品", "buy": 11111, "sell": 7999, "level": 7, "value": 29},
+    1579: {"name": "精品靈果1579", "kind": "靈果", "rarity": "精品", "buy": 11129, "sell": 8012, "level": 7, "value": 30},
+    1580: {"name": "靈品靈花1580", "kind": "靈花", "rarity": "靈品", "buy": 11147, "sell": 8025, "level": 7, "value": 31},
+    1581: {"name": "玄品靈草1581", "kind": "靈草", "rarity": "玄品", "buy": 11165, "sell": 8038, "level": 7, "value": 32},
+    1582: {"name": "地品丹藥1582", "kind": "丹藥", "rarity": "地品", "buy": 11183, "sell": 8051, "level": 7, "value": 33},
+    1583: {"name": "天品礦石1583", "kind": "礦石", "rarity": "天品", "buy": 11201, "sell": 8064, "level": 7, "value": 34},
+    1584: {"name": "仙品符籙1584", "kind": "符籙", "rarity": "仙品", "buy": 11219, "sell": 8077, "level": 7, "value": 35},
+    1585: {"name": "凡品法寶材料1585", "kind": "法寶材料", "rarity": "凡品", "buy": 11237, "sell": 8090, "level": 7, "value": 36},
+    1586: {"name": "良品妖獸材料1586", "kind": "妖獸材料", "rarity": "良品", "buy": 11112, "sell": 8000, "level": 7, "value": 37},
+    1587: {"name": "精品靈木1587", "kind": "靈木", "rarity": "精品", "buy": 11130, "sell": 8013, "level": 7, "value": 38},
+    1588: {"name": "靈品靈水1588", "kind": "靈水", "rarity": "靈品", "buy": 11148, "sell": 8026, "level": 7, "value": 39},
+    1589: {"name": "玄品靈果1589", "kind": "靈果", "rarity": "玄品", "buy": 11166, "sell": 8039, "level": 7, "value": 40},
+    1590: {"name": "地品靈花1590", "kind": "靈花", "rarity": "地品", "buy": 11184, "sell": 8052, "level": 7, "value": 41},
+    1591: {"name": "天品靈草1591", "kind": "靈草", "rarity": "天品", "buy": 11202, "sell": 8065, "level": 7, "value": 42},
+    1592: {"name": "仙品丹藥1592", "kind": "丹藥", "rarity": "仙品", "buy": 11220, "sell": 8078, "level": 7, "value": 43},
+    1593: {"name": "凡品礦石1593", "kind": "礦石", "rarity": "凡品", "buy": 11238, "sell": 8091, "level": 7, "value": 44},
+    1594: {"name": "良品符籙1594", "kind": "符籙", "rarity": "良品", "buy": 11256, "sell": 8104, "level": 7, "value": 45},
+    1595: {"name": "精品法寶材料1595", "kind": "法寶材料", "rarity": "精品", "buy": 11274, "sell": 8117, "level": 7, "value": 46},
+    1596: {"name": "靈品妖獸材料1596", "kind": "妖獸材料", "rarity": "靈品", "buy": 11292, "sell": 8130, "level": 7, "value": 47},
+    1597: {"name": "玄品靈木1597", "kind": "靈木", "rarity": "玄品", "buy": 11310, "sell": 8143, "level": 7, "value": 48},
+    1598: {"name": "地品靈水1598", "kind": "靈水", "rarity": "地品", "buy": 11328, "sell": 8156, "level": 7, "value": 49},
+    1599: {"name": "天品靈果1599", "kind": "靈果", "rarity": "天品", "buy": 11203, "sell": 8066, "level": 7, "value": 50},
+    1600: {"name": "仙品靈花1600", "kind": "靈花", "rarity": "仙品", "buy": 11221, "sell": 8079, "level": 7, "value": 51},
+    1601: {"name": "凡品靈草1601", "kind": "靈草", "rarity": "凡品", "buy": 11239, "sell": 8092, "level": 8, "value": 52},
+    1602: {"name": "良品丹藥1602", "kind": "丹藥", "rarity": "良品", "buy": 11257, "sell": 8105, "level": 8, "value": 53},
+    1603: {"name": "精品礦石1603", "kind": "礦石", "rarity": "精品", "buy": 11275, "sell": 8118, "level": 8, "value": 54},
+    1604: {"name": "靈品符籙1604", "kind": "符籙", "rarity": "靈品", "buy": 11293, "sell": 8130, "level": 8, "value": 55},
+    1605: {"name": "玄品法寶材料1605", "kind": "法寶材料", "rarity": "玄品", "buy": 11311, "sell": 8143, "level": 8, "value": 56},
+    1606: {"name": "地品妖獸材料1606", "kind": "妖獸材料", "rarity": "地品", "buy": 11329, "sell": 8156, "level": 8, "value": 57},
+    1607: {"name": "天品靈木1607", "kind": "靈木", "rarity": "天品", "buy": 11347, "sell": 8169, "level": 8, "value": 58},
+    1608: {"name": "仙品靈水1608", "kind": "靈水", "rarity": "仙品", "buy": 11365, "sell": 8182, "level": 8, "value": 59},
+    1609: {"name": "凡品靈果1609", "kind": "靈果", "rarity": "凡品", "buy": 11383, "sell": 8195, "level": 8, "value": 60},
+    1610: {"name": "良品靈花1610", "kind": "靈花", "rarity": "良品", "buy": 11401, "sell": 8208, "level": 8, "value": 61},
+    1611: {"name": "精品靈草1611", "kind": "靈草", "rarity": "精品", "buy": 11419, "sell": 8221, "level": 8, "value": 62},
+    1612: {"name": "靈品丹藥1612", "kind": "丹藥", "rarity": "靈品", "buy": 11294, "sell": 8131, "level": 8, "value": 63},
+    1613: {"name": "玄品礦石1613", "kind": "礦石", "rarity": "玄品", "buy": 11312, "sell": 8144, "level": 8, "value": 64},
+    1614: {"name": "地品符籙1614", "kind": "符籙", "rarity": "地品", "buy": 11330, "sell": 8157, "level": 8, "value": 65},
+    1615: {"name": "天品法寶材料1615", "kind": "法寶材料", "rarity": "天品", "buy": 11348, "sell": 8170, "level": 8, "value": 66},
+    1616: {"name": "仙品妖獸材料1616", "kind": "妖獸材料", "rarity": "仙品", "buy": 11366, "sell": 8183, "level": 8, "value": 67},
+    1617: {"name": "凡品靈木1617", "kind": "靈木", "rarity": "凡品", "buy": 11384, "sell": 8196, "level": 8, "value": 68},
+    1618: {"name": "良品靈水1618", "kind": "靈水", "rarity": "良品", "buy": 11402, "sell": 8209, "level": 8, "value": 69},
+    1619: {"name": "精品靈果1619", "kind": "靈果", "rarity": "精品", "buy": 11420, "sell": 8222, "level": 8, "value": 70},
+    1620: {"name": "靈品靈花1620", "kind": "靈花", "rarity": "靈品", "buy": 11438, "sell": 8235, "level": 8, "value": 71},
+    1621: {"name": "玄品靈草1621", "kind": "靈草", "rarity": "玄品", "buy": 11456, "sell": 8248, "level": 8, "value": 72},
+    1622: {"name": "地品丹藥1622", "kind": "丹藥", "rarity": "地品", "buy": 11474, "sell": 8261, "level": 8, "value": 73},
+    1623: {"name": "天品礦石1623", "kind": "礦石", "rarity": "天品", "buy": 11492, "sell": 8274, "level": 8, "value": 74},
+    1624: {"name": "仙品符籙1624", "kind": "符籙", "rarity": "仙品", "buy": 11510, "sell": 8287, "level": 8, "value": 75},
+    1625: {"name": "凡品法寶材料1625", "kind": "法寶材料", "rarity": "凡品", "buy": 11385, "sell": 8197, "level": 8, "value": 76},
+    1626: {"name": "良品妖獸材料1626", "kind": "妖獸材料", "rarity": "良品", "buy": 11403, "sell": 8210, "level": 8, "value": 77},
+    1627: {"name": "精品靈木1627", "kind": "靈木", "rarity": "精品", "buy": 11421, "sell": 8223, "level": 8, "value": 78},
+    1628: {"name": "靈品靈水1628", "kind": "靈水", "rarity": "靈品", "buy": 11439, "sell": 8236, "level": 8, "value": 79},
+    1629: {"name": "玄品靈果1629", "kind": "靈果", "rarity": "玄品", "buy": 11457, "sell": 8249, "level": 8, "value": 80},
+    1630: {"name": "地品靈花1630", "kind": "靈花", "rarity": "地品", "buy": 11475, "sell": 8262, "level": 8, "value": 81},
+    1631: {"name": "天品靈草1631", "kind": "靈草", "rarity": "天品", "buy": 11493, "sell": 8274, "level": 8, "value": 82},
+    1632: {"name": "仙品丹藥1632", "kind": "丹藥", "rarity": "仙品", "buy": 11511, "sell": 8287, "level": 8, "value": 83},
+    1633: {"name": "凡品礦石1633", "kind": "礦石", "rarity": "凡品", "buy": 11529, "sell": 8300, "level": 8, "value": 84},
+    1634: {"name": "良品符籙1634", "kind": "符籙", "rarity": "良品", "buy": 11547, "sell": 8313, "level": 8, "value": 85},
+    1635: {"name": "精品法寶材料1635", "kind": "法寶材料", "rarity": "精品", "buy": 11565, "sell": 8326, "level": 8, "value": 86},
+    1636: {"name": "靈品妖獸材料1636", "kind": "妖獸材料", "rarity": "靈品", "buy": 11583, "sell": 8339, "level": 8, "value": 87},
+    1637: {"name": "玄品靈木1637", "kind": "靈木", "rarity": "玄品", "buy": 11601, "sell": 8352, "level": 8, "value": 88},
+    1638: {"name": "地品靈水1638", "kind": "靈水", "rarity": "地品", "buy": 11476, "sell": 8262, "level": 8, "value": 89},
+    1639: {"name": "天品靈果1639", "kind": "靈果", "rarity": "天品", "buy": 11494, "sell": 8275, "level": 8, "value": 90},
+    1640: {"name": "仙品靈花1640", "kind": "靈花", "rarity": "仙品", "buy": 11512, "sell": 8288, "level": 8, "value": 91},
+    1641: {"name": "凡品靈草1641", "kind": "靈草", "rarity": "凡品", "buy": 11530, "sell": 8301, "level": 8, "value": 92},
+    1642: {"name": "良品丹藥1642", "kind": "丹藥", "rarity": "良品", "buy": 11548, "sell": 8314, "level": 8, "value": 93},
+    1643: {"name": "精品礦石1643", "kind": "礦石", "rarity": "精品", "buy": 11566, "sell": 8327, "level": 8, "value": 94},
+    1644: {"name": "靈品符籙1644", "kind": "符籙", "rarity": "靈品", "buy": 11584, "sell": 8340, "level": 8, "value": 95},
+    1645: {"name": "玄品法寶材料1645", "kind": "法寶材料", "rarity": "玄品", "buy": 11602, "sell": 8353, "level": 8, "value": 96},
+    1646: {"name": "地品妖獸材料1646", "kind": "妖獸材料", "rarity": "地品", "buy": 11620, "sell": 8366, "level": 8, "value": 97},
+    1647: {"name": "天品靈木1647", "kind": "靈木", "rarity": "天品", "buy": 11638, "sell": 8379, "level": 8, "value": 98},
+    1648: {"name": "仙品靈水1648", "kind": "靈水", "rarity": "仙品", "buy": 11656, "sell": 8392, "level": 8, "value": 99},
+    1649: {"name": "凡品靈果1649", "kind": "靈果", "rarity": "凡品", "buy": 11674, "sell": 8405, "level": 8, "value": 3},
+    1650: {"name": "良品靈花1650", "kind": "靈花", "rarity": "良品", "buy": 11692, "sell": 8418, "level": 8, "value": 4},
+    1651: {"name": "精品靈草1651", "kind": "靈草", "rarity": "精品", "buy": 11567, "sell": 8328, "level": 8, "value": 5},
+    1652: {"name": "靈品丹藥1652", "kind": "丹藥", "rarity": "靈品", "buy": 11585, "sell": 8341, "level": 8, "value": 6},
+    1653: {"name": "玄品礦石1653", "kind": "礦石", "rarity": "玄品", "buy": 11603, "sell": 8354, "level": 8, "value": 7},
+    1654: {"name": "地品符籙1654", "kind": "符籙", "rarity": "地品", "buy": 11621, "sell": 8367, "level": 8, "value": 8},
+    1655: {"name": "天品法寶材料1655", "kind": "法寶材料", "rarity": "天品", "buy": 11639, "sell": 8380, "level": 8, "value": 9},
+    1656: {"name": "仙品妖獸材料1656", "kind": "妖獸材料", "rarity": "仙品", "buy": 11657, "sell": 8393, "level": 8, "value": 10},
+    1657: {"name": "凡品靈木1657", "kind": "靈木", "rarity": "凡品", "buy": 11675, "sell": 8406, "level": 8, "value": 11},
+    1658: {"name": "良品靈水1658", "kind": "靈水", "rarity": "良品", "buy": 11693, "sell": 8418, "level": 8, "value": 12},
+    1659: {"name": "精品靈果1659", "kind": "靈果", "rarity": "精品", "buy": 11711, "sell": 8431, "level": 8, "value": 13},
+    1660: {"name": "靈品靈花1660", "kind": "靈花", "rarity": "靈品", "buy": 11729, "sell": 8444, "level": 8, "value": 14},
+    1661: {"name": "玄品靈草1661", "kind": "靈草", "rarity": "玄品", "buy": 11747, "sell": 8457, "level": 8, "value": 15},
+    1662: {"name": "地品丹藥1662", "kind": "丹藥", "rarity": "地品", "buy": 11765, "sell": 8470, "level": 8, "value": 16},
+    1663: {"name": "天品礦石1663", "kind": "礦石", "rarity": "天品", "buy": 11783, "sell": 8483, "level": 8, "value": 17},
+    1664: {"name": "仙品符籙1664", "kind": "符籙", "rarity": "仙品", "buy": 11658, "sell": 8393, "level": 8, "value": 18},
+    1665: {"name": "凡品法寶材料1665", "kind": "法寶材料", "rarity": "凡品", "buy": 11676, "sell": 8406, "level": 8, "value": 19},
+    1666: {"name": "良品妖獸材料1666", "kind": "妖獸材料", "rarity": "良品", "buy": 11694, "sell": 8419, "level": 8, "value": 20},
+    1667: {"name": "精品靈木1667", "kind": "靈木", "rarity": "精品", "buy": 11712, "sell": 8432, "level": 8, "value": 21},
+    1668: {"name": "靈品靈水1668", "kind": "靈水", "rarity": "靈品", "buy": 11730, "sell": 8445, "level": 8, "value": 22},
+    1669: {"name": "玄品靈果1669", "kind": "靈果", "rarity": "玄品", "buy": 11748, "sell": 8458, "level": 8, "value": 23},
+    1670: {"name": "地品靈花1670", "kind": "靈花", "rarity": "地品", "buy": 11766, "sell": 8471, "level": 8, "value": 24},
+    1671: {"name": "天品靈草1671", "kind": "靈草", "rarity": "天品", "buy": 11784, "sell": 8484, "level": 8, "value": 25},
+    1672: {"name": "仙品丹藥1672", "kind": "丹藥", "rarity": "仙品", "buy": 11802, "sell": 8497, "level": 8, "value": 26},
+    1673: {"name": "凡品礦石1673", "kind": "礦石", "rarity": "凡品", "buy": 11820, "sell": 8510, "level": 8, "value": 27},
+    1674: {"name": "良品符籙1674", "kind": "符籙", "rarity": "良品", "buy": 11838, "sell": 8523, "level": 8, "value": 28},
+    1675: {"name": "精品法寶材料1675", "kind": "法寶材料", "rarity": "精品", "buy": 11856, "sell": 8536, "level": 8, "value": 29},
+    1676: {"name": "靈品妖獸材料1676", "kind": "妖獸材料", "rarity": "靈品", "buy": 11874, "sell": 8549, "level": 8, "value": 30},
+    1677: {"name": "玄品靈木1677", "kind": "靈木", "rarity": "玄品", "buy": 11749, "sell": 8459, "level": 8, "value": 31},
+    1678: {"name": "地品靈水1678", "kind": "靈水", "rarity": "地品", "buy": 11767, "sell": 8472, "level": 8, "value": 32},
+    1679: {"name": "天品靈果1679", "kind": "靈果", "rarity": "天品", "buy": 11785, "sell": 8485, "level": 8, "value": 33},
+    1680: {"name": "仙品靈花1680", "kind": "靈花", "rarity": "仙品", "buy": 11803, "sell": 8498, "level": 8, "value": 34},
+    1681: {"name": "凡品靈草1681", "kind": "靈草", "rarity": "凡品", "buy": 11821, "sell": 8511, "level": 8, "value": 35},
+    1682: {"name": "良品丹藥1682", "kind": "丹藥", "rarity": "良品", "buy": 11839, "sell": 8524, "level": 8, "value": 36},
+    1683: {"name": "精品礦石1683", "kind": "礦石", "rarity": "精品", "buy": 11857, "sell": 8537, "level": 8, "value": 37},
+    1684: {"name": "靈品符籙1684", "kind": "符籙", "rarity": "靈品", "buy": 11875, "sell": 8550, "level": 8, "value": 38},
+    1685: {"name": "玄品法寶材料1685", "kind": "法寶材料", "rarity": "玄品", "buy": 11893, "sell": 8562, "level": 8, "value": 39},
+    1686: {"name": "地品妖獸材料1686", "kind": "妖獸材料", "rarity": "地品", "buy": 11911, "sell": 8575, "level": 8, "value": 40},
+    1687: {"name": "天品靈木1687", "kind": "靈木", "rarity": "天品", "buy": 11929, "sell": 8588, "level": 8, "value": 41},
+    1688: {"name": "仙品靈水1688", "kind": "靈水", "rarity": "仙品", "buy": 11947, "sell": 8601, "level": 8, "value": 42},
+    1689: {"name": "凡品靈果1689", "kind": "靈果", "rarity": "凡品", "buy": 11965, "sell": 8614, "level": 8, "value": 43},
+    1690: {"name": "良品靈花1690", "kind": "靈花", "rarity": "良品", "buy": 11840, "sell": 8524, "level": 8, "value": 44},
+    1691: {"name": "精品靈草1691", "kind": "靈草", "rarity": "精品", "buy": 11858, "sell": 8537, "level": 8, "value": 45},
+    1692: {"name": "靈品丹藥1692", "kind": "丹藥", "rarity": "靈品", "buy": 11876, "sell": 8550, "level": 8, "value": 46},
+    1693: {"name": "玄品礦石1693", "kind": "礦石", "rarity": "玄品", "buy": 11894, "sell": 8563, "level": 8, "value": 47},
+    1694: {"name": "地品符籙1694", "kind": "符籙", "rarity": "地品", "buy": 11912, "sell": 8576, "level": 8, "value": 48},
+    1695: {"name": "天品法寶材料1695", "kind": "法寶材料", "rarity": "天品", "buy": 11930, "sell": 8589, "level": 8, "value": 49},
+    1696: {"name": "仙品妖獸材料1696", "kind": "妖獸材料", "rarity": "仙品", "buy": 11948, "sell": 8602, "level": 8, "value": 50},
+    1697: {"name": "凡品靈木1697", "kind": "靈木", "rarity": "凡品", "buy": 11966, "sell": 8615, "level": 8, "value": 51},
+    1698: {"name": "良品靈水1698", "kind": "靈水", "rarity": "良品", "buy": 11984, "sell": 8628, "level": 8, "value": 52},
+    1699: {"name": "精品靈果1699", "kind": "靈果", "rarity": "精品", "buy": 12002, "sell": 8641, "level": 8, "value": 53},
+    1700: {"name": "靈品靈花1700", "kind": "靈花", "rarity": "靈品", "buy": 12020, "sell": 8654, "level": 8, "value": 54},
+    1701: {"name": "玄品靈草1701", "kind": "靈草", "rarity": "玄品", "buy": 12038, "sell": 8667, "level": 8, "value": 55},
+    1702: {"name": "地品丹藥1702", "kind": "丹藥", "rarity": "地品", "buy": 12056, "sell": 8680, "level": 8, "value": 56},
+    1703: {"name": "天品礦石1703", "kind": "礦石", "rarity": "天品", "buy": 11931, "sell": 8590, "level": 8, "value": 57},
+    1704: {"name": "仙品符籙1704", "kind": "符籙", "rarity": "仙品", "buy": 11949, "sell": 8603, "level": 8, "value": 58},
+    1705: {"name": "凡品法寶材料1705", "kind": "法寶材料", "rarity": "凡品", "buy": 11967, "sell": 8616, "level": 8, "value": 59},
+    1706: {"name": "良品妖獸材料1706", "kind": "妖獸材料", "rarity": "良品", "buy": 11985, "sell": 8629, "level": 8, "value": 60},
+    1707: {"name": "精品靈木1707", "kind": "靈木", "rarity": "精品", "buy": 12003, "sell": 8642, "level": 8, "value": 61},
+    1708: {"name": "靈品靈水1708", "kind": "靈水", "rarity": "靈品", "buy": 12021, "sell": 8655, "level": 8, "value": 62},
+    1709: {"name": "玄品靈果1709", "kind": "靈果", "rarity": "玄品", "buy": 12039, "sell": 8668, "level": 8, "value": 63},
+    1710: {"name": "地品靈花1710", "kind": "靈花", "rarity": "地品", "buy": 12057, "sell": 8681, "level": 8, "value": 64},
+    1711: {"name": "天品靈草1711", "kind": "靈草", "rarity": "天品", "buy": 12075, "sell": 8694, "level": 8, "value": 65},
+    1712: {"name": "仙品丹藥1712", "kind": "丹藥", "rarity": "仙品", "buy": 12093, "sell": 8706, "level": 8, "value": 66},
+    1713: {"name": "凡品礦石1713", "kind": "礦石", "rarity": "凡品", "buy": 12111, "sell": 8719, "level": 8, "value": 67},
+    1714: {"name": "良品符籙1714", "kind": "符籙", "rarity": "良品", "buy": 12129, "sell": 8732, "level": 8, "value": 68},
+    1715: {"name": "精品法寶材料1715", "kind": "法寶材料", "rarity": "精品", "buy": 12147, "sell": 8745, "level": 8, "value": 69},
+    1716: {"name": "靈品妖獸材料1716", "kind": "妖獸材料", "rarity": "靈品", "buy": 12022, "sell": 8655, "level": 8, "value": 70},
+    1717: {"name": "玄品靈木1717", "kind": "靈木", "rarity": "玄品", "buy": 12040, "sell": 8668, "level": 8, "value": 71},
+    1718: {"name": "地品靈水1718", "kind": "靈水", "rarity": "地品", "buy": 12058, "sell": 8681, "level": 8, "value": 72},
+    1719: {"name": "天品靈果1719", "kind": "靈果", "rarity": "天品", "buy": 12076, "sell": 8694, "level": 8, "value": 73},
+    1720: {"name": "仙品靈花1720", "kind": "靈花", "rarity": "仙品", "buy": 12094, "sell": 8707, "level": 8, "value": 74},
+    1721: {"name": "凡品靈草1721", "kind": "靈草", "rarity": "凡品", "buy": 12112, "sell": 8720, "level": 8, "value": 75},
+    1722: {"name": "良品丹藥1722", "kind": "丹藥", "rarity": "良品", "buy": 12130, "sell": 8733, "level": 8, "value": 76},
+    1723: {"name": "精品礦石1723", "kind": "礦石", "rarity": "精品", "buy": 12148, "sell": 8746, "level": 8, "value": 77},
+    1724: {"name": "靈品符籙1724", "kind": "符籙", "rarity": "靈品", "buy": 12166, "sell": 8759, "level": 8, "value": 78},
+    1725: {"name": "玄品法寶材料1725", "kind": "法寶材料", "rarity": "玄品", "buy": 12184, "sell": 8772, "level": 8, "value": 79},
+    1726: {"name": "地品妖獸材料1726", "kind": "妖獸材料", "rarity": "地品", "buy": 12202, "sell": 8785, "level": 8, "value": 80},
+    1727: {"name": "天品靈木1727", "kind": "靈木", "rarity": "天品", "buy": 12220, "sell": 8798, "level": 8, "value": 81},
+    1728: {"name": "仙品靈水1728", "kind": "靈水", "rarity": "仙品", "buy": 12238, "sell": 8811, "level": 8, "value": 82},
+    1729: {"name": "凡品靈果1729", "kind": "靈果", "rarity": "凡品", "buy": 12113, "sell": 8721, "level": 8, "value": 83},
+    1730: {"name": "良品靈花1730", "kind": "靈花", "rarity": "良品", "buy": 12131, "sell": 8734, "level": 8, "value": 84},
+    1731: {"name": "精品靈草1731", "kind": "靈草", "rarity": "精品", "buy": 12149, "sell": 8747, "level": 8, "value": 85},
+    1732: {"name": "靈品丹藥1732", "kind": "丹藥", "rarity": "靈品", "buy": 12167, "sell": 8760, "level": 8, "value": 86},
+    1733: {"name": "玄品礦石1733", "kind": "礦石", "rarity": "玄品", "buy": 12185, "sell": 8773, "level": 8, "value": 87},
+    1734: {"name": "地品符籙1734", "kind": "符籙", "rarity": "地品", "buy": 12203, "sell": 8786, "level": 8, "value": 88},
+    1735: {"name": "天品法寶材料1735", "kind": "法寶材料", "rarity": "天品", "buy": 12221, "sell": 8799, "level": 8, "value": 89},
+    1736: {"name": "仙品妖獸材料1736", "kind": "妖獸材料", "rarity": "仙品", "buy": 12239, "sell": 8812, "level": 8, "value": 90},
+    1737: {"name": "凡品靈木1737", "kind": "靈木", "rarity": "凡品", "buy": 12257, "sell": 8825, "level": 8, "value": 91},
+    1738: {"name": "良品靈水1738", "kind": "靈水", "rarity": "良品", "buy": 12275, "sell": 8838, "level": 8, "value": 92},
+    1739: {"name": "精品靈果1739", "kind": "靈果", "rarity": "精品", "buy": 12293, "sell": 8850, "level": 8, "value": 93},
+    1740: {"name": "靈品靈花1740", "kind": "靈花", "rarity": "靈品", "buy": 12311, "sell": 8863, "level": 8, "value": 94},
+    1741: {"name": "玄品靈草1741", "kind": "靈草", "rarity": "玄品", "buy": 12329, "sell": 8876, "level": 8, "value": 95},
+    1742: {"name": "地品丹藥1742", "kind": "丹藥", "rarity": "地品", "buy": 12204, "sell": 8786, "level": 8, "value": 96},
+    1743: {"name": "天品礦石1743", "kind": "礦石", "rarity": "天品", "buy": 12222, "sell": 8799, "level": 8, "value": 97},
+    1744: {"name": "仙品符籙1744", "kind": "符籙", "rarity": "仙品", "buy": 12240, "sell": 8812, "level": 8, "value": 98},
+    1745: {"name": "凡品法寶材料1745", "kind": "法寶材料", "rarity": "凡品", "buy": 12258, "sell": 8825, "level": 8, "value": 99},
+    1746: {"name": "良品妖獸材料1746", "kind": "妖獸材料", "rarity": "良品", "buy": 12276, "sell": 8838, "level": 8, "value": 3},
+    1747: {"name": "精品靈木1747", "kind": "靈木", "rarity": "精品", "buy": 12294, "sell": 8851, "level": 8, "value": 4},
+    1748: {"name": "靈品靈水1748", "kind": "靈水", "rarity": "靈品", "buy": 12312, "sell": 8864, "level": 8, "value": 5},
+    1749: {"name": "玄品靈果1749", "kind": "靈果", "rarity": "玄品", "buy": 12330, "sell": 8877, "level": 8, "value": 6},
+    1750: {"name": "地品靈花1750", "kind": "靈花", "rarity": "地品", "buy": 12348, "sell": 8890, "level": 8, "value": 7},
+    1751: {"name": "天品靈草1751", "kind": "靈草", "rarity": "天品", "buy": 12366, "sell": 8903, "level": 8, "value": 8},
+    1752: {"name": "仙品丹藥1752", "kind": "丹藥", "rarity": "仙品", "buy": 12384, "sell": 8916, "level": 8, "value": 9},
+    1753: {"name": "凡品礦石1753", "kind": "礦石", "rarity": "凡品", "buy": 12402, "sell": 8929, "level": 8, "value": 10},
+    1754: {"name": "良品符籙1754", "kind": "符籙", "rarity": "良品", "buy": 12420, "sell": 8942, "level": 8, "value": 11},
+    1755: {"name": "精品法寶材料1755", "kind": "法寶材料", "rarity": "精品", "buy": 12295, "sell": 8852, "level": 8, "value": 12},
+    1756: {"name": "靈品妖獸材料1756", "kind": "妖獸材料", "rarity": "靈品", "buy": 12313, "sell": 8865, "level": 8, "value": 13},
+    1757: {"name": "玄品靈木1757", "kind": "靈木", "rarity": "玄品", "buy": 12331, "sell": 8878, "level": 8, "value": 14},
+    1758: {"name": "地品靈水1758", "kind": "靈水", "rarity": "地品", "buy": 12349, "sell": 8891, "level": 8, "value": 15},
+    1759: {"name": "天品靈果1759", "kind": "靈果", "rarity": "天品", "buy": 12367, "sell": 8904, "level": 8, "value": 16},
+    1760: {"name": "仙品靈花1760", "kind": "靈花", "rarity": "仙品", "buy": 12385, "sell": 8917, "level": 8, "value": 17},
+    1761: {"name": "凡品靈草1761", "kind": "靈草", "rarity": "凡品", "buy": 12403, "sell": 8930, "level": 8, "value": 18},
+    1762: {"name": "良品丹藥1762", "kind": "丹藥", "rarity": "良品", "buy": 12421, "sell": 8943, "level": 8, "value": 19},
+    1763: {"name": "精品礦石1763", "kind": "礦石", "rarity": "精品", "buy": 12439, "sell": 8956, "level": 8, "value": 20},
+    1764: {"name": "靈品符籙1764", "kind": "符籙", "rarity": "靈品", "buy": 12457, "sell": 8969, "level": 8, "value": 21},
+    1765: {"name": "玄品法寶材料1765", "kind": "法寶材料", "rarity": "玄品", "buy": 12475, "sell": 8982, "level": 8, "value": 22},
+    1766: {"name": "地品妖獸材料1766", "kind": "妖獸材料", "rarity": "地品", "buy": 12493, "sell": 8994, "level": 8, "value": 23},
+    1767: {"name": "天品靈木1767", "kind": "靈木", "rarity": "天品", "buy": 12511, "sell": 9007, "level": 8, "value": 24},
+    1768: {"name": "仙品靈水1768", "kind": "靈水", "rarity": "仙品", "buy": 12386, "sell": 8917, "level": 8, "value": 25},
+    1769: {"name": "凡品靈果1769", "kind": "靈果", "rarity": "凡品", "buy": 12404, "sell": 8930, "level": 8, "value": 26},
+    1770: {"name": "良品靈花1770", "kind": "靈花", "rarity": "良品", "buy": 12422, "sell": 8943, "level": 8, "value": 27},
+    1771: {"name": "精品靈草1771", "kind": "靈草", "rarity": "精品", "buy": 12440, "sell": 8956, "level": 8, "value": 28},
+    1772: {"name": "靈品丹藥1772", "kind": "丹藥", "rarity": "靈品", "buy": 12458, "sell": 8969, "level": 8, "value": 29},
+    1773: {"name": "玄品礦石1773", "kind": "礦石", "rarity": "玄品", "buy": 12476, "sell": 8982, "level": 8, "value": 30},
+    1774: {"name": "地品符籙1774", "kind": "符籙", "rarity": "地品", "buy": 12494, "sell": 8995, "level": 8, "value": 31},
+    1775: {"name": "天品法寶材料1775", "kind": "法寶材料", "rarity": "天品", "buy": 12512, "sell": 9008, "level": 8, "value": 32},
+    1776: {"name": "仙品妖獸材料1776", "kind": "妖獸材料", "rarity": "仙品", "buy": 12530, "sell": 9021, "level": 8, "value": 33},
+    1777: {"name": "凡品靈木1777", "kind": "靈木", "rarity": "凡品", "buy": 12548, "sell": 9034, "level": 8, "value": 34},
+    1778: {"name": "良品靈水1778", "kind": "靈水", "rarity": "良品", "buy": 12566, "sell": 9047, "level": 8, "value": 35},
+    1779: {"name": "精品靈果1779", "kind": "靈果", "rarity": "精品", "buy": 12584, "sell": 9060, "level": 8, "value": 36},
+    1780: {"name": "靈品靈花1780", "kind": "靈花", "rarity": "靈品", "buy": 12602, "sell": 9073, "level": 8, "value": 37},
+    1781: {"name": "玄品靈草1781", "kind": "靈草", "rarity": "玄品", "buy": 12477, "sell": 8983, "level": 8, "value": 38},
+    1782: {"name": "地品丹藥1782", "kind": "丹藥", "rarity": "地品", "buy": 12495, "sell": 8996, "level": 8, "value": 39},
+    1783: {"name": "天品礦石1783", "kind": "礦石", "rarity": "天品", "buy": 12513, "sell": 9009, "level": 8, "value": 40},
+    1784: {"name": "仙品符籙1784", "kind": "符籙", "rarity": "仙品", "buy": 12531, "sell": 9022, "level": 8, "value": 41},
+    1785: {"name": "凡品法寶材料1785", "kind": "法寶材料", "rarity": "凡品", "buy": 12549, "sell": 9035, "level": 8, "value": 42},
+    1786: {"name": "良品妖獸材料1786", "kind": "妖獸材料", "rarity": "良品", "buy": 12567, "sell": 9048, "level": 8, "value": 43},
+    1787: {"name": "精品靈木1787", "kind": "靈木", "rarity": "精品", "buy": 12585, "sell": 9061, "level": 8, "value": 44},
+    1788: {"name": "靈品靈水1788", "kind": "靈水", "rarity": "靈品", "buy": 12603, "sell": 9074, "level": 8, "value": 45},
+    1789: {"name": "玄品靈果1789", "kind": "靈果", "rarity": "玄品", "buy": 12621, "sell": 9087, "level": 8, "value": 46},
+    1790: {"name": "地品靈花1790", "kind": "靈花", "rarity": "地品", "buy": 12639, "sell": 9100, "level": 8, "value": 47},
+    1791: {"name": "天品靈草1791", "kind": "靈草", "rarity": "天品", "buy": 12657, "sell": 9113, "level": 8, "value": 48},
+    1792: {"name": "仙品丹藥1792", "kind": "丹藥", "rarity": "仙品", "buy": 12675, "sell": 9126, "level": 8, "value": 49},
+    1793: {"name": "凡品礦石1793", "kind": "礦石", "rarity": "凡品", "buy": 12693, "sell": 9138, "level": 8, "value": 50},
+    1794: {"name": "良品符籙1794", "kind": "符籙", "rarity": "良品", "buy": 12568, "sell": 9048, "level": 8, "value": 51},
+    1795: {"name": "精品法寶材料1795", "kind": "法寶材料", "rarity": "精品", "buy": 12586, "sell": 9061, "level": 8, "value": 52},
+    1796: {"name": "靈品妖獸材料1796", "kind": "妖獸材料", "rarity": "靈品", "buy": 12604, "sell": 9074, "level": 8, "value": 53},
+    1797: {"name": "玄品靈木1797", "kind": "靈木", "rarity": "玄品", "buy": 12622, "sell": 9087, "level": 8, "value": 54},
+    1798: {"name": "地品靈水1798", "kind": "靈水", "rarity": "地品", "buy": 12640, "sell": 9100, "level": 8, "value": 55},
+    1799: {"name": "天品靈果1799", "kind": "靈果", "rarity": "天品", "buy": 12658, "sell": 9113, "level": 8, "value": 56},
+    1800: {"name": "仙品靈花1800", "kind": "靈花", "rarity": "仙品", "buy": 12676, "sell": 9126, "level": 8, "value": 57},
 }
-# ======= 🔮 組五：遠古附魔特效、與 100% 補齊四大隔離海域特產魚池（第 371 ~ 485 行） =======
-ENCHANT_POOL = {
-    "⚡ 迅捷": {"desc": "收竿冷卻時間永久縮減 1.5 秒", "luck_mod": 1.0, "speed_mod": 1.5, "mutate_mod": 0.0},
-    "🍀 豐收": {"desc": "氣運爆發，大魚爆率永久提升 1.5 倍", "luck_mod": 1.5, "speed_mod": 0.0, "mutate_mod": 0.0},
-    "🧬 異變": {"desc": "特殊輻射共振，魚隻突變機率激增 +25%", "luck_mod": 1.0, "speed_mod": 0.0, "mutate_mod": 0.25},
-    "🌌  sigma": {"desc": "全屬性終極洗鍊：運氣x2.5、冷卻-2秒、變異+40%", "luck_mod": 2.5, "speed_mod": 2.0, "mutate_mod": 0.40},
-    "👑 弒神領域 (God Slayer)": {"desc": "【特效：諸神退散】氣運神級爆增 x5.5！收竿加速 +4.5秒！且突變率直接鎖死 80%！", "luck_mod": 5.5, "speed_mod": 4.5, "mutate_mod": 0.80},
-    "🎰 命運主宰 (Midas Touch)": {"desc": "【特效：全知全能】氣運暴增 x8.0！釣到稀有度秘密/作者級的概率永久翻倍！", "luck_mod": 8.0, "speed_mod": 1.0, "mutate_mod": 0.10},
-    "🌀 時空扭曲 (Time Warp)": {"desc": "【特效：超越光速】打破時空限制！任何魚竿冷卻時間強制縮減為保底 1.5 秒！", "luck_mod": 2.0, "speed_mod": 8.5, "mutate_mod": 0.30}
+
+MONSTERS = {
+    1: {"name": "山野妖狼·001", "realm": 0, "power": 142, "reward": (29, 98)},
+    2: {"name": "赤焰蟒·002", "realm": 0, "power": 214, "reward": (38, 116)},
+    3: {"name": "幽冥鬼將·003", "realm": 0, "power": 286, "reward": (47, 134)},
+    4: {"name": "千年樹妖·004", "realm": 0, "power": 358, "reward": (56, 152)},
+    5: {"name": "滄海蛟龍·005", "realm": 0, "power": 430, "reward": (65, 170)},
+    6: {"name": "裂天鵬·006", "realm": 0, "power": 502, "reward": (74, 188)},
+    7: {"name": "太古猿王·007", "realm": 0, "power": 574, "reward": (83, 206)},
+    8: {"name": "九幽魔君·008", "realm": 0, "power": 646, "reward": (92, 224)},
+    9: {"name": "星海巨鯨·009", "realm": 0, "power": 718, "reward": (101, 242)},
+    10: {"name": "天外邪靈·010", "realm": 0, "power": 790, "reward": (110, 260)},
+    11: {"name": "山野妖狼·011", "realm": 0, "power": 862, "reward": (119, 278)},
+    12: {"name": "赤焰蟒·012", "realm": 0, "power": 934, "reward": (128, 296)},
+    13: {"name": "幽冥鬼將·013", "realm": 0, "power": 1006, "reward": (137, 314)},
+    14: {"name": "千年樹妖·014", "realm": 0, "power": 1078, "reward": (146, 332)},
+    15: {"name": "滄海蛟龍·015", "realm": 0, "power": 1150, "reward": (155, 350)},
+    16: {"name": "裂天鵬·016", "realm": 0, "power": 1222, "reward": (164, 368)},
+    17: {"name": "太古猿王·017", "realm": 0, "power": 614, "reward": (173, 386)},
+    18: {"name": "九幽魔君·018", "realm": 0, "power": 686, "reward": (182, 404)},
+    19: {"name": "星海巨鯨·019", "realm": 0, "power": 758, "reward": (191, 422)},
+    20: {"name": "天外邪靈·020", "realm": 0, "power": 830, "reward": (200, 440)},
+    21: {"name": "山野妖狼·021", "realm": 0, "power": 902, "reward": (209, 458)},
+    22: {"name": "赤焰蟒·022", "realm": 0, "power": 974, "reward": (218, 476)},
+    23: {"name": "幽冥鬼將·023", "realm": 0, "power": 1046, "reward": (227, 494)},
+    24: {"name": "千年樹妖·024", "realm": 0, "power": 1118, "reward": (236, 512)},
+    25: {"name": "滄海蛟龍·025", "realm": 0, "power": 1190, "reward": (245, 530)},
+    26: {"name": "裂天鵬·026", "realm": 0, "power": 1262, "reward": (254, 548)},
+    27: {"name": "太古猿王·027", "realm": 0, "power": 1334, "reward": (263, 566)},
+    28: {"name": "九幽魔君·028", "realm": 0, "power": 1406, "reward": (272, 584)},
+    29: {"name": "星海巨鯨·029", "realm": 0, "power": 1478, "reward": (281, 602)},
+    30: {"name": "天外邪靈·030", "realm": 0, "power": 1550, "reward": (290, 620)},
+    31: {"name": "山野妖狼·031", "realm": 0, "power": 1622, "reward": (299, 638)},
+    32: {"name": "赤焰蟒·032", "realm": 0, "power": 1694, "reward": (308, 656)},
+    33: {"name": "幽冥鬼將·033", "realm": 0, "power": 1766, "reward": (317, 674)},
+    34: {"name": "千年樹妖·034", "realm": 0, "power": 1158, "reward": (326, 692)},
+    35: {"name": "滄海蛟龍·035", "realm": 0, "power": 1230, "reward": (335, 710)},
+    36: {"name": "裂天鵬·036", "realm": 0, "power": 1302, "reward": (344, 728)},
+    37: {"name": "太古猿王·037", "realm": 0, "power": 1374, "reward": (353, 746)},
+    38: {"name": "九幽魔君·038", "realm": 0, "power": 1446, "reward": (362, 764)},
+    39: {"name": "星海巨鯨·039", "realm": 0, "power": 1518, "reward": (371, 782)},
+    40: {"name": "天外邪靈·040", "realm": 0, "power": 1590, "reward": (380, 800)},
+    41: {"name": "山野妖狼·041", "realm": 1, "power": 1662, "reward": (389, 818)},
+    42: {"name": "赤焰蟒·042", "realm": 1, "power": 1734, "reward": (398, 836)},
+    43: {"name": "幽冥鬼將·043", "realm": 1, "power": 1806, "reward": (407, 854)},
+    44: {"name": "千年樹妖·044", "realm": 1, "power": 1878, "reward": (416, 872)},
+    45: {"name": "滄海蛟龍·045", "realm": 1, "power": 1950, "reward": (425, 890)},
+    46: {"name": "裂天鵬·046", "realm": 1, "power": 2022, "reward": (434, 908)},
+    47: {"name": "太古猿王·047", "realm": 1, "power": 2094, "reward": (443, 926)},
+    48: {"name": "九幽魔君·048", "realm": 1, "power": 2166, "reward": (452, 944)},
+    49: {"name": "星海巨鯨·049", "realm": 1, "power": 2238, "reward": (461, 962)},
+    50: {"name": "天外邪靈·050", "realm": 1, "power": 2310, "reward": (470, 980)},
+    51: {"name": "山野妖狼·051", "realm": 1, "power": 1702, "reward": (479, 998)},
+    52: {"name": "赤焰蟒·052", "realm": 1, "power": 1774, "reward": (488, 1016)},
+    53: {"name": "幽冥鬼將·053", "realm": 1, "power": 1846, "reward": (497, 1034)},
+    54: {"name": "千年樹妖·054", "realm": 1, "power": 1918, "reward": (506, 1052)},
+    55: {"name": "滄海蛟龍·055", "realm": 1, "power": 1990, "reward": (515, 1070)},
+    56: {"name": "裂天鵬·056", "realm": 1, "power": 2062, "reward": (524, 1088)},
+    57: {"name": "太古猿王·057", "realm": 1, "power": 2134, "reward": (533, 1106)},
+    58: {"name": "九幽魔君·058", "realm": 1, "power": 2206, "reward": (542, 1124)},
+    59: {"name": "星海巨鯨·059", "realm": 1, "power": 2278, "reward": (551, 1142)},
+    60: {"name": "天外邪靈·060", "realm": 1, "power": 2350, "reward": (560, 1160)},
+    61: {"name": "山野妖狼·061", "realm": 1, "power": 2422, "reward": (569, 1178)},
+    62: {"name": "赤焰蟒·062", "realm": 1, "power": 2494, "reward": (578, 1196)},
+    63: {"name": "幽冥鬼將·063", "realm": 1, "power": 2566, "reward": (587, 1214)},
+    64: {"name": "千年樹妖·064", "realm": 1, "power": 2638, "reward": (596, 1232)},
+    65: {"name": "滄海蛟龍·065", "realm": 1, "power": 2710, "reward": (605, 1250)},
+    66: {"name": "裂天鵬·066", "realm": 1, "power": 2782, "reward": (614, 1268)},
+    67: {"name": "太古猿王·067", "realm": 1, "power": 2854, "reward": (623, 1286)},
+    68: {"name": "九幽魔君·068", "realm": 1, "power": 2246, "reward": (632, 1304)},
+    69: {"name": "星海巨鯨·069", "realm": 1, "power": 2318, "reward": (641, 1322)},
+    70: {"name": "天外邪靈·070", "realm": 1, "power": 2390, "reward": (650, 1340)},
+    71: {"name": "山野妖狼·071", "realm": 1, "power": 2462, "reward": (659, 1358)},
+    72: {"name": "赤焰蟒·072", "realm": 1, "power": 2534, "reward": (668, 1376)},
+    73: {"name": "幽冥鬼將·073", "realm": 1, "power": 2606, "reward": (677, 1394)},
+    74: {"name": "千年樹妖·074", "realm": 1, "power": 2678, "reward": (686, 1412)},
+    75: {"name": "滄海蛟龍·075", "realm": 1, "power": 2750, "reward": (695, 1430)},
+    76: {"name": "裂天鵬·076", "realm": 1, "power": 2822, "reward": (704, 1448)},
+    77: {"name": "太古猿王·077", "realm": 1, "power": 2894, "reward": (713, 1466)},
+    78: {"name": "九幽魔君·078", "realm": 1, "power": 2966, "reward": (722, 1484)},
+    79: {"name": "星海巨鯨·079", "realm": 1, "power": 3038, "reward": (731, 1502)},
+    80: {"name": "天外邪靈·080", "realm": 1, "power": 3110, "reward": (740, 1520)},
+    81: {"name": "山野妖狼·081", "realm": 2, "power": 3182, "reward": (749, 1538)},
+    82: {"name": "赤焰蟒·082", "realm": 2, "power": 3254, "reward": (758, 1556)},
+    83: {"name": "幽冥鬼將·083", "realm": 2, "power": 3326, "reward": (767, 1574)},
+    84: {"name": "千年樹妖·084", "realm": 2, "power": 3398, "reward": (776, 1592)},
+    85: {"name": "滄海蛟龍·085", "realm": 2, "power": 2790, "reward": (785, 1610)},
+    86: {"name": "裂天鵬·086", "realm": 2, "power": 2862, "reward": (794, 1628)},
+    87: {"name": "太古猿王·087", "realm": 2, "power": 2934, "reward": (803, 1646)},
+    88: {"name": "九幽魔君·088", "realm": 2, "power": 3006, "reward": (812, 1664)},
+    89: {"name": "星海巨鯨·089", "realm": 2, "power": 3078, "reward": (821, 1682)},
+    90: {"name": "天外邪靈·090", "realm": 2, "power": 3150, "reward": (830, 1700)},
+    91: {"name": "山野妖狼·091", "realm": 2, "power": 3222, "reward": (839, 1718)},
+    92: {"name": "赤焰蟒·092", "realm": 2, "power": 3294, "reward": (848, 1736)},
+    93: {"name": "幽冥鬼將·093", "realm": 2, "power": 3366, "reward": (857, 1754)},
+    94: {"name": "千年樹妖·094", "realm": 2, "power": 3438, "reward": (866, 1772)},
+    95: {"name": "滄海蛟龍·095", "realm": 2, "power": 3510, "reward": (875, 1790)},
+    96: {"name": "裂天鵬·096", "realm": 2, "power": 3582, "reward": (884, 1808)},
+    97: {"name": "太古猿王·097", "realm": 2, "power": 3654, "reward": (893, 1826)},
+    98: {"name": "九幽魔君·098", "realm": 2, "power": 3726, "reward": (902, 1844)},
+    99: {"name": "星海巨鯨·099", "realm": 2, "power": 3798, "reward": (911, 1862)},
+    100: {"name": "天外邪靈·100", "realm": 2, "power": 3870, "reward": (920, 1880)},
+    101: {"name": "山野妖狼·101", "realm": 2, "power": 3942, "reward": (929, 1898)},
+    102: {"name": "赤焰蟒·102", "realm": 2, "power": 3334, "reward": (938, 1916)},
+    103: {"name": "幽冥鬼將·103", "realm": 2, "power": 3406, "reward": (947, 1934)},
+    104: {"name": "千年樹妖·104", "realm": 2, "power": 3478, "reward": (956, 1952)},
+    105: {"name": "滄海蛟龍·105", "realm": 2, "power": 3550, "reward": (965, 1970)},
+    106: {"name": "裂天鵬·106", "realm": 2, "power": 3622, "reward": (974, 1988)},
+    107: {"name": "太古猿王·107", "realm": 2, "power": 3694, "reward": (983, 2006)},
+    108: {"name": "九幽魔君·108", "realm": 2, "power": 3766, "reward": (992, 2024)},
+    109: {"name": "星海巨鯨·109", "realm": 2, "power": 3838, "reward": (1001, 2042)},
+    110: {"name": "天外邪靈·110", "realm": 2, "power": 3910, "reward": (1010, 2060)},
+    111: {"name": "山野妖狼·111", "realm": 2, "power": 3982, "reward": (1019, 2078)},
+    112: {"name": "赤焰蟒·112", "realm": 2, "power": 4054, "reward": (1028, 2096)},
+    113: {"name": "幽冥鬼將·113", "realm": 2, "power": 4126, "reward": (1037, 2114)},
+    114: {"name": "千年樹妖·114", "realm": 2, "power": 4198, "reward": (1046, 2132)},
+    115: {"name": "滄海蛟龍·115", "realm": 2, "power": 4270, "reward": (1055, 2150)},
+    116: {"name": "裂天鵬·116", "realm": 2, "power": 4342, "reward": (1064, 2168)},
+    117: {"name": "太古猿王·117", "realm": 2, "power": 4414, "reward": (1073, 2186)},
+    118: {"name": "九幽魔君·118", "realm": 2, "power": 4486, "reward": (1082, 2204)},
+    119: {"name": "星海巨鯨·119", "realm": 2, "power": 3878, "reward": (1091, 2222)},
+    120: {"name": "天外邪靈·120", "realm": 2, "power": 3950, "reward": (1100, 2240)},
+    121: {"name": "山野妖狼·121", "realm": 3, "power": 4022, "reward": (1109, 2258)},
+    122: {"name": "赤焰蟒·122", "realm": 3, "power": 4094, "reward": (1118, 2276)},
+    123: {"name": "幽冥鬼將·123", "realm": 3, "power": 4166, "reward": (1127, 2294)},
+    124: {"name": "千年樹妖·124", "realm": 3, "power": 4238, "reward": (1136, 2312)},
+    125: {"name": "滄海蛟龍·125", "realm": 3, "power": 4310, "reward": (1145, 2330)},
+    126: {"name": "裂天鵬·126", "realm": 3, "power": 4382, "reward": (1154, 2348)},
+    127: {"name": "太古猿王·127", "realm": 3, "power": 4454, "reward": (1163, 2366)},
+    128: {"name": "九幽魔君·128", "realm": 3, "power": 4526, "reward": (1172, 2384)},
+    129: {"name": "星海巨鯨·129", "realm": 3, "power": 4598, "reward": (1181, 2402)},
+    130: {"name": "天外邪靈·130", "realm": 3, "power": 4670, "reward": (1190, 2420)},
+    131: {"name": "山野妖狼·131", "realm": 3, "power": 4742, "reward": (1199, 2438)},
+    132: {"name": "赤焰蟒·132", "realm": 3, "power": 4814, "reward": (1208, 2456)},
+    133: {"name": "幽冥鬼將·133", "realm": 3, "power": 4886, "reward": (1217, 2474)},
+    134: {"name": "千年樹妖·134", "realm": 3, "power": 4958, "reward": (1226, 2492)},
+    135: {"name": "滄海蛟龍·135", "realm": 3, "power": 5030, "reward": (1235, 2510)},
+    136: {"name": "裂天鵬·136", "realm": 3, "power": 4422, "reward": (1244, 2528)},
+    137: {"name": "太古猿王·137", "realm": 3, "power": 4494, "reward": (1253, 2546)},
+    138: {"name": "九幽魔君·138", "realm": 3, "power": 4566, "reward": (1262, 2564)},
+    139: {"name": "星海巨鯨·139", "realm": 3, "power": 4638, "reward": (1271, 2582)},
+    140: {"name": "天外邪靈·140", "realm": 3, "power": 4710, "reward": (1280, 2600)},
+    141: {"name": "山野妖狼·141", "realm": 3, "power": 4782, "reward": (1289, 2618)},
+    142: {"name": "赤焰蟒·142", "realm": 3, "power": 4854, "reward": (1298, 2636)},
+    143: {"name": "幽冥鬼將·143", "realm": 3, "power": 4926, "reward": (1307, 2654)},
+    144: {"name": "千年樹妖·144", "realm": 3, "power": 4998, "reward": (1316, 2672)},
+    145: {"name": "滄海蛟龍·145", "realm": 3, "power": 5070, "reward": (1325, 2690)},
+    146: {"name": "裂天鵬·146", "realm": 3, "power": 5142, "reward": (1334, 2708)},
+    147: {"name": "太古猿王·147", "realm": 3, "power": 5214, "reward": (1343, 2726)},
+    148: {"name": "九幽魔君·148", "realm": 3, "power": 5286, "reward": (1352, 2744)},
+    149: {"name": "星海巨鯨·149", "realm": 3, "power": 5358, "reward": (1361, 2762)},
+    150: {"name": "天外邪靈·150", "realm": 3, "power": 5430, "reward": (1370, 2780)},
+    151: {"name": "山野妖狼·151", "realm": 3, "power": 5502, "reward": (1379, 2798)},
+    152: {"name": "赤焰蟒·152", "realm": 3, "power": 5574, "reward": (1388, 2816)},
+    153: {"name": "幽冥鬼將·153", "realm": 3, "power": 4966, "reward": (1397, 2834)},
+    154: {"name": "千年樹妖·154", "realm": 3, "power": 5038, "reward": (1406, 2852)},
+    155: {"name": "滄海蛟龍·155", "realm": 3, "power": 5110, "reward": (1415, 2870)},
+    156: {"name": "裂天鵬·156", "realm": 3, "power": 5182, "reward": (1424, 2888)},
+    157: {"name": "太古猿王·157", "realm": 3, "power": 5254, "reward": (1433, 2906)},
+    158: {"name": "九幽魔君·158", "realm": 3, "power": 5326, "reward": (1442, 2924)},
+    159: {"name": "星海巨鯨·159", "realm": 3, "power": 5398, "reward": (1451, 2942)},
+    160: {"name": "天外邪靈·160", "realm": 3, "power": 5470, "reward": (1460, 2960)},
+    161: {"name": "山野妖狼·161", "realm": 4, "power": 5542, "reward": (1469, 2978)},
+    162: {"name": "赤焰蟒·162", "realm": 4, "power": 5614, "reward": (1478, 2996)},
+    163: {"name": "幽冥鬼將·163", "realm": 4, "power": 5686, "reward": (1487, 3014)},
+    164: {"name": "千年樹妖·164", "realm": 4, "power": 5758, "reward": (1496, 3032)},
+    165: {"name": "滄海蛟龍·165", "realm": 4, "power": 5830, "reward": (1505, 3050)},
+    166: {"name": "裂天鵬·166", "realm": 4, "power": 5902, "reward": (1514, 3068)},
+    167: {"name": "太古猿王·167", "realm": 4, "power": 5974, "reward": (1523, 3086)},
+    168: {"name": "九幽魔君·168", "realm": 4, "power": 6046, "reward": (1532, 3104)},
+    169: {"name": "星海巨鯨·169", "realm": 4, "power": 6118, "reward": (1541, 3122)},
+    170: {"name": "天外邪靈·170", "realm": 4, "power": 5510, "reward": (1550, 3140)},
+    171: {"name": "山野妖狼·171", "realm": 4, "power": 5582, "reward": (1559, 3158)},
+    172: {"name": "赤焰蟒·172", "realm": 4, "power": 5654, "reward": (1568, 3176)},
+    173: {"name": "幽冥鬼將·173", "realm": 4, "power": 5726, "reward": (1577, 3194)},
+    174: {"name": "千年樹妖·174", "realm": 4, "power": 5798, "reward": (1586, 3212)},
+    175: {"name": "滄海蛟龍·175", "realm": 4, "power": 5870, "reward": (1595, 3230)},
+    176: {"name": "裂天鵬·176", "realm": 4, "power": 5942, "reward": (1604, 3248)},
+    177: {"name": "太古猿王·177", "realm": 4, "power": 6014, "reward": (1613, 3266)},
+    178: {"name": "九幽魔君·178", "realm": 4, "power": 6086, "reward": (1622, 3284)},
+    179: {"name": "星海巨鯨·179", "realm": 4, "power": 6158, "reward": (1631, 3302)},
+    180: {"name": "天外邪靈·180", "realm": 4, "power": 6230, "reward": (1640, 3320)},
+    181: {"name": "山野妖狼·181", "realm": 4, "power": 6302, "reward": (1649, 3338)},
+    182: {"name": "赤焰蟒·182", "realm": 4, "power": 6374, "reward": (1658, 3356)},
+    183: {"name": "幽冥鬼將·183", "realm": 4, "power": 6446, "reward": (1667, 3374)},
+    184: {"name": "千年樹妖·184", "realm": 4, "power": 6518, "reward": (1676, 3392)},
+    185: {"name": "滄海蛟龍·185", "realm": 4, "power": 6590, "reward": (1685, 3410)},
+    186: {"name": "裂天鵬·186", "realm": 4, "power": 6662, "reward": (1694, 3428)},
+    187: {"name": "太古猿王·187", "realm": 4, "power": 6054, "reward": (1703, 3446)},
+    188: {"name": "九幽魔君·188", "realm": 4, "power": 6126, "reward": (1712, 3464)},
+    189: {"name": "星海巨鯨·189", "realm": 4, "power": 6198, "reward": (1721, 3482)},
+    190: {"name": "天外邪靈·190", "realm": 4, "power": 6270, "reward": (1730, 3500)},
+    191: {"name": "山野妖狼·191", "realm": 4, "power": 6342, "reward": (1739, 3518)},
+    192: {"name": "赤焰蟒·192", "realm": 4, "power": 6414, "reward": (1748, 3536)},
+    193: {"name": "幽冥鬼將·193", "realm": 4, "power": 6486, "reward": (1757, 3554)},
+    194: {"name": "千年樹妖·194", "realm": 4, "power": 6558, "reward": (1766, 3572)},
+    195: {"name": "滄海蛟龍·195", "realm": 4, "power": 6630, "reward": (1775, 3590)},
+    196: {"name": "裂天鵬·196", "realm": 4, "power": 6702, "reward": (1784, 3608)},
+    197: {"name": "太古猿王·197", "realm": 4, "power": 6774, "reward": (1793, 3626)},
+    198: {"name": "九幽魔君·198", "realm": 4, "power": 6846, "reward": (1802, 3644)},
+    199: {"name": "星海巨鯨·199", "realm": 4, "power": 6918, "reward": (1811, 3662)},
+    200: {"name": "天外邪靈·200", "realm": 4, "power": 6990, "reward": (1820, 3680)},
+    201: {"name": "山野妖狼·201", "realm": 5, "power": 7062, "reward": (1829, 3698)},
+    202: {"name": "赤焰蟒·202", "realm": 5, "power": 7134, "reward": (1838, 3716)},
+    203: {"name": "幽冥鬼將·203", "realm": 5, "power": 7206, "reward": (1847, 3734)},
+    204: {"name": "千年樹妖·204", "realm": 5, "power": 6598, "reward": (1856, 3752)},
+    205: {"name": "滄海蛟龍·205", "realm": 5, "power": 6670, "reward": (1865, 3770)},
+    206: {"name": "裂天鵬·206", "realm": 5, "power": 6742, "reward": (1874, 3788)},
+    207: {"name": "太古猿王·207", "realm": 5, "power": 6814, "reward": (1883, 3806)},
+    208: {"name": "九幽魔君·208", "realm": 5, "power": 6886, "reward": (1892, 3824)},
+    209: {"name": "星海巨鯨·209", "realm": 5, "power": 6958, "reward": (1901, 3842)},
+    210: {"name": "天外邪靈·210", "realm": 5, "power": 7030, "reward": (1910, 3860)},
+    211: {"name": "山野妖狼·211", "realm": 5, "power": 7102, "reward": (1919, 3878)},
+    212: {"name": "赤焰蟒·212", "realm": 5, "power": 7174, "reward": (1928, 3896)},
+    213: {"name": "幽冥鬼將·213", "realm": 5, "power": 7246, "reward": (1937, 3914)},
+    214: {"name": "千年樹妖·214", "realm": 5, "power": 7318, "reward": (1946, 3932)},
+    215: {"name": "滄海蛟龍·215", "realm": 5, "power": 7390, "reward": (1955, 3950)},
+    216: {"name": "裂天鵬·216", "realm": 5, "power": 7462, "reward": (1964, 3968)},
+    217: {"name": "太古猿王·217", "realm": 5, "power": 7534, "reward": (1973, 3986)},
+    218: {"name": "九幽魔君·218", "realm": 5, "power": 7606, "reward": (1982, 4004)},
+    219: {"name": "星海巨鯨·219", "realm": 5, "power": 7678, "reward": (1991, 4022)},
+    220: {"name": "天外邪靈·220", "realm": 5, "power": 7750, "reward": (2000, 4040)},
+    221: {"name": "山野妖狼·221", "realm": 5, "power": 7142, "reward": (2009, 4058)},
+    222: {"name": "赤焰蟒·222", "realm": 5, "power": 7214, "reward": (2018, 4076)},
+    223: {"name": "幽冥鬼將·223", "realm": 5, "power": 7286, "reward": (2027, 4094)},
+    224: {"name": "千年樹妖·224", "realm": 5, "power": 7358, "reward": (2036, 4112)},
+    225: {"name": "滄海蛟龍·225", "realm": 5, "power": 7430, "reward": (2045, 4130)},
+    226: {"name": "裂天鵬·226", "realm": 5, "power": 7502, "reward": (2054, 4148)},
+    227: {"name": "太古猿王·227", "realm": 5, "power": 7574, "reward": (2063, 4166)},
+    228: {"name": "九幽魔君·228", "realm": 5, "power": 7646, "reward": (2072, 4184)},
+    229: {"name": "星海巨鯨·229", "realm": 5, "power": 7718, "reward": (2081, 4202)},
+    230: {"name": "天外邪靈·230", "realm": 5, "power": 7790, "reward": (2090, 4220)},
+    231: {"name": "山野妖狼·231", "realm": 5, "power": 7862, "reward": (2099, 4238)},
+    232: {"name": "赤焰蟒·232", "realm": 5, "power": 7934, "reward": (2108, 4256)},
+    233: {"name": "幽冥鬼將·233", "realm": 5, "power": 8006, "reward": (2117, 4274)},
+    234: {"name": "千年樹妖·234", "realm": 5, "power": 8078, "reward": (2126, 4292)},
+    235: {"name": "滄海蛟龍·235", "realm": 5, "power": 8150, "reward": (2135, 4310)},
+    236: {"name": "裂天鵬·236", "realm": 5, "power": 8222, "reward": (2144, 4328)},
+    237: {"name": "太古猿王·237", "realm": 5, "power": 8294, "reward": (2153, 4346)},
+    238: {"name": "九幽魔君·238", "realm": 5, "power": 7686, "reward": (2162, 4364)},
+    239: {"name": "星海巨鯨·239", "realm": 5, "power": 7758, "reward": (2171, 4382)},
+    240: {"name": "天外邪靈·240", "realm": 5, "power": 7830, "reward": (2180, 4400)},
+    241: {"name": "山野妖狼·241", "realm": 6, "power": 7902, "reward": (2189, 4418)},
+    242: {"name": "赤焰蟒·242", "realm": 6, "power": 7974, "reward": (2198, 4436)},
+    243: {"name": "幽冥鬼將·243", "realm": 6, "power": 8046, "reward": (2207, 4454)},
+    244: {"name": "千年樹妖·244", "realm": 6, "power": 8118, "reward": (2216, 4472)},
+    245: {"name": "滄海蛟龍·245", "realm": 6, "power": 8190, "reward": (2225, 4490)},
+    246: {"name": "裂天鵬·246", "realm": 6, "power": 8262, "reward": (2234, 4508)},
+    247: {"name": "太古猿王·247", "realm": 6, "power": 8334, "reward": (2243, 4526)},
+    248: {"name": "九幽魔君·248", "realm": 6, "power": 8406, "reward": (2252, 4544)},
+    249: {"name": "星海巨鯨·249", "realm": 6, "power": 8478, "reward": (2261, 4562)},
+    250: {"name": "天外邪靈·250", "realm": 6, "power": 8550, "reward": (2270, 4580)},
+    251: {"name": "山野妖狼·251", "realm": 6, "power": 8622, "reward": (2279, 4598)},
+    252: {"name": "赤焰蟒·252", "realm": 6, "power": 8694, "reward": (2288, 4616)},
+    253: {"name": "幽冥鬼將·253", "realm": 6, "power": 8766, "reward": (2297, 4634)},
+    254: {"name": "千年樹妖·254", "realm": 6, "power": 8838, "reward": (2306, 4652)},
+    255: {"name": "滄海蛟龍·255", "realm": 6, "power": 8230, "reward": (2315, 4670)},
+    256: {"name": "裂天鵬·256", "realm": 6, "power": 8302, "reward": (2324, 4688)},
+    257: {"name": "太古猿王·257", "realm": 6, "power": 8374, "reward": (2333, 4706)},
+    258: {"name": "九幽魔君·258", "realm": 6, "power": 8446, "reward": (2342, 4724)},
+    259: {"name": "星海巨鯨·259", "realm": 6, "power": 8518, "reward": (2351, 4742)},
+    260: {"name": "天外邪靈·260", "realm": 6, "power": 8590, "reward": (2360, 4760)},
+    261: {"name": "山野妖狼·261", "realm": 6, "power": 8662, "reward": (2369, 4778)},
+    262: {"name": "赤焰蟒·262", "realm": 6, "power": 8734, "reward": (2378, 4796)},
+    263: {"name": "幽冥鬼將·263", "realm": 6, "power": 8806, "reward": (2387, 4814)},
+    264: {"name": "千年樹妖·264", "realm": 6, "power": 8878, "reward": (2396, 4832)},
+    265: {"name": "滄海蛟龍·265", "realm": 6, "power": 8950, "reward": (2405, 4850)},
+    266: {"name": "裂天鵬·266", "realm": 6, "power": 9022, "reward": (2414, 4868)},
+    267: {"name": "太古猿王·267", "realm": 6, "power": 9094, "reward": (2423, 4886)},
+    268: {"name": "九幽魔君·268", "realm": 6, "power": 9166, "reward": (2432, 4904)},
+    269: {"name": "星海巨鯨·269", "realm": 6, "power": 9238, "reward": (2441, 4922)},
+    270: {"name": "天外邪靈·270", "realm": 6, "power": 9310, "reward": (2450, 4940)},
+    271: {"name": "山野妖狼·271", "realm": 6, "power": 9382, "reward": (2459, 4958)},
+    272: {"name": "赤焰蟒·272", "realm": 6, "power": 8774, "reward": (2468, 4976)},
+    273: {"name": "幽冥鬼將·273", "realm": 6, "power": 8846, "reward": (2477, 4994)},
+    274: {"name": "千年樹妖·274", "realm": 6, "power": 8918, "reward": (2486, 5012)},
+    275: {"name": "滄海蛟龍·275", "realm": 6, "power": 8990, "reward": (2495, 5030)},
+    276: {"name": "裂天鵬·276", "realm": 6, "power": 9062, "reward": (2504, 5048)},
+    277: {"name": "太古猿王·277", "realm": 6, "power": 9134, "reward": (2513, 5066)},
+    278: {"name": "九幽魔君·278", "realm": 6, "power": 9206, "reward": (2522, 5084)},
+    279: {"name": "星海巨鯨·279", "realm": 6, "power": 9278, "reward": (2531, 5102)},
+    280: {"name": "天外邪靈·280", "realm": 6, "power": 9350, "reward": (2540, 5120)},
+    281: {"name": "山野妖狼·281", "realm": 7, "power": 9422, "reward": (2549, 5138)},
+    282: {"name": "赤焰蟒·282", "realm": 7, "power": 9494, "reward": (2558, 5156)},
+    283: {"name": "幽冥鬼將·283", "realm": 7, "power": 9566, "reward": (2567, 5174)},
+    284: {"name": "千年樹妖·284", "realm": 7, "power": 9638, "reward": (2576, 5192)},
+    285: {"name": "滄海蛟龍·285", "realm": 7, "power": 9710, "reward": (2585, 5210)},
+    286: {"name": "裂天鵬·286", "realm": 7, "power": 9782, "reward": (2594, 5228)},
+    287: {"name": "太古猿王·287", "realm": 7, "power": 9854, "reward": (2603, 5246)},
+    288: {"name": "九幽魔君·288", "realm": 7, "power": 9926, "reward": (2612, 5264)},
+    289: {"name": "星海巨鯨·289", "realm": 7, "power": 9318, "reward": (2621, 5282)},
+    290: {"name": "天外邪靈·290", "realm": 7, "power": 9390, "reward": (2630, 5300)},
+    291: {"name": "山野妖狼·291", "realm": 7, "power": 9462, "reward": (2639, 5318)},
+    292: {"name": "赤焰蟒·292", "realm": 7, "power": 9534, "reward": (2648, 5336)},
+    293: {"name": "幽冥鬼將·293", "realm": 7, "power": 9606, "reward": (2657, 5354)},
+    294: {"name": "千年樹妖·294", "realm": 7, "power": 9678, "reward": (2666, 5372)},
+    295: {"name": "滄海蛟龍·295", "realm": 7, "power": 9750, "reward": (2675, 5390)},
+    296: {"name": "裂天鵬·296", "realm": 7, "power": 9822, "reward": (2684, 5408)},
+    297: {"name": "太古猿王·297", "realm": 7, "power": 9894, "reward": (2693, 5426)},
+    298: {"name": "九幽魔君·298", "realm": 7, "power": 9966, "reward": (2702, 5444)},
+    299: {"name": "星海巨鯨·299", "realm": 7, "power": 10038, "reward": (2711, 5462)},
+    300: {"name": "天外邪靈·300", "realm": 7, "power": 10110, "reward": (2720, 5480)},
+    301: {"name": "山野妖狼·301", "realm": 7, "power": 10182, "reward": (2729, 5498)},
+    302: {"name": "赤焰蟒·302", "realm": 7, "power": 10254, "reward": (2738, 5516)},
+    303: {"name": "幽冥鬼將·303", "realm": 7, "power": 10326, "reward": (2747, 5534)},
+    304: {"name": "千年樹妖·304", "realm": 7, "power": 10398, "reward": (2756, 5552)},
+    305: {"name": "滄海蛟龍·305", "realm": 7, "power": 10470, "reward": (2765, 5570)},
+    306: {"name": "裂天鵬·306", "realm": 7, "power": 9862, "reward": (2774, 5588)},
+    307: {"name": "太古猿王·307", "realm": 7, "power": 9934, "reward": (2783, 5606)},
+    308: {"name": "九幽魔君·308", "realm": 7, "power": 10006, "reward": (2792, 5624)},
+    309: {"name": "星海巨鯨·309", "realm": 7, "power": 10078, "reward": (2801, 5642)},
+    310: {"name": "天外邪靈·310", "realm": 7, "power": 10150, "reward": (2810, 5660)},
+    311: {"name": "山野妖狼·311", "realm": 7, "power": 10222, "reward": (2819, 5678)},
+    312: {"name": "赤焰蟒·312", "realm": 7, "power": 10294, "reward": (2828, 5696)},
+    313: {"name": "幽冥鬼將·313", "realm": 7, "power": 10366, "reward": (2837, 5714)},
+    314: {"name": "千年樹妖·314", "realm": 7, "power": 10438, "reward": (2846, 5732)},
+    315: {"name": "滄海蛟龍·315", "realm": 7, "power": 10510, "reward": (2855, 5750)},
+    316: {"name": "裂天鵬·316", "realm": 7, "power": 10582, "reward": (2864, 5768)},
+    317: {"name": "太古猿王·317", "realm": 7, "power": 10654, "reward": (2873, 5786)},
+    318: {"name": "九幽魔君·318", "realm": 7, "power": 10726, "reward": (2882, 5804)},
+    319: {"name": "星海巨鯨·319", "realm": 7, "power": 10798, "reward": (2891, 5822)},
+    320: {"name": "天外邪靈·320", "realm": 7, "power": 10870, "reward": (2900, 5840)},
+    321: {"name": "山野妖狼·321", "realm": 8, "power": 10942, "reward": (2909, 5858)},
+    322: {"name": "赤焰蟒·322", "realm": 8, "power": 11014, "reward": (2918, 5876)},
+    323: {"name": "幽冥鬼將·323", "realm": 8, "power": 10406, "reward": (2927, 5894)},
+    324: {"name": "千年樹妖·324", "realm": 8, "power": 10478, "reward": (2936, 5912)},
+    325: {"name": "滄海蛟龍·325", "realm": 8, "power": 10550, "reward": (2945, 5930)},
+    326: {"name": "裂天鵬·326", "realm": 8, "power": 10622, "reward": (2954, 5948)},
+    327: {"name": "太古猿王·327", "realm": 8, "power": 10694, "reward": (2963, 5966)},
+    328: {"name": "九幽魔君·328", "realm": 8, "power": 10766, "reward": (2972, 5984)},
+    329: {"name": "星海巨鯨·329", "realm": 8, "power": 10838, "reward": (2981, 6002)},
+    330: {"name": "天外邪靈·330", "realm": 8, "power": 10910, "reward": (2990, 6020)},
+    331: {"name": "山野妖狼·331", "realm": 8, "power": 10982, "reward": (2999, 6038)},
+    332: {"name": "赤焰蟒·332", "realm": 8, "power": 11054, "reward": (3008, 6056)},
+    333: {"name": "幽冥鬼將·333", "realm": 8, "power": 11126, "reward": (3017, 6074)},
+    334: {"name": "千年樹妖·334", "realm": 8, "power": 11198, "reward": (3026, 6092)},
+    335: {"name": "滄海蛟龍·335", "realm": 8, "power": 11270, "reward": (3035, 6110)},
+    336: {"name": "裂天鵬·336", "realm": 8, "power": 11342, "reward": (3044, 6128)},
+    337: {"name": "太古猿王·337", "realm": 8, "power": 11414, "reward": (3053, 6146)},
+    338: {"name": "九幽魔君·338", "realm": 8, "power": 11486, "reward": (3062, 6164)},
+    339: {"name": "星海巨鯨·339", "realm": 8, "power": 11558, "reward": (3071, 6182)},
+    340: {"name": "天外邪靈·340", "realm": 8, "power": 10950, "reward": (3080, 6200)},
+    341: {"name": "山野妖狼·341", "realm": 8, "power": 11022, "reward": (3089, 6218)},
+    342: {"name": "赤焰蟒·342", "realm": 8, "power": 11094, "reward": (3098, 6236)},
+    343: {"name": "幽冥鬼將·343", "realm": 8, "power": 11166, "reward": (3107, 6254)},
+    344: {"name": "千年樹妖·344", "realm": 8, "power": 11238, "reward": (3116, 6272)},
+    345: {"name": "滄海蛟龍·345", "realm": 8, "power": 11310, "reward": (3125, 6290)},
+    346: {"name": "裂天鵬·346", "realm": 8, "power": 11382, "reward": (3134, 6308)},
+    347: {"name": "太古猿王·347", "realm": 8, "power": 11454, "reward": (3143, 6326)},
+    348: {"name": "九幽魔君·348", "realm": 8, "power": 11526, "reward": (3152, 6344)},
+    349: {"name": "星海巨鯨·349", "realm": 8, "power": 11598, "reward": (3161, 6362)},
+    350: {"name": "天外邪靈·350", "realm": 8, "power": 11670, "reward": (3170, 6380)},
+    351: {"name": "山野妖狼·351", "realm": 8, "power": 11742, "reward": (3179, 6398)},
+    352: {"name": "赤焰蟒·352", "realm": 8, "power": 11814, "reward": (3188, 6416)},
+    353: {"name": "幽冥鬼將·353", "realm": 8, "power": 11886, "reward": (3197, 6434)},
+    354: {"name": "千年樹妖·354", "realm": 8, "power": 11958, "reward": (3206, 6452)},
+    355: {"name": "滄海蛟龍·355", "realm": 8, "power": 12030, "reward": (3215, 6470)},
+    356: {"name": "裂天鵬·356", "realm": 8, "power": 12102, "reward": (3224, 6488)},
+    357: {"name": "太古猿王·357", "realm": 8, "power": 11494, "reward": (3233, 6506)},
+    358: {"name": "九幽魔君·358", "realm": 8, "power": 11566, "reward": (3242, 6524)},
+    359: {"name": "星海巨鯨·359", "realm": 8, "power": 11638, "reward": (3251, 6542)},
+    360: {"name": "天外邪靈·360", "realm": 8, "power": 11710, "reward": (3260, 6560)},
+    361: {"name": "山野妖狼·361", "realm": 9, "power": 11782, "reward": (3269, 6578)},
+    362: {"name": "赤焰蟒·362", "realm": 9, "power": 11854, "reward": (3278, 6596)},
+    363: {"name": "幽冥鬼將·363", "realm": 9, "power": 11926, "reward": (3287, 6614)},
+    364: {"name": "千年樹妖·364", "realm": 9, "power": 11998, "reward": (3296, 6632)},
+    365: {"name": "滄海蛟龍·365", "realm": 9, "power": 12070, "reward": (3305, 6650)},
+    366: {"name": "裂天鵬·366", "realm": 9, "power": 12142, "reward": (3314, 6668)},
+    367: {"name": "太古猿王·367", "realm": 9, "power": 12214, "reward": (3323, 6686)},
+    368: {"name": "九幽魔君·368", "realm": 9, "power": 12286, "reward": (3332, 6704)},
+    369: {"name": "星海巨鯨·369", "realm": 9, "power": 12358, "reward": (3341, 6722)},
+    370: {"name": "天外邪靈·370", "realm": 9, "power": 12430, "reward": (3350, 6740)},
+    371: {"name": "山野妖狼·371", "realm": 9, "power": 12502, "reward": (3359, 6758)},
+    372: {"name": "赤焰蟒·372", "realm": 9, "power": 12574, "reward": (3368, 6776)},
+    373: {"name": "幽冥鬼將·373", "realm": 9, "power": 12646, "reward": (3377, 6794)},
+    374: {"name": "千年樹妖·374", "realm": 9, "power": 12038, "reward": (3386, 6812)},
+    375: {"name": "滄海蛟龍·375", "realm": 9, "power": 12110, "reward": (3395, 6830)},
+    376: {"name": "裂天鵬·376", "realm": 9, "power": 12182, "reward": (3404, 6848)},
+    377: {"name": "太古猿王·377", "realm": 9, "power": 12254, "reward": (3413, 6866)},
+    378: {"name": "九幽魔君·378", "realm": 9, "power": 12326, "reward": (3422, 6884)},
+    379: {"name": "星海巨鯨·379", "realm": 9, "power": 12398, "reward": (3431, 6902)},
+    380: {"name": "天外邪靈·380", "realm": 9, "power": 12470, "reward": (3440, 6920)},
+    381: {"name": "山野妖狼·381", "realm": 9, "power": 12542, "reward": (3449, 6938)},
+    382: {"name": "赤焰蟒·382", "realm": 9, "power": 12614, "reward": (3458, 6956)},
+    383: {"name": "幽冥鬼將·383", "realm": 9, "power": 12686, "reward": (3467, 6974)},
+    384: {"name": "千年樹妖·384", "realm": 9, "power": 12758, "reward": (3476, 6992)},
+    385: {"name": "滄海蛟龍·385", "realm": 9, "power": 12830, "reward": (3485, 7010)},
+    386: {"name": "裂天鵬·386", "realm": 9, "power": 12902, "reward": (3494, 7028)},
+    387: {"name": "太古猿王·387", "realm": 9, "power": 12974, "reward": (3503, 7046)},
+    388: {"name": "九幽魔君·388", "realm": 9, "power": 13046, "reward": (3512, 7064)},
+    389: {"name": "星海巨鯨·389", "realm": 9, "power": 13118, "reward": (3521, 7082)},
+    390: {"name": "天外邪靈·390", "realm": 9, "power": 13190, "reward": (3530, 7100)},
+    391: {"name": "山野妖狼·391", "realm": 9, "power": 12582, "reward": (3539, 7118)},
+    392: {"name": "赤焰蟒·392", "realm": 9, "power": 12654, "reward": (3548, 7136)},
+    393: {"name": "幽冥鬼將·393", "realm": 9, "power": 12726, "reward": (3557, 7154)},
+    394: {"name": "千年樹妖·394", "realm": 9, "power": 12798, "reward": (3566, 7172)},
+    395: {"name": "滄海蛟龍·395", "realm": 9, "power": 12870, "reward": (3575, 7190)},
+    396: {"name": "裂天鵬·396", "realm": 9, "power": 12942, "reward": (3584, 7208)},
+    397: {"name": "太古猿王·397", "realm": 9, "power": 13014, "reward": (3593, 7226)},
+    398: {"name": "九幽魔君·398", "realm": 9, "power": 13086, "reward": (3602, 7244)},
+    399: {"name": "星海巨鯨·399", "realm": 9, "power": 13158, "reward": (3611, 7262)},
+    400: {"name": "天外邪靈·400", "realm": 9, "power": 13230, "reward": (3620, 7280)},
 }
 
-BOBBER_POOL = {
-    "⚪ 常規軟木浮標": {"success_rate": 0, "mutate_bonus": 0.0}, "🟢 綠光電子浮標": {"success_rate": 15, "mutate_bonus": 0.05},
-    "🔵 藍海震盪浮標": {"success_rate": 25, "mutate_bonus": 0.12}, "🔴 狂暴重力浮標": {"success_rate": 45, "mutate_bonus": 0.25}
+QUESTS = {
+    1: {"name": "打坐試煉·0001", "type": "打坐", "target": 2, "reward": 34, "exp": 14},
+    2: {"name": "討伐試煉·0002", "type": "討伐", "target": 3, "reward": 43, "exp": 18},
+    3: {"name": "採集試煉·0003", "type": "採集", "target": 4, "reward": 52, "exp": 22},
+    4: {"name": "購物試煉·0004", "type": "購物", "target": 5, "reward": 61, "exp": 26},
+    5: {"name": "煉丹試煉·0005", "type": "煉丹", "target": 6, "reward": 70, "exp": 30},
+    6: {"name": "宗門試煉·0006", "type": "宗門", "target": 7, "reward": 79, "exp": 34},
+    7: {"name": "秘境試煉·0007", "type": "秘境", "target": 8, "reward": 88, "exp": 38},
+    8: {"name": "打坐試煉·0008", "type": "打坐", "target": 1, "reward": 97, "exp": 42},
+    9: {"name": "討伐試煉·0009", "type": "討伐", "target": 2, "reward": 106, "exp": 46},
+    10: {"name": "採集試煉·0010", "type": "採集", "target": 3, "reward": 115, "exp": 50},
+    11: {"name": "購物試煉·0011", "type": "購物", "target": 4, "reward": 124, "exp": 54},
+    12: {"name": "煉丹試煉·0012", "type": "煉丹", "target": 5, "reward": 133, "exp": 58},
+    13: {"name": "宗門試煉·0013", "type": "宗門", "target": 6, "reward": 142, "exp": 62},
+    14: {"name": "秘境試煉·0014", "type": "秘境", "target": 7, "reward": 151, "exp": 66},
+    15: {"name": "打坐試煉·0015", "type": "打坐", "target": 8, "reward": 160, "exp": 70},
+    16: {"name": "討伐試煉·0016", "type": "討伐", "target": 1, "reward": 169, "exp": 74},
+    17: {"name": "採集試煉·0017", "type": "採集", "target": 2, "reward": 178, "exp": 78},
+    18: {"name": "購物試煉·0018", "type": "購物", "target": 3, "reward": 187, "exp": 82},
+    19: {"name": "煉丹試煉·0019", "type": "煉丹", "target": 4, "reward": 196, "exp": 86},
+    20: {"name": "宗門試煉·0020", "type": "宗門", "target": 5, "reward": 205, "exp": 90},
+    21: {"name": "秘境試煉·0021", "type": "秘境", "target": 6, "reward": 214, "exp": 94},
+    22: {"name": "打坐試煉·0022", "type": "打坐", "target": 7, "reward": 223, "exp": 98},
+    23: {"name": "討伐試煉·0023", "type": "討伐", "target": 8, "reward": 232, "exp": 102},
+    24: {"name": "採集試煉·0024", "type": "採集", "target": 1, "reward": 241, "exp": 106},
+    25: {"name": "購物試煉·0025", "type": "購物", "target": 2, "reward": 250, "exp": 110},
+    26: {"name": "煉丹試煉·0026", "type": "煉丹", "target": 3, "reward": 259, "exp": 114},
+    27: {"name": "宗門試煉·0027", "type": "宗門", "target": 4, "reward": 268, "exp": 118},
+    28: {"name": "秘境試煉·0028", "type": "秘境", "target": 5, "reward": 277, "exp": 122},
+    29: {"name": "打坐試煉·0029", "type": "打坐", "target": 6, "reward": 286, "exp": 126},
+    30: {"name": "討伐試煉·0030", "type": "討伐", "target": 7, "reward": 295, "exp": 130},
+    31: {"name": "採集試煉·0031", "type": "採集", "target": 8, "reward": 304, "exp": 134},
+    32: {"name": "購物試煉·0032", "type": "購物", "target": 1, "reward": 313, "exp": 138},
+    33: {"name": "煉丹試煉·0033", "type": "煉丹", "target": 2, "reward": 322, "exp": 142},
+    34: {"name": "宗門試煉·0034", "type": "宗門", "target": 3, "reward": 331, "exp": 146},
+    35: {"name": "秘境試煉·0035", "type": "秘境", "target": 4, "reward": 340, "exp": 150},
+    36: {"name": "打坐試煉·0036", "type": "打坐", "target": 5, "reward": 349, "exp": 154},
+    37: {"name": "討伐試煉·0037", "type": "討伐", "target": 6, "reward": 358, "exp": 158},
+    38: {"name": "採集試煉·0038", "type": "採集", "target": 7, "reward": 367, "exp": 162},
+    39: {"name": "購物試煉·0039", "type": "購物", "target": 8, "reward": 376, "exp": 166},
+    40: {"name": "煉丹試煉·0040", "type": "煉丹", "target": 1, "reward": 385, "exp": 170},
+    41: {"name": "宗門試煉·0041", "type": "宗門", "target": 2, "reward": 394, "exp": 174},
+    42: {"name": "秘境試煉·0042", "type": "秘境", "target": 3, "reward": 403, "exp": 178},
+    43: {"name": "打坐試煉·0043", "type": "打坐", "target": 4, "reward": 412, "exp": 182},
+    44: {"name": "討伐試煉·0044", "type": "討伐", "target": 5, "reward": 421, "exp": 186},
+    45: {"name": "採集試煉·0045", "type": "採集", "target": 6, "reward": 430, "exp": 190},
+    46: {"name": "購物試煉·0046", "type": "購物", "target": 7, "reward": 439, "exp": 194},
+    47: {"name": "煉丹試煉·0047", "type": "煉丹", "target": 8, "reward": 448, "exp": 198},
+    48: {"name": "宗門試煉·0048", "type": "宗門", "target": 1, "reward": 457, "exp": 202},
+    49: {"name": "秘境試煉·0049", "type": "秘境", "target": 2, "reward": 466, "exp": 206},
+    50: {"name": "打坐試煉·0050", "type": "打坐", "target": 3, "reward": 475, "exp": 210},
+    51: {"name": "討伐試煉·0051", "type": "討伐", "target": 4, "reward": 484, "exp": 214},
+    52: {"name": "採集試煉·0052", "type": "採集", "target": 5, "reward": 493, "exp": 218},
+    53: {"name": "購物試煉·0053", "type": "購物", "target": 6, "reward": 502, "exp": 222},
+    54: {"name": "煉丹試煉·0054", "type": "煉丹", "target": 7, "reward": 511, "exp": 226},
+    55: {"name": "宗門試煉·0055", "type": "宗門", "target": 8, "reward": 520, "exp": 230},
+    56: {"name": "秘境試煉·0056", "type": "秘境", "target": 1, "reward": 529, "exp": 234},
+    57: {"name": "打坐試煉·0057", "type": "打坐", "target": 2, "reward": 538, "exp": 238},
+    58: {"name": "討伐試煉·0058", "type": "討伐", "target": 3, "reward": 547, "exp": 242},
+    59: {"name": "採集試煉·0059", "type": "採集", "target": 4, "reward": 556, "exp": 246},
+    60: {"name": "購物試煉·0060", "type": "購物", "target": 5, "reward": 565, "exp": 250},
+    61: {"name": "煉丹試煉·0061", "type": "煉丹", "target": 6, "reward": 574, "exp": 254},
+    62: {"name": "宗門試煉·0062", "type": "宗門", "target": 7, "reward": 583, "exp": 258},
+    63: {"name": "秘境試煉·0063", "type": "秘境", "target": 8, "reward": 592, "exp": 262},
+    64: {"name": "打坐試煉·0064", "type": "打坐", "target": 1, "reward": 601, "exp": 266},
+    65: {"name": "討伐試煉·0065", "type": "討伐", "target": 2, "reward": 610, "exp": 270},
+    66: {"name": "採集試煉·0066", "type": "採集", "target": 3, "reward": 619, "exp": 274},
+    67: {"name": "購物試煉·0067", "type": "購物", "target": 4, "reward": 628, "exp": 278},
+    68: {"name": "煉丹試煉·0068", "type": "煉丹", "target": 5, "reward": 637, "exp": 282},
+    69: {"name": "宗門試煉·0069", "type": "宗門", "target": 6, "reward": 646, "exp": 286},
+    70: {"name": "秘境試煉·0070", "type": "秘境", "target": 7, "reward": 655, "exp": 290},
+    71: {"name": "打坐試煉·0071", "type": "打坐", "target": 8, "reward": 664, "exp": 294},
+    72: {"name": "討伐試煉·0072", "type": "討伐", "target": 1, "reward": 673, "exp": 298},
+    73: {"name": "採集試煉·0073", "type": "採集", "target": 2, "reward": 682, "exp": 302},
+    74: {"name": "購物試煉·0074", "type": "購物", "target": 3, "reward": 691, "exp": 306},
+    75: {"name": "煉丹試煉·0075", "type": "煉丹", "target": 4, "reward": 700, "exp": 310},
+    76: {"name": "宗門試煉·0076", "type": "宗門", "target": 5, "reward": 709, "exp": 314},
+    77: {"name": "秘境試煉·0077", "type": "秘境", "target": 6, "reward": 718, "exp": 318},
+    78: {"name": "打坐試煉·0078", "type": "打坐", "target": 7, "reward": 727, "exp": 322},
+    79: {"name": "討伐試煉·0079", "type": "討伐", "target": 8, "reward": 736, "exp": 326},
+    80: {"name": "採集試煉·0080", "type": "採集", "target": 1, "reward": 745, "exp": 330},
+    81: {"name": "購物試煉·0081", "type": "購物", "target": 2, "reward": 754, "exp": 334},
+    82: {"name": "煉丹試煉·0082", "type": "煉丹", "target": 3, "reward": 763, "exp": 338},
+    83: {"name": "宗門試煉·0083", "type": "宗門", "target": 4, "reward": 772, "exp": 342},
+    84: {"name": "秘境試煉·0084", "type": "秘境", "target": 5, "reward": 781, "exp": 346},
+    85: {"name": "打坐試煉·0085", "type": "打坐", "target": 6, "reward": 790, "exp": 350},
+    86: {"name": "討伐試煉·0086", "type": "討伐", "target": 7, "reward": 799, "exp": 354},
+    87: {"name": "採集試煉·0087", "type": "採集", "target": 8, "reward": 808, "exp": 358},
+    88: {"name": "購物試煉·0088", "type": "購物", "target": 1, "reward": 817, "exp": 362},
+    89: {"name": "煉丹試煉·0089", "type": "煉丹", "target": 2, "reward": 826, "exp": 366},
+    90: {"name": "宗門試煉·0090", "type": "宗門", "target": 3, "reward": 835, "exp": 370},
+    91: {"name": "秘境試煉·0091", "type": "秘境", "target": 4, "reward": 844, "exp": 374},
+    92: {"name": "打坐試煉·0092", "type": "打坐", "target": 5, "reward": 853, "exp": 378},
+    93: {"name": "討伐試煉·0093", "type": "討伐", "target": 6, "reward": 862, "exp": 382},
+    94: {"name": "採集試煉·0094", "type": "採集", "target": 7, "reward": 871, "exp": 386},
+    95: {"name": "購物試煉·0095", "type": "購物", "target": 8, "reward": 880, "exp": 390},
+    96: {"name": "煉丹試煉·0096", "type": "煉丹", "target": 1, "reward": 889, "exp": 394},
+    97: {"name": "宗門試煉·0097", "type": "宗門", "target": 2, "reward": 898, "exp": 398},
+    98: {"name": "秘境試煉·0098", "type": "秘境", "target": 3, "reward": 907, "exp": 402},
+    99: {"name": "打坐試煉·0099", "type": "打坐", "target": 4, "reward": 916, "exp": 406},
+    100: {"name": "討伐試煉·0100", "type": "討伐", "target": 5, "reward": 925, "exp": 410},
+    101: {"name": "採集試煉·0101", "type": "採集", "target": 6, "reward": 934, "exp": 414},
+    102: {"name": "購物試煉·0102", "type": "購物", "target": 7, "reward": 943, "exp": 418},
+    103: {"name": "煉丹試煉·0103", "type": "煉丹", "target": 8, "reward": 952, "exp": 422},
+    104: {"name": "宗門試煉·0104", "type": "宗門", "target": 1, "reward": 961, "exp": 426},
+    105: {"name": "秘境試煉·0105", "type": "秘境", "target": 2, "reward": 970, "exp": 430},
+    106: {"name": "打坐試煉·0106", "type": "打坐", "target": 3, "reward": 979, "exp": 434},
+    107: {"name": "討伐試煉·0107", "type": "討伐", "target": 4, "reward": 988, "exp": 438},
+    108: {"name": "採集試煉·0108", "type": "採集", "target": 5, "reward": 997, "exp": 442},
+    109: {"name": "購物試煉·0109", "type": "購物", "target": 6, "reward": 1006, "exp": 446},
+    110: {"name": "煉丹試煉·0110", "type": "煉丹", "target": 7, "reward": 1015, "exp": 450},
+    111: {"name": "宗門試煉·0111", "type": "宗門", "target": 8, "reward": 1024, "exp": 454},
+    112: {"name": "秘境試煉·0112", "type": "秘境", "target": 1, "reward": 1033, "exp": 458},
+    113: {"name": "打坐試煉·0113", "type": "打坐", "target": 2, "reward": 1042, "exp": 462},
+    114: {"name": "討伐試煉·0114", "type": "討伐", "target": 3, "reward": 1051, "exp": 466},
+    115: {"name": "採集試煉·0115", "type": "採集", "target": 4, "reward": 1060, "exp": 470},
+    116: {"name": "購物試煉·0116", "type": "購物", "target": 5, "reward": 1069, "exp": 474},
+    117: {"name": "煉丹試煉·0117", "type": "煉丹", "target": 6, "reward": 1078, "exp": 478},
+    118: {"name": "宗門試煉·0118", "type": "宗門", "target": 7, "reward": 1087, "exp": 482},
+    119: {"name": "秘境試煉·0119", "type": "秘境", "target": 8, "reward": 1096, "exp": 486},
+    120: {"name": "打坐試煉·0120", "type": "打坐", "target": 1, "reward": 1105, "exp": 490},
+    121: {"name": "討伐試煉·0121", "type": "討伐", "target": 2, "reward": 1114, "exp": 494},
+    122: {"name": "採集試煉·0122", "type": "採集", "target": 3, "reward": 1123, "exp": 498},
+    123: {"name": "購物試煉·0123", "type": "購物", "target": 4, "reward": 1132, "exp": 502},
+    124: {"name": "煉丹試煉·0124", "type": "煉丹", "target": 5, "reward": 1141, "exp": 506},
+    125: {"name": "宗門試煉·0125", "type": "宗門", "target": 6, "reward": 1150, "exp": 510},
+    126: {"name": "秘境試煉·0126", "type": "秘境", "target": 7, "reward": 1159, "exp": 514},
+    127: {"name": "打坐試煉·0127", "type": "打坐", "target": 8, "reward": 1168, "exp": 518},
+    128: {"name": "討伐試煉·0128", "type": "討伐", "target": 1, "reward": 1177, "exp": 522},
+    129: {"name": "採集試煉·0129", "type": "採集", "target": 2, "reward": 1186, "exp": 526},
+    130: {"name": "購物試煉·0130", "type": "購物", "target": 3, "reward": 1195, "exp": 530},
+    131: {"name": "煉丹試煉·0131", "type": "煉丹", "target": 4, "reward": 1204, "exp": 534},
+    132: {"name": "宗門試煉·0132", "type": "宗門", "target": 5, "reward": 1213, "exp": 538},
+    133: {"name": "秘境試煉·0133", "type": "秘境", "target": 6, "reward": 1222, "exp": 542},
+    134: {"name": "打坐試煉·0134", "type": "打坐", "target": 7, "reward": 1231, "exp": 546},
+    135: {"name": "討伐試煉·0135", "type": "討伐", "target": 8, "reward": 1240, "exp": 550},
+    136: {"name": "採集試煉·0136", "type": "採集", "target": 1, "reward": 1249, "exp": 554},
+    137: {"name": "購物試煉·0137", "type": "購物", "target": 2, "reward": 1258, "exp": 558},
+    138: {"name": "煉丹試煉·0138", "type": "煉丹", "target": 3, "reward": 1267, "exp": 562},
+    139: {"name": "宗門試煉·0139", "type": "宗門", "target": 4, "reward": 1276, "exp": 566},
+    140: {"name": "秘境試煉·0140", "type": "秘境", "target": 5, "reward": 1285, "exp": 570},
+    141: {"name": "打坐試煉·0141", "type": "打坐", "target": 6, "reward": 1294, "exp": 574},
+    142: {"name": "討伐試煉·0142", "type": "討伐", "target": 7, "reward": 1303, "exp": 578},
+    143: {"name": "採集試煉·0143", "type": "採集", "target": 8, "reward": 1312, "exp": 582},
+    144: {"name": "購物試煉·0144", "type": "購物", "target": 1, "reward": 1321, "exp": 586},
+    145: {"name": "煉丹試煉·0145", "type": "煉丹", "target": 2, "reward": 1330, "exp": 590},
+    146: {"name": "宗門試煉·0146", "type": "宗門", "target": 3, "reward": 1339, "exp": 594},
+    147: {"name": "秘境試煉·0147", "type": "秘境", "target": 4, "reward": 1348, "exp": 598},
+    148: {"name": "打坐試煉·0148", "type": "打坐", "target": 5, "reward": 1357, "exp": 602},
+    149: {"name": "討伐試煉·0149", "type": "討伐", "target": 6, "reward": 1366, "exp": 606},
+    150: {"name": "採集試煉·0150", "type": "採集", "target": 7, "reward": 1375, "exp": 610},
+    151: {"name": "購物試煉·0151", "type": "購物", "target": 8, "reward": 1384, "exp": 614},
+    152: {"name": "煉丹試煉·0152", "type": "煉丹", "target": 1, "reward": 1393, "exp": 618},
+    153: {"name": "宗門試煉·0153", "type": "宗門", "target": 2, "reward": 1402, "exp": 622},
+    154: {"name": "秘境試煉·0154", "type": "秘境", "target": 3, "reward": 1411, "exp": 626},
+    155: {"name": "打坐試煉·0155", "type": "打坐", "target": 4, "reward": 1420, "exp": 630},
+    156: {"name": "討伐試煉·0156", "type": "討伐", "target": 5, "reward": 1429, "exp": 634},
+    157: {"name": "採集試煉·0157", "type": "採集", "target": 6, "reward": 1438, "exp": 638},
+    158: {"name": "購物試煉·0158", "type": "購物", "target": 7, "reward": 1447, "exp": 642},
+    159: {"name": "煉丹試煉·0159", "type": "煉丹", "target": 8, "reward": 1456, "exp": 646},
+    160: {"name": "宗門試煉·0160", "type": "宗門", "target": 1, "reward": 1465, "exp": 650},
+    161: {"name": "秘境試煉·0161", "type": "秘境", "target": 2, "reward": 1474, "exp": 654},
+    162: {"name": "打坐試煉·0162", "type": "打坐", "target": 3, "reward": 1483, "exp": 658},
+    163: {"name": "討伐試煉·0163", "type": "討伐", "target": 4, "reward": 1492, "exp": 662},
+    164: {"name": "採集試煉·0164", "type": "採集", "target": 5, "reward": 1501, "exp": 666},
+    165: {"name": "購物試煉·0165", "type": "購物", "target": 6, "reward": 1510, "exp": 670},
+    166: {"name": "煉丹試煉·0166", "type": "煉丹", "target": 7, "reward": 1519, "exp": 674},
+    167: {"name": "宗門試煉·0167", "type": "宗門", "target": 8, "reward": 1528, "exp": 678},
+    168: {"name": "秘境試煉·0168", "type": "秘境", "target": 1, "reward": 1537, "exp": 682},
+    169: {"name": "打坐試煉·0169", "type": "打坐", "target": 2, "reward": 1546, "exp": 686},
+    170: {"name": "討伐試煉·0170", "type": "討伐", "target": 3, "reward": 1555, "exp": 690},
+    171: {"name": "採集試煉·0171", "type": "採集", "target": 4, "reward": 1564, "exp": 694},
+    172: {"name": "購物試煉·0172", "type": "購物", "target": 5, "reward": 1573, "exp": 698},
+    173: {"name": "煉丹試煉·0173", "type": "煉丹", "target": 6, "reward": 1582, "exp": 702},
+    174: {"name": "宗門試煉·0174", "type": "宗門", "target": 7, "reward": 1591, "exp": 706},
+    175: {"name": "秘境試煉·0175", "type": "秘境", "target": 8, "reward": 1600, "exp": 710},
+    176: {"name": "打坐試煉·0176", "type": "打坐", "target": 1, "reward": 1609, "exp": 714},
+    177: {"name": "討伐試煉·0177", "type": "討伐", "target": 2, "reward": 1618, "exp": 718},
+    178: {"name": "採集試煉·0178", "type": "採集", "target": 3, "reward": 1627, "exp": 722},
+    179: {"name": "購物試煉·0179", "type": "購物", "target": 4, "reward": 1636, "exp": 726},
+    180: {"name": "煉丹試煉·0180", "type": "煉丹", "target": 5, "reward": 1645, "exp": 730},
+    181: {"name": "宗門試煉·0181", "type": "宗門", "target": 6, "reward": 1654, "exp": 734},
+    182: {"name": "秘境試煉·0182", "type": "秘境", "target": 7, "reward": 1663, "exp": 738},
+    183: {"name": "打坐試煉·0183", "type": "打坐", "target": 8, "reward": 1672, "exp": 742},
+    184: {"name": "討伐試煉·0184", "type": "討伐", "target": 1, "reward": 1681, "exp": 746},
+    185: {"name": "採集試煉·0185", "type": "採集", "target": 2, "reward": 1690, "exp": 750},
+    186: {"name": "購物試煉·0186", "type": "購物", "target": 3, "reward": 1699, "exp": 754},
+    187: {"name": "煉丹試煉·0187", "type": "煉丹", "target": 4, "reward": 1708, "exp": 758},
+    188: {"name": "宗門試煉·0188", "type": "宗門", "target": 5, "reward": 1717, "exp": 762},
+    189: {"name": "秘境試煉·0189", "type": "秘境", "target": 6, "reward": 1726, "exp": 766},
+    190: {"name": "打坐試煉·0190", "type": "打坐", "target": 7, "reward": 1735, "exp": 770},
+    191: {"name": "討伐試煉·0191", "type": "討伐", "target": 8, "reward": 1744, "exp": 774},
+    192: {"name": "採集試煉·0192", "type": "採集", "target": 1, "reward": 1753, "exp": 778},
+    193: {"name": "購物試煉·0193", "type": "購物", "target": 2, "reward": 1762, "exp": 782},
+    194: {"name": "煉丹試煉·0194", "type": "煉丹", "target": 3, "reward": 1771, "exp": 786},
+    195: {"name": "宗門試煉·0195", "type": "宗門", "target": 4, "reward": 1780, "exp": 790},
+    196: {"name": "秘境試煉·0196", "type": "秘境", "target": 5, "reward": 1789, "exp": 794},
+    197: {"name": "打坐試煉·0197", "type": "打坐", "target": 6, "reward": 1798, "exp": 798},
+    198: {"name": "討伐試煉·0198", "type": "討伐", "target": 7, "reward": 1807, "exp": 802},
+    199: {"name": "採集試煉·0199", "type": "採集", "target": 8, "reward": 1816, "exp": 806},
+    200: {"name": "購物試煉·0200", "type": "購物", "target": 1, "reward": 1825, "exp": 810},
+    201: {"name": "煉丹試煉·0201", "type": "煉丹", "target": 2, "reward": 1834, "exp": 814},
+    202: {"name": "宗門試煉·0202", "type": "宗門", "target": 3, "reward": 1843, "exp": 818},
+    203: {"name": "秘境試煉·0203", "type": "秘境", "target": 4, "reward": 1852, "exp": 822},
+    204: {"name": "打坐試煉·0204", "type": "打坐", "target": 5, "reward": 1861, "exp": 826},
+    205: {"name": "討伐試煉·0205", "type": "討伐", "target": 6, "reward": 1870, "exp": 830},
+    206: {"name": "採集試煉·0206", "type": "採集", "target": 7, "reward": 1879, "exp": 834},
+    207: {"name": "購物試煉·0207", "type": "購物", "target": 8, "reward": 1888, "exp": 838},
+    208: {"name": "煉丹試煉·0208", "type": "煉丹", "target": 1, "reward": 1897, "exp": 842},
+    209: {"name": "宗門試煉·0209", "type": "宗門", "target": 2, "reward": 1906, "exp": 846},
+    210: {"name": "秘境試煉·0210", "type": "秘境", "target": 3, "reward": 1915, "exp": 850},
+    211: {"name": "打坐試煉·0211", "type": "打坐", "target": 4, "reward": 1924, "exp": 854},
+    212: {"name": "討伐試煉·0212", "type": "討伐", "target": 5, "reward": 1933, "exp": 858},
+    213: {"name": "採集試煉·0213", "type": "採集", "target": 6, "reward": 1942, "exp": 862},
+    214: {"name": "購物試煉·0214", "type": "購物", "target": 7, "reward": 1951, "exp": 866},
+    215: {"name": "煉丹試煉·0215", "type": "煉丹", "target": 8, "reward": 1960, "exp": 870},
+    216: {"name": "宗門試煉·0216", "type": "宗門", "target": 1, "reward": 1969, "exp": 874},
+    217: {"name": "秘境試煉·0217", "type": "秘境", "target": 2, "reward": 1978, "exp": 878},
+    218: {"name": "打坐試煉·0218", "type": "打坐", "target": 3, "reward": 1987, "exp": 882},
+    219: {"name": "討伐試煉·0219", "type": "討伐", "target": 4, "reward": 1996, "exp": 886},
+    220: {"name": "採集試煉·0220", "type": "採集", "target": 5, "reward": 2005, "exp": 890},
+    221: {"name": "購物試煉·0221", "type": "購物", "target": 6, "reward": 2014, "exp": 894},
+    222: {"name": "煉丹試煉·0222", "type": "煉丹", "target": 7, "reward": 2023, "exp": 898},
+    223: {"name": "宗門試煉·0223", "type": "宗門", "target": 8, "reward": 2032, "exp": 902},
+    224: {"name": "秘境試煉·0224", "type": "秘境", "target": 1, "reward": 2041, "exp": 906},
+    225: {"name": "打坐試煉·0225", "type": "打坐", "target": 2, "reward": 2050, "exp": 910},
+    226: {"name": "討伐試煉·0226", "type": "討伐", "target": 3, "reward": 2059, "exp": 914},
+    227: {"name": "採集試煉·0227", "type": "採集", "target": 4, "reward": 2068, "exp": 918},
+    228: {"name": "購物試煉·0228", "type": "購物", "target": 5, "reward": 2077, "exp": 922},
+    229: {"name": "煉丹試煉·0229", "type": "煉丹", "target": 6, "reward": 2086, "exp": 926},
+    230: {"name": "宗門試煉·0230", "type": "宗門", "target": 7, "reward": 2095, "exp": 930},
+    231: {"name": "秘境試煉·0231", "type": "秘境", "target": 8, "reward": 2104, "exp": 934},
+    232: {"name": "打坐試煉·0232", "type": "打坐", "target": 1, "reward": 2113, "exp": 938},
+    233: {"name": "討伐試煉·0233", "type": "討伐", "target": 2, "reward": 2122, "exp": 942},
+    234: {"name": "採集試煉·0234", "type": "採集", "target": 3, "reward": 2131, "exp": 946},
+    235: {"name": "購物試煉·0235", "type": "購物", "target": 4, "reward": 2140, "exp": 950},
+    236: {"name": "煉丹試煉·0236", "type": "煉丹", "target": 5, "reward": 2149, "exp": 954},
+    237: {"name": "宗門試煉·0237", "type": "宗門", "target": 6, "reward": 2158, "exp": 958},
+    238: {"name": "秘境試煉·0238", "type": "秘境", "target": 7, "reward": 2167, "exp": 962},
+    239: {"name": "打坐試煉·0239", "type": "打坐", "target": 8, "reward": 2176, "exp": 966},
+    240: {"name": "討伐試煉·0240", "type": "討伐", "target": 1, "reward": 2185, "exp": 970},
+    241: {"name": "採集試煉·0241", "type": "採集", "target": 2, "reward": 2194, "exp": 974},
+    242: {"name": "購物試煉·0242", "type": "購物", "target": 3, "reward": 2203, "exp": 978},
+    243: {"name": "煉丹試煉·0243", "type": "煉丹", "target": 4, "reward": 2212, "exp": 982},
+    244: {"name": "宗門試煉·0244", "type": "宗門", "target": 5, "reward": 2221, "exp": 986},
+    245: {"name": "秘境試煉·0245", "type": "秘境", "target": 6, "reward": 2230, "exp": 990},
+    246: {"name": "打坐試煉·0246", "type": "打坐", "target": 7, "reward": 2239, "exp": 994},
+    247: {"name": "討伐試煉·0247", "type": "討伐", "target": 8, "reward": 2248, "exp": 998},
+    248: {"name": "採集試煉·0248", "type": "採集", "target": 1, "reward": 2257, "exp": 1002},
+    249: {"name": "購物試煉·0249", "type": "購物", "target": 2, "reward": 2266, "exp": 1006},
+    250: {"name": "煉丹試煉·0250", "type": "煉丹", "target": 3, "reward": 2275, "exp": 1010},
+    251: {"name": "宗門試煉·0251", "type": "宗門", "target": 4, "reward": 2284, "exp": 1014},
+    252: {"name": "秘境試煉·0252", "type": "秘境", "target": 5, "reward": 2293, "exp": 1018},
+    253: {"name": "打坐試煉·0253", "type": "打坐", "target": 6, "reward": 2302, "exp": 1022},
+    254: {"name": "討伐試煉·0254", "type": "討伐", "target": 7, "reward": 2311, "exp": 1026},
+    255: {"name": "採集試煉·0255", "type": "採集", "target": 8, "reward": 2320, "exp": 1030},
+    256: {"name": "購物試煉·0256", "type": "購物", "target": 1, "reward": 2329, "exp": 1034},
+    257: {"name": "煉丹試煉·0257", "type": "煉丹", "target": 2, "reward": 2338, "exp": 1038},
+    258: {"name": "宗門試煉·0258", "type": "宗門", "target": 3, "reward": 2347, "exp": 1042},
+    259: {"name": "秘境試煉·0259", "type": "秘境", "target": 4, "reward": 2356, "exp": 1046},
+    260: {"name": "打坐試煉·0260", "type": "打坐", "target": 5, "reward": 2365, "exp": 1050},
+    261: {"name": "討伐試煉·0261", "type": "討伐", "target": 6, "reward": 2374, "exp": 1054},
+    262: {"name": "採集試煉·0262", "type": "採集", "target": 7, "reward": 2383, "exp": 1058},
+    263: {"name": "購物試煉·0263", "type": "購物", "target": 8, "reward": 2392, "exp": 1062},
+    264: {"name": "煉丹試煉·0264", "type": "煉丹", "target": 1, "reward": 2401, "exp": 1066},
+    265: {"name": "宗門試煉·0265", "type": "宗門", "target": 2, "reward": 2410, "exp": 1070},
+    266: {"name": "秘境試煉·0266", "type": "秘境", "target": 3, "reward": 2419, "exp": 1074},
+    267: {"name": "打坐試煉·0267", "type": "打坐", "target": 4, "reward": 2428, "exp": 1078},
+    268: {"name": "討伐試煉·0268", "type": "討伐", "target": 5, "reward": 2437, "exp": 1082},
+    269: {"name": "採集試煉·0269", "type": "採集", "target": 6, "reward": 2446, "exp": 1086},
+    270: {"name": "購物試煉·0270", "type": "購物", "target": 7, "reward": 2455, "exp": 1090},
+    271: {"name": "煉丹試煉·0271", "type": "煉丹", "target": 8, "reward": 2464, "exp": 1094},
+    272: {"name": "宗門試煉·0272", "type": "宗門", "target": 1, "reward": 2473, "exp": 1098},
+    273: {"name": "秘境試煉·0273", "type": "秘境", "target": 2, "reward": 2482, "exp": 1102},
+    274: {"name": "打坐試煉·0274", "type": "打坐", "target": 3, "reward": 2491, "exp": 1106},
+    275: {"name": "討伐試煉·0275", "type": "討伐", "target": 4, "reward": 2500, "exp": 1110},
+    276: {"name": "採集試煉·0276", "type": "採集", "target": 5, "reward": 2509, "exp": 1114},
+    277: {"name": "購物試煉·0277", "type": "購物", "target": 6, "reward": 2518, "exp": 1118},
+    278: {"name": "煉丹試煉·0278", "type": "煉丹", "target": 7, "reward": 2527, "exp": 1122},
+    279: {"name": "宗門試煉·0279", "type": "宗門", "target": 8, "reward": 2536, "exp": 1126},
+    280: {"name": "秘境試煉·0280", "type": "秘境", "target": 1, "reward": 2545, "exp": 1130},
+    281: {"name": "打坐試煉·0281", "type": "打坐", "target": 2, "reward": 2554, "exp": 1134},
+    282: {"name": "討伐試煉·0282", "type": "討伐", "target": 3, "reward": 2563, "exp": 1138},
+    283: {"name": "採集試煉·0283", "type": "採集", "target": 4, "reward": 2572, "exp": 1142},
+    284: {"name": "購物試煉·0284", "type": "購物", "target": 5, "reward": 2581, "exp": 1146},
+    285: {"name": "煉丹試煉·0285", "type": "煉丹", "target": 6, "reward": 2590, "exp": 1150},
+    286: {"name": "宗門試煉·0286", "type": "宗門", "target": 7, "reward": 2599, "exp": 1154},
+    287: {"name": "秘境試煉·0287", "type": "秘境", "target": 8, "reward": 2608, "exp": 1158},
+    288: {"name": "打坐試煉·0288", "type": "打坐", "target": 1, "reward": 2617, "exp": 1162},
+    289: {"name": "討伐試煉·0289", "type": "討伐", "target": 2, "reward": 2626, "exp": 1166},
+    290: {"name": "採集試煉·0290", "type": "採集", "target": 3, "reward": 2635, "exp": 1170},
+    291: {"name": "購物試煉·0291", "type": "購物", "target": 4, "reward": 2644, "exp": 1174},
+    292: {"name": "煉丹試煉·0292", "type": "煉丹", "target": 5, "reward": 2653, "exp": 1178},
+    293: {"name": "宗門試煉·0293", "type": "宗門", "target": 6, "reward": 2662, "exp": 1182},
+    294: {"name": "秘境試煉·0294", "type": "秘境", "target": 7, "reward": 2671, "exp": 1186},
+    295: {"name": "打坐試煉·0295", "type": "打坐", "target": 8, "reward": 2680, "exp": 1190},
+    296: {"name": "討伐試煉·0296", "type": "討伐", "target": 1, "reward": 2689, "exp": 1194},
+    297: {"name": "採集試煉·0297", "type": "採集", "target": 2, "reward": 2698, "exp": 1198},
+    298: {"name": "購物試煉·0298", "type": "購物", "target": 3, "reward": 2707, "exp": 1202},
+    299: {"name": "煉丹試煉·0299", "type": "煉丹", "target": 4, "reward": 2716, "exp": 1206},
+    300: {"name": "宗門試煉·0300", "type": "宗門", "target": 5, "reward": 2725, "exp": 1210},
+    301: {"name": "秘境試煉·0301", "type": "秘境", "target": 6, "reward": 2734, "exp": 1214},
+    302: {"name": "打坐試煉·0302", "type": "打坐", "target": 7, "reward": 2743, "exp": 1218},
+    303: {"name": "討伐試煉·0303", "type": "討伐", "target": 8, "reward": 2752, "exp": 1222},
+    304: {"name": "採集試煉·0304", "type": "採集", "target": 1, "reward": 2761, "exp": 1226},
+    305: {"name": "購物試煉·0305", "type": "購物", "target": 2, "reward": 2770, "exp": 1230},
+    306: {"name": "煉丹試煉·0306", "type": "煉丹", "target": 3, "reward": 2779, "exp": 1234},
+    307: {"name": "宗門試煉·0307", "type": "宗門", "target": 4, "reward": 2788, "exp": 1238},
+    308: {"name": "秘境試煉·0308", "type": "秘境", "target": 5, "reward": 2797, "exp": 1242},
+    309: {"name": "打坐試煉·0309", "type": "打坐", "target": 6, "reward": 2806, "exp": 1246},
+    310: {"name": "討伐試煉·0310", "type": "討伐", "target": 7, "reward": 2815, "exp": 1250},
+    311: {"name": "採集試煉·0311", "type": "採集", "target": 8, "reward": 2824, "exp": 1254},
+    312: {"name": "購物試煉·0312", "type": "購物", "target": 1, "reward": 2833, "exp": 1258},
+    313: {"name": "煉丹試煉·0313", "type": "煉丹", "target": 2, "reward": 2842, "exp": 1262},
+    314: {"name": "宗門試煉·0314", "type": "宗門", "target": 3, "reward": 2851, "exp": 1266},
+    315: {"name": "秘境試煉·0315", "type": "秘境", "target": 4, "reward": 2860, "exp": 1270},
+    316: {"name": "打坐試煉·0316", "type": "打坐", "target": 5, "reward": 2869, "exp": 1274},
+    317: {"name": "討伐試煉·0317", "type": "討伐", "target": 6, "reward": 2878, "exp": 1278},
+    318: {"name": "採集試煉·0318", "type": "採集", "target": 7, "reward": 2887, "exp": 1282},
+    319: {"name": "購物試煉·0319", "type": "購物", "target": 8, "reward": 2896, "exp": 1286},
+    320: {"name": "煉丹試煉·0320", "type": "煉丹", "target": 1, "reward": 2905, "exp": 1290},
+    321: {"name": "宗門試煉·0321", "type": "宗門", "target": 2, "reward": 2914, "exp": 1294},
+    322: {"name": "秘境試煉·0322", "type": "秘境", "target": 3, "reward": 2923, "exp": 1298},
+    323: {"name": "打坐試煉·0323", "type": "打坐", "target": 4, "reward": 2932, "exp": 1302},
+    324: {"name": "討伐試煉·0324", "type": "討伐", "target": 5, "reward": 2941, "exp": 1306},
+    325: {"name": "採集試煉·0325", "type": "採集", "target": 6, "reward": 2950, "exp": 1310},
+    326: {"name": "購物試煉·0326", "type": "購物", "target": 7, "reward": 2959, "exp": 1314},
+    327: {"name": "煉丹試煉·0327", "type": "煉丹", "target": 8, "reward": 2968, "exp": 1318},
+    328: {"name": "宗門試煉·0328", "type": "宗門", "target": 1, "reward": 2977, "exp": 1322},
+    329: {"name": "秘境試煉·0329", "type": "秘境", "target": 2, "reward": 2986, "exp": 1326},
+    330: {"name": "打坐試煉·0330", "type": "打坐", "target": 3, "reward": 2995, "exp": 1330},
+    331: {"name": "討伐試煉·0331", "type": "討伐", "target": 4, "reward": 3004, "exp": 1334},
+    332: {"name": "採集試煉·0332", "type": "採集", "target": 5, "reward": 3013, "exp": 1338},
+    333: {"name": "購物試煉·0333", "type": "購物", "target": 6, "reward": 3022, "exp": 1342},
+    334: {"name": "煉丹試煉·0334", "type": "煉丹", "target": 7, "reward": 3031, "exp": 1346},
+    335: {"name": "宗門試煉·0335", "type": "宗門", "target": 8, "reward": 3040, "exp": 1350},
+    336: {"name": "秘境試煉·0336", "type": "秘境", "target": 1, "reward": 3049, "exp": 1354},
+    337: {"name": "打坐試煉·0337", "type": "打坐", "target": 2, "reward": 3058, "exp": 1358},
+    338: {"name": "討伐試煉·0338", "type": "討伐", "target": 3, "reward": 3067, "exp": 1362},
+    339: {"name": "採集試煉·0339", "type": "採集", "target": 4, "reward": 3076, "exp": 1366},
+    340: {"name": "購物試煉·0340", "type": "購物", "target": 5, "reward": 3085, "exp": 1370},
+    341: {"name": "煉丹試煉·0341", "type": "煉丹", "target": 6, "reward": 3094, "exp": 1374},
+    342: {"name": "宗門試煉·0342", "type": "宗門", "target": 7, "reward": 3103, "exp": 1378},
+    343: {"name": "秘境試煉·0343", "type": "秘境", "target": 8, "reward": 3112, "exp": 1382},
+    344: {"name": "打坐試煉·0344", "type": "打坐", "target": 1, "reward": 3121, "exp": 1386},
+    345: {"name": "討伐試煉·0345", "type": "討伐", "target": 2, "reward": 3130, "exp": 1390},
+    346: {"name": "採集試煉·0346", "type": "採集", "target": 3, "reward": 3139, "exp": 1394},
+    347: {"name": "購物試煉·0347", "type": "購物", "target": 4, "reward": 3148, "exp": 1398},
+    348: {"name": "煉丹試煉·0348", "type": "煉丹", "target": 5, "reward": 3157, "exp": 1402},
+    349: {"name": "宗門試煉·0349", "type": "宗門", "target": 6, "reward": 3166, "exp": 1406},
+    350: {"name": "秘境試煉·0350", "type": "秘境", "target": 7, "reward": 3175, "exp": 1410},
+    351: {"name": "打坐試煉·0351", "type": "打坐", "target": 8, "reward": 3184, "exp": 1414},
+    352: {"name": "討伐試煉·0352", "type": "討伐", "target": 1, "reward": 3193, "exp": 1418},
+    353: {"name": "採集試煉·0353", "type": "採集", "target": 2, "reward": 3202, "exp": 1422},
+    354: {"name": "購物試煉·0354", "type": "購物", "target": 3, "reward": 3211, "exp": 1426},
+    355: {"name": "煉丹試煉·0355", "type": "煉丹", "target": 4, "reward": 3220, "exp": 1430},
+    356: {"name": "宗門試煉·0356", "type": "宗門", "target": 5, "reward": 3229, "exp": 1434},
+    357: {"name": "秘境試煉·0357", "type": "秘境", "target": 6, "reward": 3238, "exp": 1438},
+    358: {"name": "打坐試煉·0358", "type": "打坐", "target": 7, "reward": 3247, "exp": 1442},
+    359: {"name": "討伐試煉·0359", "type": "討伐", "target": 8, "reward": 3256, "exp": 1446},
+    360: {"name": "採集試煉·0360", "type": "採集", "target": 1, "reward": 3265, "exp": 1450},
+    361: {"name": "購物試煉·0361", "type": "購物", "target": 2, "reward": 3274, "exp": 1454},
+    362: {"name": "煉丹試煉·0362", "type": "煉丹", "target": 3, "reward": 3283, "exp": 1458},
+    363: {"name": "宗門試煉·0363", "type": "宗門", "target": 4, "reward": 3292, "exp": 1462},
+    364: {"name": "秘境試煉·0364", "type": "秘境", "target": 5, "reward": 3301, "exp": 1466},
+    365: {"name": "打坐試煉·0365", "type": "打坐", "target": 6, "reward": 3310, "exp": 1470},
+    366: {"name": "討伐試煉·0366", "type": "討伐", "target": 7, "reward": 3319, "exp": 1474},
+    367: {"name": "採集試煉·0367", "type": "採集", "target": 8, "reward": 3328, "exp": 1478},
+    368: {"name": "購物試煉·0368", "type": "購物", "target": 1, "reward": 3337, "exp": 1482},
+    369: {"name": "煉丹試煉·0369", "type": "煉丹", "target": 2, "reward": 3346, "exp": 1486},
+    370: {"name": "宗門試煉·0370", "type": "宗門", "target": 3, "reward": 3355, "exp": 1490},
+    371: {"name": "秘境試煉·0371", "type": "秘境", "target": 4, "reward": 3364, "exp": 1494},
+    372: {"name": "打坐試煉·0372", "type": "打坐", "target": 5, "reward": 3373, "exp": 1498},
+    373: {"name": "討伐試煉·0373", "type": "討伐", "target": 6, "reward": 3382, "exp": 1502},
+    374: {"name": "採集試煉·0374", "type": "採集", "target": 7, "reward": 3391, "exp": 1506},
+    375: {"name": "購物試煉·0375", "type": "購物", "target": 8, "reward": 3400, "exp": 1510},
+    376: {"name": "煉丹試煉·0376", "type": "煉丹", "target": 1, "reward": 3409, "exp": 1514},
+    377: {"name": "宗門試煉·0377", "type": "宗門", "target": 2, "reward": 3418, "exp": 1518},
+    378: {"name": "秘境試煉·0378", "type": "秘境", "target": 3, "reward": 3427, "exp": 1522},
+    379: {"name": "打坐試煉·0379", "type": "打坐", "target": 4, "reward": 3436, "exp": 1526},
+    380: {"name": "討伐試煉·0380", "type": "討伐", "target": 5, "reward": 3445, "exp": 1530},
+    381: {"name": "採集試煉·0381", "type": "採集", "target": 6, "reward": 3454, "exp": 1534},
+    382: {"name": "購物試煉·0382", "type": "購物", "target": 7, "reward": 3463, "exp": 1538},
+    383: {"name": "煉丹試煉·0383", "type": "煉丹", "target": 8, "reward": 3472, "exp": 1542},
+    384: {"name": "宗門試煉·0384", "type": "宗門", "target": 1, "reward": 3481, "exp": 1546},
+    385: {"name": "秘境試煉·0385", "type": "秘境", "target": 2, "reward": 3490, "exp": 1550},
+    386: {"name": "打坐試煉·0386", "type": "打坐", "target": 3, "reward": 3499, "exp": 1554},
+    387: {"name": "討伐試煉·0387", "type": "討伐", "target": 4, "reward": 3508, "exp": 1558},
+    388: {"name": "採集試煉·0388", "type": "採集", "target": 5, "reward": 3517, "exp": 1562},
+    389: {"name": "購物試煉·0389", "type": "購物", "target": 6, "reward": 3526, "exp": 1566},
+    390: {"name": "煉丹試煉·0390", "type": "煉丹", "target": 7, "reward": 3535, "exp": 1570},
+    391: {"name": "宗門試煉·0391", "type": "宗門", "target": 8, "reward": 3544, "exp": 1574},
+    392: {"name": "秘境試煉·0392", "type": "秘境", "target": 1, "reward": 3553, "exp": 1578},
+    393: {"name": "打坐試煉·0393", "type": "打坐", "target": 2, "reward": 3562, "exp": 1582},
+    394: {"name": "討伐試煉·0394", "type": "討伐", "target": 3, "reward": 3571, "exp": 1586},
+    395: {"name": "採集試煉·0395", "type": "採集", "target": 4, "reward": 3580, "exp": 1590},
+    396: {"name": "購物試煉·0396", "type": "購物", "target": 5, "reward": 3589, "exp": 1594},
+    397: {"name": "煉丹試煉·0397", "type": "煉丹", "target": 6, "reward": 3598, "exp": 1598},
+    398: {"name": "宗門試煉·0398", "type": "宗門", "target": 7, "reward": 3607, "exp": 1602},
+    399: {"name": "秘境試煉·0399", "type": "秘境", "target": 8, "reward": 3616, "exp": 1606},
+    400: {"name": "打坐試煉·0400", "type": "打坐", "target": 1, "reward": 3625, "exp": 1610},
+    401: {"name": "討伐試煉·0401", "type": "討伐", "target": 2, "reward": 3634, "exp": 1614},
+    402: {"name": "採集試煉·0402", "type": "採集", "target": 3, "reward": 3643, "exp": 1618},
+    403: {"name": "購物試煉·0403", "type": "購物", "target": 4, "reward": 3652, "exp": 1622},
+    404: {"name": "煉丹試煉·0404", "type": "煉丹", "target": 5, "reward": 3661, "exp": 1626},
+    405: {"name": "宗門試煉·0405", "type": "宗門", "target": 6, "reward": 3670, "exp": 1630},
+    406: {"name": "秘境試煉·0406", "type": "秘境", "target": 7, "reward": 3679, "exp": 1634},
+    407: {"name": "打坐試煉·0407", "type": "打坐", "target": 8, "reward": 3688, "exp": 1638},
+    408: {"name": "討伐試煉·0408", "type": "討伐", "target": 1, "reward": 3697, "exp": 1642},
+    409: {"name": "採集試煉·0409", "type": "採集", "target": 2, "reward": 3706, "exp": 1646},
+    410: {"name": "購物試煉·0410", "type": "購物", "target": 3, "reward": 3715, "exp": 1650},
+    411: {"name": "煉丹試煉·0411", "type": "煉丹", "target": 4, "reward": 3724, "exp": 1654},
+    412: {"name": "宗門試煉·0412", "type": "宗門", "target": 5, "reward": 3733, "exp": 1658},
+    413: {"name": "秘境試煉·0413", "type": "秘境", "target": 6, "reward": 3742, "exp": 1662},
+    414: {"name": "打坐試煉·0414", "type": "打坐", "target": 7, "reward": 3751, "exp": 1666},
+    415: {"name": "討伐試煉·0415", "type": "討伐", "target": 8, "reward": 3760, "exp": 1670},
+    416: {"name": "採集試煉·0416", "type": "採集", "target": 1, "reward": 3769, "exp": 1674},
+    417: {"name": "購物試煉·0417", "type": "購物", "target": 2, "reward": 3778, "exp": 1678},
+    418: {"name": "煉丹試煉·0418", "type": "煉丹", "target": 3, "reward": 3787, "exp": 1682},
+    419: {"name": "宗門試煉·0419", "type": "宗門", "target": 4, "reward": 3796, "exp": 1686},
+    420: {"name": "秘境試煉·0420", "type": "秘境", "target": 5, "reward": 3805, "exp": 1690},
+    421: {"name": "打坐試煉·0421", "type": "打坐", "target": 6, "reward": 3814, "exp": 1694},
+    422: {"name": "討伐試煉·0422", "type": "討伐", "target": 7, "reward": 3823, "exp": 1698},
+    423: {"name": "採集試煉·0423", "type": "採集", "target": 8, "reward": 3832, "exp": 1702},
+    424: {"name": "購物試煉·0424", "type": "購物", "target": 1, "reward": 3841, "exp": 1706},
+    425: {"name": "煉丹試煉·0425", "type": "煉丹", "target": 2, "reward": 3850, "exp": 1710},
+    426: {"name": "宗門試煉·0426", "type": "宗門", "target": 3, "reward": 3859, "exp": 1714},
+    427: {"name": "秘境試煉·0427", "type": "秘境", "target": 4, "reward": 3868, "exp": 1718},
+    428: {"name": "打坐試煉·0428", "type": "打坐", "target": 5, "reward": 3877, "exp": 1722},
+    429: {"name": "討伐試煉·0429", "type": "討伐", "target": 6, "reward": 3886, "exp": 1726},
+    430: {"name": "採集試煉·0430", "type": "採集", "target": 7, "reward": 3895, "exp": 1730},
+    431: {"name": "購物試煉·0431", "type": "購物", "target": 8, "reward": 3904, "exp": 1734},
+    432: {"name": "煉丹試煉·0432", "type": "煉丹", "target": 1, "reward": 3913, "exp": 1738},
+    433: {"name": "宗門試煉·0433", "type": "宗門", "target": 2, "reward": 3922, "exp": 1742},
+    434: {"name": "秘境試煉·0434", "type": "秘境", "target": 3, "reward": 3931, "exp": 1746},
+    435: {"name": "打坐試煉·0435", "type": "打坐", "target": 4, "reward": 3940, "exp": 1750},
+    436: {"name": "討伐試煉·0436", "type": "討伐", "target": 5, "reward": 3949, "exp": 1754},
+    437: {"name": "採集試煉·0437", "type": "採集", "target": 6, "reward": 3958, "exp": 1758},
+    438: {"name": "購物試煉·0438", "type": "購物", "target": 7, "reward": 3967, "exp": 1762},
+    439: {"name": "煉丹試煉·0439", "type": "煉丹", "target": 8, "reward": 3976, "exp": 1766},
+    440: {"name": "宗門試煉·0440", "type": "宗門", "target": 1, "reward": 3985, "exp": 1770},
+    441: {"name": "秘境試煉·0441", "type": "秘境", "target": 2, "reward": 3994, "exp": 1774},
+    442: {"name": "打坐試煉·0442", "type": "打坐", "target": 3, "reward": 4003, "exp": 1778},
+    443: {"name": "討伐試煉·0443", "type": "討伐", "target": 4, "reward": 4012, "exp": 1782},
+    444: {"name": "採集試煉·0444", "type": "採集", "target": 5, "reward": 4021, "exp": 1786},
+    445: {"name": "購物試煉·0445", "type": "購物", "target": 6, "reward": 4030, "exp": 1790},
+    446: {"name": "煉丹試煉·0446", "type": "煉丹", "target": 7, "reward": 4039, "exp": 1794},
+    447: {"name": "宗門試煉·0447", "type": "宗門", "target": 8, "reward": 4048, "exp": 1798},
+    448: {"name": "秘境試煉·0448", "type": "秘境", "target": 1, "reward": 4057, "exp": 1802},
+    449: {"name": "打坐試煉·0449", "type": "打坐", "target": 2, "reward": 4066, "exp": 1806},
+    450: {"name": "討伐試煉·0450", "type": "討伐", "target": 3, "reward": 4075, "exp": 1810},
+    451: {"name": "採集試煉·0451", "type": "採集", "target": 4, "reward": 4084, "exp": 1814},
+    452: {"name": "購物試煉·0452", "type": "購物", "target": 5, "reward": 4093, "exp": 1818},
+    453: {"name": "煉丹試煉·0453", "type": "煉丹", "target": 6, "reward": 4102, "exp": 1822},
+    454: {"name": "宗門試煉·0454", "type": "宗門", "target": 7, "reward": 4111, "exp": 1826},
+    455: {"name": "秘境試煉·0455", "type": "秘境", "target": 8, "reward": 4120, "exp": 1830},
+    456: {"name": "打坐試煉·0456", "type": "打坐", "target": 1, "reward": 4129, "exp": 1834},
+    457: {"name": "討伐試煉·0457", "type": "討伐", "target": 2, "reward": 4138, "exp": 1838},
+    458: {"name": "採集試煉·0458", "type": "採集", "target": 3, "reward": 4147, "exp": 1842},
+    459: {"name": "購物試煉·0459", "type": "購物", "target": 4, "reward": 4156, "exp": 1846},
+    460: {"name": "煉丹試煉·0460", "type": "煉丹", "target": 5, "reward": 4165, "exp": 1850},
+    461: {"name": "宗門試煉·0461", "type": "宗門", "target": 6, "reward": 4174, "exp": 1854},
+    462: {"name": "秘境試煉·0462", "type": "秘境", "target": 7, "reward": 4183, "exp": 1858},
+    463: {"name": "打坐試煉·0463", "type": "打坐", "target": 8, "reward": 4192, "exp": 1862},
+    464: {"name": "討伐試煉·0464", "type": "討伐", "target": 1, "reward": 4201, "exp": 1866},
+    465: {"name": "採集試煉·0465", "type": "採集", "target": 2, "reward": 4210, "exp": 1870},
+    466: {"name": "購物試煉·0466", "type": "購物", "target": 3, "reward": 4219, "exp": 1874},
+    467: {"name": "煉丹試煉·0467", "type": "煉丹", "target": 4, "reward": 4228, "exp": 1878},
+    468: {"name": "宗門試煉·0468", "type": "宗門", "target": 5, "reward": 4237, "exp": 1882},
+    469: {"name": "秘境試煉·0469", "type": "秘境", "target": 6, "reward": 4246, "exp": 1886},
+    470: {"name": "打坐試煉·0470", "type": "打坐", "target": 7, "reward": 4255, "exp": 1890},
+    471: {"name": "討伐試煉·0471", "type": "討伐", "target": 8, "reward": 4264, "exp": 1894},
+    472: {"name": "採集試煉·0472", "type": "採集", "target": 1, "reward": 4273, "exp": 1898},
+    473: {"name": "購物試煉·0473", "type": "購物", "target": 2, "reward": 4282, "exp": 1902},
+    474: {"name": "煉丹試煉·0474", "type": "煉丹", "target": 3, "reward": 4291, "exp": 1906},
+    475: {"name": "宗門試煉·0475", "type": "宗門", "target": 4, "reward": 4300, "exp": 1910},
+    476: {"name": "秘境試煉·0476", "type": "秘境", "target": 5, "reward": 4309, "exp": 1914},
+    477: {"name": "打坐試煉·0477", "type": "打坐", "target": 6, "reward": 4318, "exp": 1918},
+    478: {"name": "討伐試煉·0478", "type": "討伐", "target": 7, "reward": 4327, "exp": 1922},
+    479: {"name": "採集試煉·0479", "type": "採集", "target": 8, "reward": 4336, "exp": 1926},
+    480: {"name": "購物試煉·0480", "type": "購物", "target": 1, "reward": 4345, "exp": 1930},
+    481: {"name": "煉丹試煉·0481", "type": "煉丹", "target": 2, "reward": 4354, "exp": 1934},
+    482: {"name": "宗門試煉·0482", "type": "宗門", "target": 3, "reward": 4363, "exp": 1938},
+    483: {"name": "秘境試煉·0483", "type": "秘境", "target": 4, "reward": 4372, "exp": 1942},
+    484: {"name": "打坐試煉·0484", "type": "打坐", "target": 5, "reward": 4381, "exp": 1946},
+    485: {"name": "討伐試煉·0485", "type": "討伐", "target": 6, "reward": 4390, "exp": 1950},
+    486: {"name": "採集試煉·0486", "type": "採集", "target": 7, "reward": 4399, "exp": 1954},
+    487: {"name": "購物試煉·0487", "type": "購物", "target": 8, "reward": 4408, "exp": 1958},
+    488: {"name": "煉丹試煉·0488", "type": "煉丹", "target": 1, "reward": 4417, "exp": 1962},
+    489: {"name": "宗門試煉·0489", "type": "宗門", "target": 2, "reward": 4426, "exp": 1966},
+    490: {"name": "秘境試煉·0490", "type": "秘境", "target": 3, "reward": 4435, "exp": 1970},
+    491: {"name": "打坐試煉·0491", "type": "打坐", "target": 4, "reward": 4444, "exp": 1974},
+    492: {"name": "討伐試煉·0492", "type": "討伐", "target": 5, "reward": 4453, "exp": 1978},
+    493: {"name": "採集試煉·0493", "type": "採集", "target": 6, "reward": 4462, "exp": 1982},
+    494: {"name": "購物試煉·0494", "type": "購物", "target": 7, "reward": 4471, "exp": 1986},
+    495: {"name": "煉丹試煉·0495", "type": "煉丹", "target": 8, "reward": 4480, "exp": 1990},
+    496: {"name": "宗門試煉·0496", "type": "宗門", "target": 1, "reward": 4489, "exp": 1994},
+    497: {"name": "秘境試煉·0497", "type": "秘境", "target": 2, "reward": 4498, "exp": 1998},
+    498: {"name": "打坐試煉·0498", "type": "打坐", "target": 3, "reward": 4507, "exp": 2002},
+    499: {"name": "討伐試煉·0499", "type": "討伐", "target": 4, "reward": 4516, "exp": 2006},
+    500: {"name": "採集試煉·0500", "type": "採集", "target": 5, "reward": 4525, "exp": 2010},
+    501: {"name": "購物試煉·0501", "type": "購物", "target": 6, "reward": 4534, "exp": 2014},
+    502: {"name": "煉丹試煉·0502", "type": "煉丹", "target": 7, "reward": 4543, "exp": 2018},
+    503: {"name": "宗門試煉·0503", "type": "宗門", "target": 8, "reward": 4552, "exp": 2022},
+    504: {"name": "秘境試煉·0504", "type": "秘境", "target": 1, "reward": 4561, "exp": 2026},
+    505: {"name": "打坐試煉·0505", "type": "打坐", "target": 2, "reward": 4570, "exp": 2030},
+    506: {"name": "討伐試煉·0506", "type": "討伐", "target": 3, "reward": 4579, "exp": 2034},
+    507: {"name": "採集試煉·0507", "type": "採集", "target": 4, "reward": 4588, "exp": 2038},
+    508: {"name": "購物試煉·0508", "type": "購物", "target": 5, "reward": 4597, "exp": 2042},
+    509: {"name": "煉丹試煉·0509", "type": "煉丹", "target": 6, "reward": 4606, "exp": 2046},
+    510: {"name": "宗門試煉·0510", "type": "宗門", "target": 7, "reward": 4615, "exp": 2050},
+    511: {"name": "秘境試煉·0511", "type": "秘境", "target": 8, "reward": 4624, "exp": 2054},
+    512: {"name": "打坐試煉·0512", "type": "打坐", "target": 1, "reward": 4633, "exp": 2058},
+    513: {"name": "討伐試煉·0513", "type": "討伐", "target": 2, "reward": 4642, "exp": 2062},
+    514: {"name": "採集試煉·0514", "type": "採集", "target": 3, "reward": 4651, "exp": 2066},
+    515: {"name": "購物試煉·0515", "type": "購物", "target": 4, "reward": 4660, "exp": 2070},
+    516: {"name": "煉丹試煉·0516", "type": "煉丹", "target": 5, "reward": 4669, "exp": 2074},
+    517: {"name": "宗門試煉·0517", "type": "宗門", "target": 6, "reward": 4678, "exp": 2078},
+    518: {"name": "秘境試煉·0518", "type": "秘境", "target": 7, "reward": 4687, "exp": 2082},
+    519: {"name": "打坐試煉·0519", "type": "打坐", "target": 8, "reward": 4696, "exp": 2086},
+    520: {"name": "討伐試煉·0520", "type": "討伐", "target": 1, "reward": 4705, "exp": 2090},
+    521: {"name": "採集試煉·0521", "type": "採集", "target": 2, "reward": 4714, "exp": 2094},
+    522: {"name": "購物試煉·0522", "type": "購物", "target": 3, "reward": 4723, "exp": 2098},
+    523: {"name": "煉丹試煉·0523", "type": "煉丹", "target": 4, "reward": 4732, "exp": 2102},
+    524: {"name": "宗門試煉·0524", "type": "宗門", "target": 5, "reward": 4741, "exp": 2106},
+    525: {"name": "秘境試煉·0525", "type": "秘境", "target": 6, "reward": 4750, "exp": 2110},
+    526: {"name": "打坐試煉·0526", "type": "打坐", "target": 7, "reward": 4759, "exp": 2114},
+    527: {"name": "討伐試煉·0527", "type": "討伐", "target": 8, "reward": 4768, "exp": 2118},
+    528: {"name": "採集試煉·0528", "type": "採集", "target": 1, "reward": 4777, "exp": 2122},
+    529: {"name": "購物試煉·0529", "type": "購物", "target": 2, "reward": 4786, "exp": 2126},
+    530: {"name": "煉丹試煉·0530", "type": "煉丹", "target": 3, "reward": 4795, "exp": 2130},
+    531: {"name": "宗門試煉·0531", "type": "宗門", "target": 4, "reward": 4804, "exp": 2134},
+    532: {"name": "秘境試煉·0532", "type": "秘境", "target": 5, "reward": 4813, "exp": 2138},
+    533: {"name": "打坐試煉·0533", "type": "打坐", "target": 6, "reward": 4822, "exp": 2142},
+    534: {"name": "討伐試煉·0534", "type": "討伐", "target": 7, "reward": 4831, "exp": 2146},
+    535: {"name": "採集試煉·0535", "type": "採集", "target": 8, "reward": 4840, "exp": 2150},
+    536: {"name": "購物試煉·0536", "type": "購物", "target": 1, "reward": 4849, "exp": 2154},
+    537: {"name": "煉丹試煉·0537", "type": "煉丹", "target": 2, "reward": 4858, "exp": 2158},
+    538: {"name": "宗門試煉·0538", "type": "宗門", "target": 3, "reward": 4867, "exp": 2162},
+    539: {"name": "秘境試煉·0539", "type": "秘境", "target": 4, "reward": 4876, "exp": 2166},
+    540: {"name": "打坐試煉·0540", "type": "打坐", "target": 5, "reward": 4885, "exp": 2170},
+    541: {"name": "討伐試煉·0541", "type": "討伐", "target": 6, "reward": 4894, "exp": 2174},
+    542: {"name": "採集試煉·0542", "type": "採集", "target": 7, "reward": 4903, "exp": 2178},
+    543: {"name": "購物試煉·0543", "type": "購物", "target": 8, "reward": 4912, "exp": 2182},
+    544: {"name": "煉丹試煉·0544", "type": "煉丹", "target": 1, "reward": 4921, "exp": 2186},
+    545: {"name": "宗門試煉·0545", "type": "宗門", "target": 2, "reward": 4930, "exp": 2190},
+    546: {"name": "秘境試煉·0546", "type": "秘境", "target": 3, "reward": 4939, "exp": 2194},
+    547: {"name": "打坐試煉·0547", "type": "打坐", "target": 4, "reward": 4948, "exp": 2198},
+    548: {"name": "討伐試煉·0548", "type": "討伐", "target": 5, "reward": 4957, "exp": 2202},
+    549: {"name": "採集試煉·0549", "type": "採集", "target": 6, "reward": 4966, "exp": 2206},
+    550: {"name": "購物試煉·0550", "type": "購物", "target": 7, "reward": 4975, "exp": 2210},
+    551: {"name": "煉丹試煉·0551", "type": "煉丹", "target": 8, "reward": 4984, "exp": 2214},
+    552: {"name": "宗門試煉·0552", "type": "宗門", "target": 1, "reward": 4993, "exp": 2218},
+    553: {"name": "秘境試煉·0553", "type": "秘境", "target": 2, "reward": 5002, "exp": 2222},
+    554: {"name": "打坐試煉·0554", "type": "打坐", "target": 3, "reward": 5011, "exp": 2226},
+    555: {"name": "討伐試煉·0555", "type": "討伐", "target": 4, "reward": 5020, "exp": 2230},
+    556: {"name": "採集試煉·0556", "type": "採集", "target": 5, "reward": 5029, "exp": 2234},
+    557: {"name": "購物試煉·0557", "type": "購物", "target": 6, "reward": 5038, "exp": 2238},
+    558: {"name": "煉丹試煉·0558", "type": "煉丹", "target": 7, "reward": 5047, "exp": 2242},
+    559: {"name": "宗門試煉·0559", "type": "宗門", "target": 8, "reward": 5056, "exp": 2246},
+    560: {"name": "秘境試煉·0560", "type": "秘境", "target": 1, "reward": 5065, "exp": 2250},
+    561: {"name": "打坐試煉·0561", "type": "打坐", "target": 2, "reward": 5074, "exp": 2254},
+    562: {"name": "討伐試煉·0562", "type": "討伐", "target": 3, "reward": 5083, "exp": 2258},
+    563: {"name": "採集試煉·0563", "type": "採集", "target": 4, "reward": 5092, "exp": 2262},
+    564: {"name": "購物試煉·0564", "type": "購物", "target": 5, "reward": 5101, "exp": 2266},
+    565: {"name": "煉丹試煉·0565", "type": "煉丹", "target": 6, "reward": 5110, "exp": 2270},
+    566: {"name": "宗門試煉·0566", "type": "宗門", "target": 7, "reward": 5119, "exp": 2274},
+    567: {"name": "秘境試煉·0567", "type": "秘境", "target": 8, "reward": 5128, "exp": 2278},
+    568: {"name": "打坐試煉·0568", "type": "打坐", "target": 1, "reward": 5137, "exp": 2282},
+    569: {"name": "討伐試煉·0569", "type": "討伐", "target": 2, "reward": 5146, "exp": 2286},
+    570: {"name": "採集試煉·0570", "type": "採集", "target": 3, "reward": 5155, "exp": 2290},
+    571: {"name": "購物試煉·0571", "type": "購物", "target": 4, "reward": 5164, "exp": 2294},
+    572: {"name": "煉丹試煉·0572", "type": "煉丹", "target": 5, "reward": 5173, "exp": 2298},
+    573: {"name": "宗門試煉·0573", "type": "宗門", "target": 6, "reward": 5182, "exp": 2302},
+    574: {"name": "秘境試煉·0574", "type": "秘境", "target": 7, "reward": 5191, "exp": 2306},
+    575: {"name": "打坐試煉·0575", "type": "打坐", "target": 8, "reward": 5200, "exp": 2310},
+    576: {"name": "討伐試煉·0576", "type": "討伐", "target": 1, "reward": 5209, "exp": 2314},
+    577: {"name": "採集試煉·0577", "type": "採集", "target": 2, "reward": 5218, "exp": 2318},
+    578: {"name": "購物試煉·0578", "type": "購物", "target": 3, "reward": 5227, "exp": 2322},
+    579: {"name": "煉丹試煉·0579", "type": "煉丹", "target": 4, "reward": 5236, "exp": 2326},
+    580: {"name": "宗門試煉·0580", "type": "宗門", "target": 5, "reward": 5245, "exp": 2330},
+    581: {"name": "秘境試煉·0581", "type": "秘境", "target": 6, "reward": 5254, "exp": 2334},
+    582: {"name": "打坐試煉·0582", "type": "打坐", "target": 7, "reward": 5263, "exp": 2338},
+    583: {"name": "討伐試煉·0583", "type": "討伐", "target": 8, "reward": 5272, "exp": 2342},
+    584: {"name": "採集試煉·0584", "type": "採集", "target": 1, "reward": 5281, "exp": 2346},
+    585: {"name": "購物試煉·0585", "type": "購物", "target": 2, "reward": 5290, "exp": 2350},
+    586: {"name": "煉丹試煉·0586", "type": "煉丹", "target": 3, "reward": 5299, "exp": 2354},
+    587: {"name": "宗門試煉·0587", "type": "宗門", "target": 4, "reward": 5308, "exp": 2358},
+    588: {"name": "秘境試煉·0588", "type": "秘境", "target": 5, "reward": 5317, "exp": 2362},
+    589: {"name": "打坐試煉·0589", "type": "打坐", "target": 6, "reward": 5326, "exp": 2366},
+    590: {"name": "討伐試煉·0590", "type": "討伐", "target": 7, "reward": 5335, "exp": 2370},
+    591: {"name": "採集試煉·0591", "type": "採集", "target": 8, "reward": 5344, "exp": 2374},
+    592: {"name": "購物試煉·0592", "type": "購物", "target": 1, "reward": 5353, "exp": 2378},
+    593: {"name": "煉丹試煉·0593", "type": "煉丹", "target": 2, "reward": 5362, "exp": 2382},
+    594: {"name": "宗門試煉·0594", "type": "宗門", "target": 3, "reward": 5371, "exp": 2386},
+    595: {"name": "秘境試煉·0595", "type": "秘境", "target": 4, "reward": 5380, "exp": 2390},
+    596: {"name": "打坐試煉·0596", "type": "打坐", "target": 5, "reward": 5389, "exp": 2394},
+    597: {"name": "討伐試煉·0597", "type": "討伐", "target": 6, "reward": 5398, "exp": 2398},
+    598: {"name": "採集試煉·0598", "type": "採集", "target": 7, "reward": 5407, "exp": 2402},
+    599: {"name": "購物試煉·0599", "type": "購物", "target": 8, "reward": 5416, "exp": 2406},
+    600: {"name": "煉丹試煉·0600", "type": "煉丹", "target": 1, "reward": 5425, "exp": 2410},
+    601: {"name": "宗門試煉·0601", "type": "宗門", "target": 2, "reward": 5434, "exp": 2414},
+    602: {"name": "秘境試煉·0602", "type": "秘境", "target": 3, "reward": 5443, "exp": 2418},
+    603: {"name": "打坐試煉·0603", "type": "打坐", "target": 4, "reward": 5452, "exp": 2422},
+    604: {"name": "討伐試煉·0604", "type": "討伐", "target": 5, "reward": 5461, "exp": 2426},
+    605: {"name": "採集試煉·0605", "type": "採集", "target": 6, "reward": 5470, "exp": 2430},
+    606: {"name": "購物試煉·0606", "type": "購物", "target": 7, "reward": 5479, "exp": 2434},
+    607: {"name": "煉丹試煉·0607", "type": "煉丹", "target": 8, "reward": 5488, "exp": 2438},
+    608: {"name": "宗門試煉·0608", "type": "宗門", "target": 1, "reward": 5497, "exp": 2442},
+    609: {"name": "秘境試煉·0609", "type": "秘境", "target": 2, "reward": 5506, "exp": 2446},
+    610: {"name": "打坐試煉·0610", "type": "打坐", "target": 3, "reward": 5515, "exp": 2450},
+    611: {"name": "討伐試煉·0611", "type": "討伐", "target": 4, "reward": 5524, "exp": 2454},
+    612: {"name": "採集試煉·0612", "type": "採集", "target": 5, "reward": 5533, "exp": 2458},
+    613: {"name": "購物試煉·0613", "type": "購物", "target": 6, "reward": 5542, "exp": 2462},
+    614: {"name": "煉丹試煉·0614", "type": "煉丹", "target": 7, "reward": 5551, "exp": 2466},
+    615: {"name": "宗門試煉·0615", "type": "宗門", "target": 8, "reward": 5560, "exp": 2470},
+    616: {"name": "秘境試煉·0616", "type": "秘境", "target": 1, "reward": 5569, "exp": 2474},
+    617: {"name": "打坐試煉·0617", "type": "打坐", "target": 2, "reward": 5578, "exp": 2478},
+    618: {"name": "討伐試煉·0618", "type": "討伐", "target": 3, "reward": 5587, "exp": 2482},
+    619: {"name": "採集試煉·0619", "type": "採集", "target": 4, "reward": 5596, "exp": 2486},
+    620: {"name": "購物試煉·0620", "type": "購物", "target": 5, "reward": 5605, "exp": 2490},
+    621: {"name": "煉丹試煉·0621", "type": "煉丹", "target": 6, "reward": 5614, "exp": 2494},
+    622: {"name": "宗門試煉·0622", "type": "宗門", "target": 7, "reward": 5623, "exp": 2498},
+    623: {"name": "秘境試煉·0623", "type": "秘境", "target": 8, "reward": 5632, "exp": 2502},
+    624: {"name": "打坐試煉·0624", "type": "打坐", "target": 1, "reward": 5641, "exp": 2506},
+    625: {"name": "討伐試煉·0625", "type": "討伐", "target": 2, "reward": 5650, "exp": 2510},
+    626: {"name": "採集試煉·0626", "type": "採集", "target": 3, "reward": 5659, "exp": 2514},
+    627: {"name": "購物試煉·0627", "type": "購物", "target": 4, "reward": 5668, "exp": 2518},
+    628: {"name": "煉丹試煉·0628", "type": "煉丹", "target": 5, "reward": 5677, "exp": 2522},
+    629: {"name": "宗門試煉·0629", "type": "宗門", "target": 6, "reward": 5686, "exp": 2526},
+    630: {"name": "秘境試煉·0630", "type": "秘境", "target": 7, "reward": 5695, "exp": 2530},
+    631: {"name": "打坐試煉·0631", "type": "打坐", "target": 8, "reward": 5704, "exp": 2534},
+    632: {"name": "討伐試煉·0632", "type": "討伐", "target": 1, "reward": 5713, "exp": 2538},
+    633: {"name": "採集試煉·0633", "type": "採集", "target": 2, "reward": 5722, "exp": 2542},
+    634: {"name": "購物試煉·0634", "type": "購物", "target": 3, "reward": 5731, "exp": 2546},
+    635: {"name": "煉丹試煉·0635", "type": "煉丹", "target": 4, "reward": 5740, "exp": 2550},
+    636: {"name": "宗門試煉·0636", "type": "宗門", "target": 5, "reward": 5749, "exp": 2554},
+    637: {"name": "秘境試煉·0637", "type": "秘境", "target": 6, "reward": 5758, "exp": 2558},
+    638: {"name": "打坐試煉·0638", "type": "打坐", "target": 7, "reward": 5767, "exp": 2562},
+    639: {"name": "討伐試煉·0639", "type": "討伐", "target": 8, "reward": 5776, "exp": 2566},
+    640: {"name": "採集試煉·0640", "type": "採集", "target": 1, "reward": 5785, "exp": 2570},
+    641: {"name": "購物試煉·0641", "type": "購物", "target": 2, "reward": 5794, "exp": 2574},
+    642: {"name": "煉丹試煉·0642", "type": "煉丹", "target": 3, "reward": 5803, "exp": 2578},
+    643: {"name": "宗門試煉·0643", "type": "宗門", "target": 4, "reward": 5812, "exp": 2582},
+    644: {"name": "秘境試煉·0644", "type": "秘境", "target": 5, "reward": 5821, "exp": 2586},
+    645: {"name": "打坐試煉·0645", "type": "打坐", "target": 6, "reward": 5830, "exp": 2590},
+    646: {"name": "討伐試煉·0646", "type": "討伐", "target": 7, "reward": 5839, "exp": 2594},
+    647: {"name": "採集試煉·0647", "type": "採集", "target": 8, "reward": 5848, "exp": 2598},
+    648: {"name": "購物試煉·0648", "type": "購物", "target": 1, "reward": 5857, "exp": 2602},
+    649: {"name": "煉丹試煉·0649", "type": "煉丹", "target": 2, "reward": 5866, "exp": 2606},
+    650: {"name": "宗門試煉·0650", "type": "宗門", "target": 3, "reward": 5875, "exp": 2610},
+    651: {"name": "秘境試煉·0651", "type": "秘境", "target": 4, "reward": 5884, "exp": 2614},
+    652: {"name": "打坐試煉·0652", "type": "打坐", "target": 5, "reward": 5893, "exp": 2618},
+    653: {"name": "討伐試煉·0653", "type": "討伐", "target": 6, "reward": 5902, "exp": 2622},
+    654: {"name": "採集試煉·0654", "type": "採集", "target": 7, "reward": 5911, "exp": 2626},
+    655: {"name": "購物試煉·0655", "type": "購物", "target": 8, "reward": 5920, "exp": 2630},
+    656: {"name": "煉丹試煉·0656", "type": "煉丹", "target": 1, "reward": 5929, "exp": 2634},
+    657: {"name": "宗門試煉·0657", "type": "宗門", "target": 2, "reward": 5938, "exp": 2638},
+    658: {"name": "秘境試煉·0658", "type": "秘境", "target": 3, "reward": 5947, "exp": 2642},
+    659: {"name": "打坐試煉·0659", "type": "打坐", "target": 4, "reward": 5956, "exp": 2646},
+    660: {"name": "討伐試煉·0660", "type": "討伐", "target": 5, "reward": 5965, "exp": 2650},
+    661: {"name": "採集試煉·0661", "type": "採集", "target": 6, "reward": 5974, "exp": 2654},
+    662: {"name": "購物試煉·0662", "type": "購物", "target": 7, "reward": 5983, "exp": 2658},
+    663: {"name": "煉丹試煉·0663", "type": "煉丹", "target": 8, "reward": 5992, "exp": 2662},
+    664: {"name": "宗門試煉·0664", "type": "宗門", "target": 1, "reward": 6001, "exp": 2666},
+    665: {"name": "秘境試煉·0665", "type": "秘境", "target": 2, "reward": 6010, "exp": 2670},
+    666: {"name": "打坐試煉·0666", "type": "打坐", "target": 3, "reward": 6019, "exp": 2674},
+    667: {"name": "討伐試煉·0667", "type": "討伐", "target": 4, "reward": 6028, "exp": 2678},
+    668: {"name": "採集試煉·0668", "type": "採集", "target": 5, "reward": 6037, "exp": 2682},
+    669: {"name": "購物試煉·0669", "type": "購物", "target": 6, "reward": 6046, "exp": 2686},
+    670: {"name": "煉丹試煉·0670", "type": "煉丹", "target": 7, "reward": 6055, "exp": 2690},
+    671: {"name": "宗門試煉·0671", "type": "宗門", "target": 8, "reward": 6064, "exp": 2694},
+    672: {"name": "秘境試煉·0672", "type": "秘境", "target": 1, "reward": 6073, "exp": 2698},
+    673: {"name": "打坐試煉·0673", "type": "打坐", "target": 2, "reward": 6082, "exp": 2702},
+    674: {"name": "討伐試煉·0674", "type": "討伐", "target": 3, "reward": 6091, "exp": 2706},
+    675: {"name": "採集試煉·0675", "type": "採集", "target": 4, "reward": 6100, "exp": 2710},
+    676: {"name": "購物試煉·0676", "type": "購物", "target": 5, "reward": 6109, "exp": 2714},
+    677: {"name": "煉丹試煉·0677", "type": "煉丹", "target": 6, "reward": 6118, "exp": 2718},
+    678: {"name": "宗門試煉·0678", "type": "宗門", "target": 7, "reward": 6127, "exp": 2722},
+    679: {"name": "秘境試煉·0679", "type": "秘境", "target": 8, "reward": 6136, "exp": 2726},
+    680: {"name": "打坐試煉·0680", "type": "打坐", "target": 1, "reward": 6145, "exp": 2730},
+    681: {"name": "討伐試煉·0681", "type": "討伐", "target": 2, "reward": 6154, "exp": 2734},
+    682: {"name": "採集試煉·0682", "type": "採集", "target": 3, "reward": 6163, "exp": 2738},
+    683: {"name": "購物試煉·0683", "type": "購物", "target": 4, "reward": 6172, "exp": 2742},
+    684: {"name": "煉丹試煉·0684", "type": "煉丹", "target": 5, "reward": 6181, "exp": 2746},
+    685: {"name": "宗門試煉·0685", "type": "宗門", "target": 6, "reward": 6190, "exp": 2750},
+    686: {"name": "秘境試煉·0686", "type": "秘境", "target": 7, "reward": 6199, "exp": 2754},
+    687: {"name": "打坐試煉·0687", "type": "打坐", "target": 8, "reward": 6208, "exp": 2758},
+    688: {"name": "討伐試煉·0688", "type": "討伐", "target": 1, "reward": 6217, "exp": 2762},
+    689: {"name": "採集試煉·0689", "type": "採集", "target": 2, "reward": 6226, "exp": 2766},
+    690: {"name": "購物試煉·0690", "type": "購物", "target": 3, "reward": 6235, "exp": 2770},
+    691: {"name": "煉丹試煉·0691", "type": "煉丹", "target": 4, "reward": 6244, "exp": 2774},
+    692: {"name": "宗門試煉·0692", "type": "宗門", "target": 5, "reward": 6253, "exp": 2778},
+    693: {"name": "秘境試煉·0693", "type": "秘境", "target": 6, "reward": 6262, "exp": 2782},
+    694: {"name": "打坐試煉·0694", "type": "打坐", "target": 7, "reward": 6271, "exp": 2786},
+    695: {"name": "討伐試煉·0695", "type": "討伐", "target": 8, "reward": 6280, "exp": 2790},
+    696: {"name": "採集試煉·0696", "type": "採集", "target": 1, "reward": 6289, "exp": 2794},
+    697: {"name": "購物試煉·0697", "type": "購物", "target": 2, "reward": 6298, "exp": 2798},
+    698: {"name": "煉丹試煉·0698", "type": "煉丹", "target": 3, "reward": 6307, "exp": 2802},
+    699: {"name": "宗門試煉·0699", "type": "宗門", "target": 4, "reward": 6316, "exp": 2806},
+    700: {"name": "秘境試煉·0700", "type": "秘境", "target": 5, "reward": 6325, "exp": 2810},
+    701: {"name": "打坐試煉·0701", "type": "打坐", "target": 6, "reward": 6334, "exp": 2814},
+    702: {"name": "討伐試煉·0702", "type": "討伐", "target": 7, "reward": 6343, "exp": 2818},
+    703: {"name": "採集試煉·0703", "type": "採集", "target": 8, "reward": 6352, "exp": 2822},
+    704: {"name": "購物試煉·0704", "type": "購物", "target": 1, "reward": 6361, "exp": 2826},
+    705: {"name": "煉丹試煉·0705", "type": "煉丹", "target": 2, "reward": 6370, "exp": 2830},
+    706: {"name": "宗門試煉·0706", "type": "宗門", "target": 3, "reward": 6379, "exp": 2834},
+    707: {"name": "秘境試煉·0707", "type": "秘境", "target": 4, "reward": 6388, "exp": 2838},
+    708: {"name": "打坐試煉·0708", "type": "打坐", "target": 5, "reward": 6397, "exp": 2842},
+    709: {"name": "討伐試煉·0709", "type": "討伐", "target": 6, "reward": 6406, "exp": 2846},
+    710: {"name": "採集試煉·0710", "type": "採集", "target": 7, "reward": 6415, "exp": 2850},
+    711: {"name": "購物試煉·0711", "type": "購物", "target": 8, "reward": 6424, "exp": 2854},
+    712: {"name": "煉丹試煉·0712", "type": "煉丹", "target": 1, "reward": 6433, "exp": 2858},
+    713: {"name": "宗門試煉·0713", "type": "宗門", "target": 2, "reward": 6442, "exp": 2862},
+    714: {"name": "秘境試煉·0714", "type": "秘境", "target": 3, "reward": 6451, "exp": 2866},
+    715: {"name": "打坐試煉·0715", "type": "打坐", "target": 4, "reward": 6460, "exp": 2870},
+    716: {"name": "討伐試煉·0716", "type": "討伐", "target": 5, "reward": 6469, "exp": 2874},
+    717: {"name": "採集試煉·0717", "type": "採集", "target": 6, "reward": 6478, "exp": 2878},
+    718: {"name": "購物試煉·0718", "type": "購物", "target": 7, "reward": 6487, "exp": 2882},
+    719: {"name": "煉丹試煉·0719", "type": "煉丹", "target": 8, "reward": 6496, "exp": 2886},
+    720: {"name": "宗門試煉·0720", "type": "宗門", "target": 1, "reward": 6505, "exp": 2890},
+    721: {"name": "秘境試煉·0721", "type": "秘境", "target": 2, "reward": 6514, "exp": 2894},
+    722: {"name": "打坐試煉·0722", "type": "打坐", "target": 3, "reward": 6523, "exp": 2898},
+    723: {"name": "討伐試煉·0723", "type": "討伐", "target": 4, "reward": 6532, "exp": 2902},
+    724: {"name": "採集試煉·0724", "type": "採集", "target": 5, "reward": 6541, "exp": 2906},
+    725: {"name": "購物試煉·0725", "type": "購物", "target": 6, "reward": 6550, "exp": 2910},
+    726: {"name": "煉丹試煉·0726", "type": "煉丹", "target": 7, "reward": 6559, "exp": 2914},
+    727: {"name": "宗門試煉·0727", "type": "宗門", "target": 8, "reward": 6568, "exp": 2918},
+    728: {"name": "秘境試煉·0728", "type": "秘境", "target": 1, "reward": 6577, "exp": 2922},
+    729: {"name": "打坐試煉·0729", "type": "打坐", "target": 2, "reward": 6586, "exp": 2926},
+    730: {"name": "討伐試煉·0730", "type": "討伐", "target": 3, "reward": 6595, "exp": 2930},
+    731: {"name": "採集試煉·0731", "type": "採集", "target": 4, "reward": 6604, "exp": 2934},
+    732: {"name": "購物試煉·0732", "type": "購物", "target": 5, "reward": 6613, "exp": 2938},
+    733: {"name": "煉丹試煉·0733", "type": "煉丹", "target": 6, "reward": 6622, "exp": 2942},
+    734: {"name": "宗門試煉·0734", "type": "宗門", "target": 7, "reward": 6631, "exp": 2946},
+    735: {"name": "秘境試煉·0735", "type": "秘境", "target": 8, "reward": 6640, "exp": 2950},
+    736: {"name": "打坐試煉·0736", "type": "打坐", "target": 1, "reward": 6649, "exp": 2954},
+    737: {"name": "討伐試煉·0737", "type": "討伐", "target": 2, "reward": 6658, "exp": 2958},
+    738: {"name": "採集試煉·0738", "type": "採集", "target": 3, "reward": 6667, "exp": 2962},
+    739: {"name": "購物試煉·0739", "type": "購物", "target": 4, "reward": 6676, "exp": 2966},
+    740: {"name": "煉丹試煉·0740", "type": "煉丹", "target": 5, "reward": 6685, "exp": 2970},
+    741: {"name": "宗門試煉·0741", "type": "宗門", "target": 6, "reward": 6694, "exp": 2974},
+    742: {"name": "秘境試煉·0742", "type": "秘境", "target": 7, "reward": 6703, "exp": 2978},
+    743: {"name": "打坐試煉·0743", "type": "打坐", "target": 8, "reward": 6712, "exp": 2982},
+    744: {"name": "討伐試煉·0744", "type": "討伐", "target": 1, "reward": 6721, "exp": 2986},
+    745: {"name": "採集試煉·0745", "type": "採集", "target": 2, "reward": 6730, "exp": 2990},
+    746: {"name": "購物試煉·0746", "type": "購物", "target": 3, "reward": 6739, "exp": 2994},
+    747: {"name": "煉丹試煉·0747", "type": "煉丹", "target": 4, "reward": 6748, "exp": 2998},
+    748: {"name": "宗門試煉·0748", "type": "宗門", "target": 5, "reward": 6757, "exp": 3002},
+    749: {"name": "秘境試煉·0749", "type": "秘境", "target": 6, "reward": 6766, "exp": 3006},
+    750: {"name": "打坐試煉·0750", "type": "打坐", "target": 7, "reward": 6775, "exp": 3010},
+    751: {"name": "討伐試煉·0751", "type": "討伐", "target": 8, "reward": 6784, "exp": 3014},
+    752: {"name": "採集試煉·0752", "type": "採集", "target": 1, "reward": 6793, "exp": 3018},
+    753: {"name": "購物試煉·0753", "type": "購物", "target": 2, "reward": 6802, "exp": 3022},
+    754: {"name": "煉丹試煉·0754", "type": "煉丹", "target": 3, "reward": 6811, "exp": 3026},
+    755: {"name": "宗門試煉·0755", "type": "宗門", "target": 4, "reward": 6820, "exp": 3030},
+    756: {"name": "秘境試煉·0756", "type": "秘境", "target": 5, "reward": 6829, "exp": 3034},
+    757: {"name": "打坐試煉·0757", "type": "打坐", "target": 6, "reward": 6838, "exp": 3038},
+    758: {"name": "討伐試煉·0758", "type": "討伐", "target": 7, "reward": 6847, "exp": 3042},
+    759: {"name": "採集試煉·0759", "type": "採集", "target": 8, "reward": 6856, "exp": 3046},
+    760: {"name": "購物試煉·0760", "type": "購物", "target": 1, "reward": 6865, "exp": 3050},
+    761: {"name": "煉丹試煉·0761", "type": "煉丹", "target": 2, "reward": 6874, "exp": 3054},
+    762: {"name": "宗門試煉·0762", "type": "宗門", "target": 3, "reward": 6883, "exp": 3058},
+    763: {"name": "秘境試煉·0763", "type": "秘境", "target": 4, "reward": 6892, "exp": 3062},
+    764: {"name": "打坐試煉·0764", "type": "打坐", "target": 5, "reward": 6901, "exp": 3066},
+    765: {"name": "討伐試煉·0765", "type": "討伐", "target": 6, "reward": 6910, "exp": 3070},
+    766: {"name": "採集試煉·0766", "type": "採集", "target": 7, "reward": 6919, "exp": 3074},
+    767: {"name": "購物試煉·0767", "type": "購物", "target": 8, "reward": 6928, "exp": 3078},
+    768: {"name": "煉丹試煉·0768", "type": "煉丹", "target": 1, "reward": 6937, "exp": 3082},
+    769: {"name": "宗門試煉·0769", "type": "宗門", "target": 2, "reward": 6946, "exp": 3086},
+    770: {"name": "秘境試煉·0770", "type": "秘境", "target": 3, "reward": 6955, "exp": 3090},
+    771: {"name": "打坐試煉·0771", "type": "打坐", "target": 4, "reward": 6964, "exp": 3094},
+    772: {"name": "討伐試煉·0772", "type": "討伐", "target": 5, "reward": 6973, "exp": 3098},
+    773: {"name": "採集試煉·0773", "type": "採集", "target": 6, "reward": 6982, "exp": 3102},
+    774: {"name": "購物試煉·0774", "type": "購物", "target": 7, "reward": 6991, "exp": 3106},
+    775: {"name": "煉丹試煉·0775", "type": "煉丹", "target": 8, "reward": 7000, "exp": 3110},
+    776: {"name": "宗門試煉·0776", "type": "宗門", "target": 1, "reward": 7009, "exp": 3114},
+    777: {"name": "秘境試煉·0777", "type": "秘境", "target": 2, "reward": 7018, "exp": 3118},
+    778: {"name": "打坐試煉·0778", "type": "打坐", "target": 3, "reward": 7027, "exp": 3122},
+    779: {"name": "討伐試煉·0779", "type": "討伐", "target": 4, "reward": 7036, "exp": 3126},
+    780: {"name": "採集試煉·0780", "type": "採集", "target": 5, "reward": 7045, "exp": 3130},
+    781: {"name": "購物試煉·0781", "type": "購物", "target": 6, "reward": 7054, "exp": 3134},
+    782: {"name": "煉丹試煉·0782", "type": "煉丹", "target": 7, "reward": 7063, "exp": 3138},
+    783: {"name": "宗門試煉·0783", "type": "宗門", "target": 8, "reward": 7072, "exp": 3142},
+    784: {"name": "秘境試煉·0784", "type": "秘境", "target": 1, "reward": 7081, "exp": 3146},
+    785: {"name": "打坐試煉·0785", "type": "打坐", "target": 2, "reward": 7090, "exp": 3150},
+    786: {"name": "討伐試煉·0786", "type": "討伐", "target": 3, "reward": 7099, "exp": 3154},
+    787: {"name": "採集試煉·0787", "type": "採集", "target": 4, "reward": 7108, "exp": 3158},
+    788: {"name": "購物試煉·0788", "type": "購物", "target": 5, "reward": 7117, "exp": 3162},
+    789: {"name": "煉丹試煉·0789", "type": "煉丹", "target": 6, "reward": 7126, "exp": 3166},
+    790: {"name": "宗門試煉·0790", "type": "宗門", "target": 7, "reward": 7135, "exp": 3170},
+    791: {"name": "秘境試煉·0791", "type": "秘境", "target": 8, "reward": 7144, "exp": 3174},
+    792: {"name": "打坐試煉·0792", "type": "打坐", "target": 1, "reward": 7153, "exp": 3178},
+    793: {"name": "討伐試煉·0793", "type": "討伐", "target": 2, "reward": 7162, "exp": 3182},
+    794: {"name": "採集試煉·0794", "type": "採集", "target": 3, "reward": 7171, "exp": 3186},
+    795: {"name": "購物試煉·0795", "type": "購物", "target": 4, "reward": 7180, "exp": 3190},
+    796: {"name": "煉丹試煉·0796", "type": "煉丹", "target": 5, "reward": 7189, "exp": 3194},
+    797: {"name": "宗門試煉·0797", "type": "宗門", "target": 6, "reward": 7198, "exp": 3198},
+    798: {"name": "秘境試煉·0798", "type": "秘境", "target": 7, "reward": 7207, "exp": 3202},
+    799: {"name": "打坐試煉·0799", "type": "打坐", "target": 8, "reward": 7216, "exp": 3206},
+    800: {"name": "討伐試煉·0800", "type": "討伐", "target": 1, "reward": 7225, "exp": 3210},
+    801: {"name": "採集試煉·0801", "type": "採集", "target": 2, "reward": 7234, "exp": 3214},
+    802: {"name": "購物試煉·0802", "type": "購物", "target": 3, "reward": 7243, "exp": 3218},
+    803: {"name": "煉丹試煉·0803", "type": "煉丹", "target": 4, "reward": 7252, "exp": 3222},
+    804: {"name": "宗門試煉·0804", "type": "宗門", "target": 5, "reward": 7261, "exp": 3226},
+    805: {"name": "秘境試煉·0805", "type": "秘境", "target": 6, "reward": 7270, "exp": 3230},
+    806: {"name": "打坐試煉·0806", "type": "打坐", "target": 7, "reward": 7279, "exp": 3234},
+    807: {"name": "討伐試煉·0807", "type": "討伐", "target": 8, "reward": 7288, "exp": 3238},
+    808: {"name": "採集試煉·0808", "type": "採集", "target": 1, "reward": 7297, "exp": 3242},
+    809: {"name": "購物試煉·0809", "type": "購物", "target": 2, "reward": 7306, "exp": 3246},
+    810: {"name": "煉丹試煉·0810", "type": "煉丹", "target": 3, "reward": 7315, "exp": 3250},
+    811: {"name": "宗門試煉·0811", "type": "宗門", "target": 4, "reward": 7324, "exp": 3254},
+    812: {"name": "秘境試煉·0812", "type": "秘境", "target": 5, "reward": 7333, "exp": 3258},
+    813: {"name": "打坐試煉·0813", "type": "打坐", "target": 6, "reward": 7342, "exp": 3262},
+    814: {"name": "討伐試煉·0814", "type": "討伐", "target": 7, "reward": 7351, "exp": 3266},
+    815: {"name": "採集試煉·0815", "type": "採集", "target": 8, "reward": 7360, "exp": 3270},
+    816: {"name": "購物試煉·0816", "type": "購物", "target": 1, "reward": 7369, "exp": 3274},
+    817: {"name": "煉丹試煉·0817", "type": "煉丹", "target": 2, "reward": 7378, "exp": 3278},
+    818: {"name": "宗門試煉·0818", "type": "宗門", "target": 3, "reward": 7387, "exp": 3282},
+    819: {"name": "秘境試煉·0819", "type": "秘境", "target": 4, "reward": 7396, "exp": 3286},
+    820: {"name": "打坐試煉·0820", "type": "打坐", "target": 5, "reward": 7405, "exp": 3290},
+    821: {"name": "討伐試煉·0821", "type": "討伐", "target": 6, "reward": 7414, "exp": 3294},
+    822: {"name": "採集試煉·0822", "type": "採集", "target": 7, "reward": 7423, "exp": 3298},
+    823: {"name": "購物試煉·0823", "type": "購物", "target": 8, "reward": 7432, "exp": 3302},
+    824: {"name": "煉丹試煉·0824", "type": "煉丹", "target": 1, "reward": 7441, "exp": 3306},
+    825: {"name": "宗門試煉·0825", "type": "宗門", "target": 2, "reward": 7450, "exp": 3310},
+    826: {"name": "秘境試煉·0826", "type": "秘境", "target": 3, "reward": 7459, "exp": 3314},
+    827: {"name": "打坐試煉·0827", "type": "打坐", "target": 4, "reward": 7468, "exp": 3318},
+    828: {"name": "討伐試煉·0828", "type": "討伐", "target": 5, "reward": 7477, "exp": 3322},
+    829: {"name": "採集試煉·0829", "type": "採集", "target": 6, "reward": 7486, "exp": 3326},
+    830: {"name": "購物試煉·0830", "type": "購物", "target": 7, "reward": 7495, "exp": 3330},
+    831: {"name": "煉丹試煉·0831", "type": "煉丹", "target": 8, "reward": 7504, "exp": 3334},
+    832: {"name": "宗門試煉·0832", "type": "宗門", "target": 1, "reward": 7513, "exp": 3338},
+    833: {"name": "秘境試煉·0833", "type": "秘境", "target": 2, "reward": 7522, "exp": 3342},
+    834: {"name": "打坐試煉·0834", "type": "打坐", "target": 3, "reward": 7531, "exp": 3346},
+    835: {"name": "討伐試煉·0835", "type": "討伐", "target": 4, "reward": 7540, "exp": 3350},
+    836: {"name": "採集試煉·0836", "type": "採集", "target": 5, "reward": 7549, "exp": 3354},
+    837: {"name": "購物試煉·0837", "type": "購物", "target": 6, "reward": 7558, "exp": 3358},
+    838: {"name": "煉丹試煉·0838", "type": "煉丹", "target": 7, "reward": 7567, "exp": 3362},
+    839: {"name": "宗門試煉·0839", "type": "宗門", "target": 8, "reward": 7576, "exp": 3366},
+    840: {"name": "秘境試煉·0840", "type": "秘境", "target": 1, "reward": 7585, "exp": 3370},
+    841: {"name": "打坐試煉·0841", "type": "打坐", "target": 2, "reward": 7594, "exp": 3374},
+    842: {"name": "討伐試煉·0842", "type": "討伐", "target": 3, "reward": 7603, "exp": 3378},
+    843: {"name": "採集試煉·0843", "type": "採集", "target": 4, "reward": 7612, "exp": 3382},
+    844: {"name": "購物試煉·0844", "type": "購物", "target": 5, "reward": 7621, "exp": 3386},
+    845: {"name": "煉丹試煉·0845", "type": "煉丹", "target": 6, "reward": 7630, "exp": 3390},
+    846: {"name": "宗門試煉·0846", "type": "宗門", "target": 7, "reward": 7639, "exp": 3394},
+    847: {"name": "秘境試煉·0847", "type": "秘境", "target": 8, "reward": 7648, "exp": 3398},
+    848: {"name": "打坐試煉·0848", "type": "打坐", "target": 1, "reward": 7657, "exp": 3402},
+    849: {"name": "討伐試煉·0849", "type": "討伐", "target": 2, "reward": 7666, "exp": 3406},
+    850: {"name": "採集試煉·0850", "type": "採集", "target": 3, "reward": 7675, "exp": 3410},
+    851: {"name": "購物試煉·0851", "type": "購物", "target": 4, "reward": 7684, "exp": 3414},
+    852: {"name": "煉丹試煉·0852", "type": "煉丹", "target": 5, "reward": 7693, "exp": 3418},
+    853: {"name": "宗門試煉·0853", "type": "宗門", "target": 6, "reward": 7702, "exp": 3422},
+    854: {"name": "秘境試煉·0854", "type": "秘境", "target": 7, "reward": 7711, "exp": 3426},
+    855: {"name": "打坐試煉·0855", "type": "打坐", "target": 8, "reward": 7720, "exp": 3430},
+    856: {"name": "討伐試煉·0856", "type": "討伐", "target": 1, "reward": 7729, "exp": 3434},
+    857: {"name": "採集試煉·0857", "type": "採集", "target": 2, "reward": 7738, "exp": 3438},
+    858: {"name": "購物試煉·0858", "type": "購物", "target": 3, "reward": 7747, "exp": 3442},
+    859: {"name": "煉丹試煉·0859", "type": "煉丹", "target": 4, "reward": 7756, "exp": 3446},
+    860: {"name": "宗門試煉·0860", "type": "宗門", "target": 5, "reward": 7765, "exp": 3450},
+    861: {"name": "秘境試煉·0861", "type": "秘境", "target": 6, "reward": 7774, "exp": 3454},
+    862: {"name": "打坐試煉·0862", "type": "打坐", "target": 7, "reward": 7783, "exp": 3458},
+    863: {"name": "討伐試煉·0863", "type": "討伐", "target": 8, "reward": 7792, "exp": 3462},
+    864: {"name": "採集試煉·0864", "type": "採集", "target": 1, "reward": 7801, "exp": 3466},
+    865: {"name": "購物試煉·0865", "type": "購物", "target": 2, "reward": 7810, "exp": 3470},
+    866: {"name": "煉丹試煉·0866", "type": "煉丹", "target": 3, "reward": 7819, "exp": 3474},
+    867: {"name": "宗門試煉·0867", "type": "宗門", "target": 4, "reward": 7828, "exp": 3478},
+    868: {"name": "秘境試煉·0868", "type": "秘境", "target": 5, "reward": 7837, "exp": 3482},
+    869: {"name": "打坐試煉·0869", "type": "打坐", "target": 6, "reward": 7846, "exp": 3486},
+    870: {"name": "討伐試煉·0870", "type": "討伐", "target": 7, "reward": 7855, "exp": 3490},
+    871: {"name": "採集試煉·0871", "type": "採集", "target": 8, "reward": 7864, "exp": 3494},
+    872: {"name": "購物試煉·0872", "type": "購物", "target": 1, "reward": 7873, "exp": 3498},
+    873: {"name": "煉丹試煉·0873", "type": "煉丹", "target": 2, "reward": 7882, "exp": 3502},
+    874: {"name": "宗門試煉·0874", "type": "宗門", "target": 3, "reward": 7891, "exp": 3506},
+    875: {"name": "秘境試煉·0875", "type": "秘境", "target": 4, "reward": 7900, "exp": 3510},
+    876: {"name": "打坐試煉·0876", "type": "打坐", "target": 5, "reward": 7909, "exp": 3514},
+    877: {"name": "討伐試煉·0877", "type": "討伐", "target": 6, "reward": 7918, "exp": 3518},
+    878: {"name": "採集試煉·0878", "type": "採集", "target": 7, "reward": 7927, "exp": 3522},
+    879: {"name": "購物試煉·0879", "type": "購物", "target": 8, "reward": 7936, "exp": 3526},
+    880: {"name": "煉丹試煉·0880", "type": "煉丹", "target": 1, "reward": 7945, "exp": 3530},
+    881: {"name": "宗門試煉·0881", "type": "宗門", "target": 2, "reward": 7954, "exp": 3534},
+    882: {"name": "秘境試煉·0882", "type": "秘境", "target": 3, "reward": 7963, "exp": 3538},
+    883: {"name": "打坐試煉·0883", "type": "打坐", "target": 4, "reward": 7972, "exp": 3542},
+    884: {"name": "討伐試煉·0884", "type": "討伐", "target": 5, "reward": 7981, "exp": 3546},
+    885: {"name": "採集試煉·0885", "type": "採集", "target": 6, "reward": 7990, "exp": 3550},
+    886: {"name": "購物試煉·0886", "type": "購物", "target": 7, "reward": 7999, "exp": 3554},
+    887: {"name": "煉丹試煉·0887", "type": "煉丹", "target": 8, "reward": 8008, "exp": 3558},
+    888: {"name": "宗門試煉·0888", "type": "宗門", "target": 1, "reward": 8017, "exp": 3562},
+    889: {"name": "秘境試煉·0889", "type": "秘境", "target": 2, "reward": 8026, "exp": 3566},
+    890: {"name": "打坐試煉·0890", "type": "打坐", "target": 3, "reward": 8035, "exp": 3570},
+    891: {"name": "討伐試煉·0891", "type": "討伐", "target": 4, "reward": 8044, "exp": 3574},
+    892: {"name": "採集試煉·0892", "type": "採集", "target": 5, "reward": 8053, "exp": 3578},
+    893: {"name": "購物試煉·0893", "type": "購物", "target": 6, "reward": 8062, "exp": 3582},
+    894: {"name": "煉丹試煉·0894", "type": "煉丹", "target": 7, "reward": 8071, "exp": 3586},
+    895: {"name": "宗門試煉·0895", "type": "宗門", "target": 8, "reward": 8080, "exp": 3590},
+    896: {"name": "秘境試煉·0896", "type": "秘境", "target": 1, "reward": 8089, "exp": 3594},
+    897: {"name": "打坐試煉·0897", "type": "打坐", "target": 2, "reward": 8098, "exp": 3598},
+    898: {"name": "討伐試煉·0898", "type": "討伐", "target": 3, "reward": 8107, "exp": 3602},
+    899: {"name": "採集試煉·0899", "type": "採集", "target": 4, "reward": 8116, "exp": 3606},
+    900: {"name": "購物試煉·0900", "type": "購物", "target": 5, "reward": 8125, "exp": 3610},
+    901: {"name": "煉丹試煉·0901", "type": "煉丹", "target": 6, "reward": 8134, "exp": 3614},
+    902: {"name": "宗門試煉·0902", "type": "宗門", "target": 7, "reward": 8143, "exp": 3618},
+    903: {"name": "秘境試煉·0903", "type": "秘境", "target": 8, "reward": 8152, "exp": 3622},
+    904: {"name": "打坐試煉·0904", "type": "打坐", "target": 1, "reward": 8161, "exp": 3626},
+    905: {"name": "討伐試煉·0905", "type": "討伐", "target": 2, "reward": 8170, "exp": 3630},
+    906: {"name": "採集試煉·0906", "type": "採集", "target": 3, "reward": 8179, "exp": 3634},
+    907: {"name": "購物試煉·0907", "type": "購物", "target": 4, "reward": 8188, "exp": 3638},
+    908: {"name": "煉丹試煉·0908", "type": "煉丹", "target": 5, "reward": 8197, "exp": 3642},
+    909: {"name": "宗門試煉·0909", "type": "宗門", "target": 6, "reward": 8206, "exp": 3646},
+    910: {"name": "秘境試煉·0910", "type": "秘境", "target": 7, "reward": 8215, "exp": 3650},
+    911: {"name": "打坐試煉·0911", "type": "打坐", "target": 8, "reward": 8224, "exp": 3654},
+    912: {"name": "討伐試煉·0912", "type": "討伐", "target": 1, "reward": 8233, "exp": 3658},
+    913: {"name": "採集試煉·0913", "type": "採集", "target": 2, "reward": 8242, "exp": 3662},
+    914: {"name": "購物試煉·0914", "type": "購物", "target": 3, "reward": 8251, "exp": 3666},
+    915: {"name": "煉丹試煉·0915", "type": "煉丹", "target": 4, "reward": 8260, "exp": 3670},
+    916: {"name": "宗門試煉·0916", "type": "宗門", "target": 5, "reward": 8269, "exp": 3674},
+    917: {"name": "秘境試煉·0917", "type": "秘境", "target": 6, "reward": 8278, "exp": 3678},
+    918: {"name": "打坐試煉·0918", "type": "打坐", "target": 7, "reward": 8287, "exp": 3682},
+    919: {"name": "討伐試煉·0919", "type": "討伐", "target": 8, "reward": 8296, "exp": 3686},
+    920: {"name": "採集試煉·0920", "type": "採集", "target": 1, "reward": 8305, "exp": 3690},
+    921: {"name": "購物試煉·0921", "type": "購物", "target": 2, "reward": 8314, "exp": 3694},
+    922: {"name": "煉丹試煉·0922", "type": "煉丹", "target": 3, "reward": 8323, "exp": 3698},
+    923: {"name": "宗門試煉·0923", "type": "宗門", "target": 4, "reward": 8332, "exp": 3702},
+    924: {"name": "秘境試煉·0924", "type": "秘境", "target": 5, "reward": 8341, "exp": 3706},
+    925: {"name": "打坐試煉·0925", "type": "打坐", "target": 6, "reward": 8350, "exp": 3710},
+    926: {"name": "討伐試煉·0926", "type": "討伐", "target": 7, "reward": 8359, "exp": 3714},
+    927: {"name": "採集試煉·0927", "type": "採集", "target": 8, "reward": 8368, "exp": 3718},
+    928: {"name": "購物試煉·0928", "type": "購物", "target": 1, "reward": 8377, "exp": 3722},
+    929: {"name": "煉丹試煉·0929", "type": "煉丹", "target": 2, "reward": 8386, "exp": 3726},
+    930: {"name": "宗門試煉·0930", "type": "宗門", "target": 3, "reward": 8395, "exp": 3730},
+    931: {"name": "秘境試煉·0931", "type": "秘境", "target": 4, "reward": 8404, "exp": 3734},
+    932: {"name": "打坐試煉·0932", "type": "打坐", "target": 5, "reward": 8413, "exp": 3738},
+    933: {"name": "討伐試煉·0933", "type": "討伐", "target": 6, "reward": 8422, "exp": 3742},
+    934: {"name": "採集試煉·0934", "type": "採集", "target": 7, "reward": 8431, "exp": 3746},
+    935: {"name": "購物試煉·0935", "type": "購物", "target": 8, "reward": 8440, "exp": 3750},
+    936: {"name": "煉丹試煉·0936", "type": "煉丹", "target": 1, "reward": 8449, "exp": 3754},
+    937: {"name": "宗門試煉·0937", "type": "宗門", "target": 2, "reward": 8458, "exp": 3758},
+    938: {"name": "秘境試煉·0938", "type": "秘境", "target": 3, "reward": 8467, "exp": 3762},
+    939: {"name": "打坐試煉·0939", "type": "打坐", "target": 4, "reward": 8476, "exp": 3766},
+    940: {"name": "討伐試煉·0940", "type": "討伐", "target": 5, "reward": 8485, "exp": 3770},
+    941: {"name": "採集試煉·0941", "type": "採集", "target": 6, "reward": 8494, "exp": 3774},
+    942: {"name": "購物試煉·0942", "type": "購物", "target": 7, "reward": 8503, "exp": 3778},
+    943: {"name": "煉丹試煉·0943", "type": "煉丹", "target": 8, "reward": 8512, "exp": 3782},
+    944: {"name": "宗門試煉·0944", "type": "宗門", "target": 1, "reward": 8521, "exp": 3786},
+    945: {"name": "秘境試煉·0945", "type": "秘境", "target": 2, "reward": 8530, "exp": 3790},
+    946: {"name": "打坐試煉·0946", "type": "打坐", "target": 3, "reward": 8539, "exp": 3794},
+    947: {"name": "討伐試煉·0947", "type": "討伐", "target": 4, "reward": 8548, "exp": 3798},
+    948: {"name": "採集試煉·0948", "type": "採集", "target": 5, "reward": 8557, "exp": 3802},
+    949: {"name": "購物試煉·0949", "type": "購物", "target": 6, "reward": 8566, "exp": 3806},
+    950: {"name": "煉丹試煉·0950", "type": "煉丹", "target": 7, "reward": 8575, "exp": 3810},
+    951: {"name": "宗門試煉·0951", "type": "宗門", "target": 8, "reward": 8584, "exp": 3814},
+    952: {"name": "秘境試煉·0952", "type": "秘境", "target": 1, "reward": 8593, "exp": 3818},
+    953: {"name": "打坐試煉·0953", "type": "打坐", "target": 2, "reward": 8602, "exp": 3822},
+    954: {"name": "討伐試煉·0954", "type": "討伐", "target": 3, "reward": 8611, "exp": 3826},
+    955: {"name": "採集試煉·0955", "type": "採集", "target": 4, "reward": 8620, "exp": 3830},
+    956: {"name": "購物試煉·0956", "type": "購物", "target": 5, "reward": 8629, "exp": 3834},
+    957: {"name": "煉丹試煉·0957", "type": "煉丹", "target": 6, "reward": 8638, "exp": 3838},
+    958: {"name": "宗門試煉·0958", "type": "宗門", "target": 7, "reward": 8647, "exp": 3842},
+    959: {"name": "秘境試煉·0959", "type": "秘境", "target": 8, "reward": 8656, "exp": 3846},
+    960: {"name": "打坐試煉·0960", "type": "打坐", "target": 1, "reward": 8665, "exp": 3850},
+    961: {"name": "討伐試煉·0961", "type": "討伐", "target": 2, "reward": 8674, "exp": 3854},
+    962: {"name": "採集試煉·0962", "type": "採集", "target": 3, "reward": 8683, "exp": 3858},
+    963: {"name": "購物試煉·0963", "type": "購物", "target": 4, "reward": 8692, "exp": 3862},
+    964: {"name": "煉丹試煉·0964", "type": "煉丹", "target": 5, "reward": 8701, "exp": 3866},
+    965: {"name": "宗門試煉·0965", "type": "宗門", "target": 6, "reward": 8710, "exp": 3870},
+    966: {"name": "秘境試煉·0966", "type": "秘境", "target": 7, "reward": 8719, "exp": 3874},
+    967: {"name": "打坐試煉·0967", "type": "打坐", "target": 8, "reward": 8728, "exp": 3878},
+    968: {"name": "討伐試煉·0968", "type": "討伐", "target": 1, "reward": 8737, "exp": 3882},
+    969: {"name": "採集試煉·0969", "type": "採集", "target": 2, "reward": 8746, "exp": 3886},
+    970: {"name": "購物試煉·0970", "type": "購物", "target": 3, "reward": 8755, "exp": 3890},
+    971: {"name": "煉丹試煉·0971", "type": "煉丹", "target": 4, "reward": 8764, "exp": 3894},
+    972: {"name": "宗門試煉·0972", "type": "宗門", "target": 5, "reward": 8773, "exp": 3898},
+    973: {"name": "秘境試煉·0973", "type": "秘境", "target": 6, "reward": 8782, "exp": 3902},
+    974: {"name": "打坐試煉·0974", "type": "打坐", "target": 7, "reward": 8791, "exp": 3906},
+    975: {"name": "討伐試煉·0975", "type": "討伐", "target": 8, "reward": 8800, "exp": 3910},
+    976: {"name": "採集試煉·0976", "type": "採集", "target": 1, "reward": 8809, "exp": 3914},
+    977: {"name": "購物試煉·0977", "type": "購物", "target": 2, "reward": 8818, "exp": 3918},
+    978: {"name": "煉丹試煉·0978", "type": "煉丹", "target": 3, "reward": 8827, "exp": 3922},
+    979: {"name": "宗門試煉·0979", "type": "宗門", "target": 4, "reward": 8836, "exp": 3926},
+    980: {"name": "秘境試煉·0980", "type": "秘境", "target": 5, "reward": 8845, "exp": 3930},
+    981: {"name": "打坐試煉·0981", "type": "打坐", "target": 6, "reward": 8854, "exp": 3934},
+    982: {"name": "討伐試煉·0982", "type": "討伐", "target": 7, "reward": 8863, "exp": 3938},
+    983: {"name": "採集試煉·0983", "type": "採集", "target": 8, "reward": 8872, "exp": 3942},
+    984: {"name": "購物試煉·0984", "type": "購物", "target": 1, "reward": 8881, "exp": 3946},
+    985: {"name": "煉丹試煉·0985", "type": "煉丹", "target": 2, "reward": 8890, "exp": 3950},
+    986: {"name": "宗門試煉·0986", "type": "宗門", "target": 3, "reward": 8899, "exp": 3954},
+    987: {"name": "秘境試煉·0987", "type": "秘境", "target": 4, "reward": 8908, "exp": 3958},
+    988: {"name": "打坐試煉·0988", "type": "打坐", "target": 5, "reward": 8917, "exp": 3962},
+    989: {"name": "討伐試煉·0989", "type": "討伐", "target": 6, "reward": 8926, "exp": 3966},
+    990: {"name": "採集試煉·0990", "type": "採集", "target": 7, "reward": 8935, "exp": 3970},
+    991: {"name": "購物試煉·0991", "type": "購物", "target": 8, "reward": 8944, "exp": 3974},
+    992: {"name": "煉丹試煉·0992", "type": "煉丹", "target": 1, "reward": 8953, "exp": 3978},
+    993: {"name": "宗門試煉·0993", "type": "宗門", "target": 2, "reward": 8962, "exp": 3982},
+    994: {"name": "秘境試煉·0994", "type": "秘境", "target": 3, "reward": 8971, "exp": 3986},
+    995: {"name": "打坐試煉·0995", "type": "打坐", "target": 4, "reward": 8980, "exp": 3990},
+    996: {"name": "討伐試煉·0996", "type": "討伐", "target": 5, "reward": 8989, "exp": 3994},
+    997: {"name": "採集試煉·0997", "type": "採集", "target": 6, "reward": 8998, "exp": 3998},
+    998: {"name": "購物試煉·0998", "type": "購物", "target": 7, "reward": 9007, "exp": 4002},
+    999: {"name": "煉丹試煉·0999", "type": "煉丹", "target": 8, "reward": 9016, "exp": 4006},
+    1000: {"name": "宗門試煉·1000", "type": "宗門", "target": 1, "reward": 9025, "exp": 4010},
 }
 
-FISH_POOL = {
-    "普通": [("🐟 吳郭魚", 15), ("🐠 小丑魚", 20), ("👟 舊鞋子", 2)], "稀有": [("🐡 黃金河豚", 200)]
+PILLS = {
+    1: {"name": "凡品qi丹001", "effect": "qi", "strength": 9, "price": 100},
+    2: {"name": "良品maxqi丹002", "effect": "maxqi", "strength": 13, "price": 120},
+    3: {"name": "精品power丹003", "effect": "power", "strength": 17, "price": 140},
+    4: {"name": "靈品stones丹004", "effect": "stones", "strength": 21, "price": 160},
+    5: {"name": "玄品luck丹005", "effect": "luck", "strength": 25, "price": 180},
+    6: {"name": "地品qi丹006", "effect": "qi", "strength": 29, "price": 200},
+    7: {"name": "天品maxqi丹007", "effect": "maxqi", "strength": 33, "price": 220},
+    8: {"name": "仙品power丹008", "effect": "power", "strength": 37, "price": 240},
+    9: {"name": "凡品stones丹009", "effect": "stones", "strength": 41, "price": 260},
+    10: {"name": "良品luck丹010", "effect": "luck", "strength": 45, "price": 280},
+    11: {"name": "精品qi丹011", "effect": "qi", "strength": 49, "price": 300},
+    12: {"name": "靈品maxqi丹012", "effect": "maxqi", "strength": 53, "price": 320},
+    13: {"name": "玄品power丹013", "effect": "power", "strength": 57, "price": 340},
+    14: {"name": "地品stones丹014", "effect": "stones", "strength": 61, "price": 360},
+    15: {"name": "天品luck丹015", "effect": "luck", "strength": 65, "price": 380},
+    16: {"name": "仙品qi丹016", "effect": "qi", "strength": 69, "price": 400},
+    17: {"name": "凡品maxqi丹017", "effect": "maxqi", "strength": 73, "price": 420},
+    18: {"name": "良品power丹018", "effect": "power", "strength": 77, "price": 440},
+    19: {"name": "精品stones丹019", "effect": "stones", "strength": 62, "price": 460},
+    20: {"name": "靈品luck丹020", "effect": "luck", "strength": 66, "price": 480},
+    21: {"name": "玄品qi丹021", "effect": "qi", "strength": 70, "price": 500},
+    22: {"name": "地品maxqi丹022", "effect": "maxqi", "strength": 74, "price": 520},
+    23: {"name": "天品power丹023", "effect": "power", "strength": 78, "price": 540},
+    24: {"name": "仙品stones丹024", "effect": "stones", "strength": 82, "price": 560},
+    25: {"name": "凡品luck丹025", "effect": "luck", "strength": 86, "price": 580},
+    26: {"name": "良品qi丹026", "effect": "qi", "strength": 90, "price": 600},
+    27: {"name": "精品maxqi丹027", "effect": "maxqi", "strength": 94, "price": 620},
+    28: {"name": "靈品power丹028", "effect": "power", "strength": 98, "price": 640},
+    29: {"name": "玄品stones丹029", "effect": "stones", "strength": 102, "price": 660},
+    30: {"name": "地品luck丹030", "effect": "luck", "strength": 106, "price": 680},
+    31: {"name": "天品qi丹031", "effect": "qi", "strength": 110, "price": 700},
+    32: {"name": "仙品maxqi丹032", "effect": "maxqi", "strength": 114, "price": 720},
+    33: {"name": "凡品power丹033", "effect": "power", "strength": 118, "price": 740},
+    34: {"name": "良品stones丹034", "effect": "stones", "strength": 122, "price": 760},
+    35: {"name": "精品luck丹035", "effect": "luck", "strength": 126, "price": 780},
+    36: {"name": "靈品qi丹036", "effect": "qi", "strength": 130, "price": 800},
+    37: {"name": "玄品maxqi丹037", "effect": "maxqi", "strength": 134, "price": 820},
+    38: {"name": "地品power丹038", "effect": "power", "strength": 119, "price": 840},
+    39: {"name": "天品stones丹039", "effect": "stones", "strength": 123, "price": 860},
+    40: {"name": "仙品luck丹040", "effect": "luck", "strength": 127, "price": 880},
+    41: {"name": "凡品qi丹041", "effect": "qi", "strength": 131, "price": 900},
+    42: {"name": "良品maxqi丹042", "effect": "maxqi", "strength": 135, "price": 920},
+    43: {"name": "精品power丹043", "effect": "power", "strength": 139, "price": 940},
+    44: {"name": "靈品stones丹044", "effect": "stones", "strength": 143, "price": 960},
+    45: {"name": "玄品luck丹045", "effect": "luck", "strength": 147, "price": 980},
+    46: {"name": "地品qi丹046", "effect": "qi", "strength": 151, "price": 1000},
+    47: {"name": "天品maxqi丹047", "effect": "maxqi", "strength": 155, "price": 1020},
+    48: {"name": "仙品power丹048", "effect": "power", "strength": 159, "price": 1040},
+    49: {"name": "凡品stones丹049", "effect": "stones", "strength": 163, "price": 1060},
+    50: {"name": "良品luck丹050", "effect": "luck", "strength": 167, "price": 1080},
+    51: {"name": "精品qi丹051", "effect": "qi", "strength": 171, "price": 1100},
+    52: {"name": "靈品maxqi丹052", "effect": "maxqi", "strength": 175, "price": 1120},
+    53: {"name": "玄品power丹053", "effect": "power", "strength": 179, "price": 1140},
+    54: {"name": "地品stones丹054", "effect": "stones", "strength": 183, "price": 1160},
+    55: {"name": "天品luck丹055", "effect": "luck", "strength": 187, "price": 1180},
+    56: {"name": "仙品qi丹056", "effect": "qi", "strength": 191, "price": 1200},
+    57: {"name": "凡品maxqi丹057", "effect": "maxqi", "strength": 176, "price": 1220},
+    58: {"name": "良品power丹058", "effect": "power", "strength": 180, "price": 1240},
+    59: {"name": "精品stones丹059", "effect": "stones", "strength": 184, "price": 1260},
+    60: {"name": "靈品luck丹060", "effect": "luck", "strength": 188, "price": 1280},
+    61: {"name": "玄品qi丹061", "effect": "qi", "strength": 192, "price": 1300},
+    62: {"name": "地品maxqi丹062", "effect": "maxqi", "strength": 196, "price": 1320},
+    63: {"name": "天品power丹063", "effect": "power", "strength": 200, "price": 1340},
+    64: {"name": "仙品stones丹064", "effect": "stones", "strength": 204, "price": 1360},
+    65: {"name": "凡品luck丹065", "effect": "luck", "strength": 208, "price": 1380},
+    66: {"name": "良品qi丹066", "effect": "qi", "strength": 212, "price": 1400},
+    67: {"name": "精品maxqi丹067", "effect": "maxqi", "strength": 216, "price": 1420},
+    68: {"name": "靈品power丹068", "effect": "power", "strength": 220, "price": 1440},
+    69: {"name": "玄品stones丹069", "effect": "stones", "strength": 224, "price": 1460},
+    70: {"name": "地品luck丹070", "effect": "luck", "strength": 228, "price": 1480},
+    71: {"name": "天品qi丹071", "effect": "qi", "strength": 232, "price": 1500},
+    72: {"name": "仙品maxqi丹072", "effect": "maxqi", "strength": 236, "price": 1520},
+    73: {"name": "凡品power丹073", "effect": "power", "strength": 240, "price": 1540},
+    74: {"name": "良品stones丹074", "effect": "stones", "strength": 244, "price": 1560},
+    75: {"name": "精品luck丹075", "effect": "luck", "strength": 248, "price": 1580},
+    76: {"name": "靈品qi丹076", "effect": "qi", "strength": 233, "price": 1600},
+    77: {"name": "玄品maxqi丹077", "effect": "maxqi", "strength": 237, "price": 1620},
+    78: {"name": "地品power丹078", "effect": "power", "strength": 241, "price": 1640},
+    79: {"name": "天品stones丹079", "effect": "stones", "strength": 245, "price": 1660},
+    80: {"name": "仙品luck丹080", "effect": "luck", "strength": 249, "price": 1680},
+    81: {"name": "凡品qi丹081", "effect": "qi", "strength": 253, "price": 1700},
+    82: {"name": "良品maxqi丹082", "effect": "maxqi", "strength": 257, "price": 1720},
+    83: {"name": "精品power丹083", "effect": "power", "strength": 261, "price": 1740},
+    84: {"name": "靈品stones丹084", "effect": "stones", "strength": 265, "price": 1760},
+    85: {"name": "玄品luck丹085", "effect": "luck", "strength": 269, "price": 1780},
+    86: {"name": "地品qi丹086", "effect": "qi", "strength": 273, "price": 1800},
+    87: {"name": "天品maxqi丹087", "effect": "maxqi", "strength": 277, "price": 1820},
+    88: {"name": "仙品power丹088", "effect": "power", "strength": 281, "price": 1840},
+    89: {"name": "凡品stones丹089", "effect": "stones", "strength": 285, "price": 1860},
+    90: {"name": "良品luck丹090", "effect": "luck", "strength": 289, "price": 1880},
+    91: {"name": "精品qi丹091", "effect": "qi", "strength": 293, "price": 1900},
+    92: {"name": "靈品maxqi丹092", "effect": "maxqi", "strength": 297, "price": 1920},
+    93: {"name": "玄品power丹093", "effect": "power", "strength": 301, "price": 1940},
+    94: {"name": "地品stones丹094", "effect": "stones", "strength": 305, "price": 1960},
+    95: {"name": "天品luck丹095", "effect": "luck", "strength": 290, "price": 1980},
+    96: {"name": "仙品qi丹096", "effect": "qi", "strength": 294, "price": 2000},
+    97: {"name": "凡品maxqi丹097", "effect": "maxqi", "strength": 298, "price": 2020},
+    98: {"name": "良品power丹098", "effect": "power", "strength": 302, "price": 2040},
+    99: {"name": "精品stones丹099", "effect": "stones", "strength": 306, "price": 2060},
+    100: {"name": "靈品luck丹100", "effect": "luck", "strength": 310, "price": 2080},
+    101: {"name": "玄品qi丹101", "effect": "qi", "strength": 314, "price": 2100},
+    102: {"name": "地品maxqi丹102", "effect": "maxqi", "strength": 318, "price": 2120},
+    103: {"name": "天品power丹103", "effect": "power", "strength": 322, "price": 2140},
+    104: {"name": "仙品stones丹104", "effect": "stones", "strength": 326, "price": 2160},
+    105: {"name": "凡品luck丹105", "effect": "luck", "strength": 330, "price": 2180},
+    106: {"name": "良品qi丹106", "effect": "qi", "strength": 334, "price": 2200},
+    107: {"name": "精品maxqi丹107", "effect": "maxqi", "strength": 338, "price": 2220},
+    108: {"name": "靈品power丹108", "effect": "power", "strength": 342, "price": 2240},
+    109: {"name": "玄品stones丹109", "effect": "stones", "strength": 346, "price": 2260},
+    110: {"name": "地品luck丹110", "effect": "luck", "strength": 350, "price": 2280},
+    111: {"name": "天品qi丹111", "effect": "qi", "strength": 354, "price": 2300},
+    112: {"name": "仙品maxqi丹112", "effect": "maxqi", "strength": 358, "price": 2320},
+    113: {"name": "凡品power丹113", "effect": "power", "strength": 362, "price": 2340},
+    114: {"name": "良品stones丹114", "effect": "stones", "strength": 347, "price": 2360},
+    115: {"name": "精品luck丹115", "effect": "luck", "strength": 351, "price": 2380},
+    116: {"name": "靈品qi丹116", "effect": "qi", "strength": 355, "price": 2400},
+    117: {"name": "玄品maxqi丹117", "effect": "maxqi", "strength": 359, "price": 2420},
+    118: {"name": "地品power丹118", "effect": "power", "strength": 363, "price": 2440},
+    119: {"name": "天品stones丹119", "effect": "stones", "strength": 367, "price": 2460},
+    120: {"name": "仙品luck丹120", "effect": "luck", "strength": 371, "price": 2480},
+    121: {"name": "凡品qi丹121", "effect": "qi", "strength": 375, "price": 2500},
+    122: {"name": "良品maxqi丹122", "effect": "maxqi", "strength": 379, "price": 2520},
+    123: {"name": "精品power丹123", "effect": "power", "strength": 383, "price": 2540},
+    124: {"name": "靈品stones丹124", "effect": "stones", "strength": 387, "price": 2560},
+    125: {"name": "玄品luck丹125", "effect": "luck", "strength": 391, "price": 2580},
+    126: {"name": "地品qi丹126", "effect": "qi", "strength": 395, "price": 2600},
+    127: {"name": "天品maxqi丹127", "effect": "maxqi", "strength": 399, "price": 2620},
+    128: {"name": "仙品power丹128", "effect": "power", "strength": 403, "price": 2640},
+    129: {"name": "凡品stones丹129", "effect": "stones", "strength": 407, "price": 2660},
+    130: {"name": "良品luck丹130", "effect": "luck", "strength": 411, "price": 2680},
+    131: {"name": "精品qi丹131", "effect": "qi", "strength": 415, "price": 2700},
+    132: {"name": "靈品maxqi丹132", "effect": "maxqi", "strength": 419, "price": 2720},
+    133: {"name": "玄品power丹133", "effect": "power", "strength": 404, "price": 2740},
+    134: {"name": "地品stones丹134", "effect": "stones", "strength": 408, "price": 2760},
+    135: {"name": "天品luck丹135", "effect": "luck", "strength": 412, "price": 2780},
+    136: {"name": "仙品qi丹136", "effect": "qi", "strength": 416, "price": 2800},
+    137: {"name": "凡品maxqi丹137", "effect": "maxqi", "strength": 420, "price": 2820},
+    138: {"name": "良品power丹138", "effect": "power", "strength": 424, "price": 2840},
+    139: {"name": "精品stones丹139", "effect": "stones", "strength": 428, "price": 2860},
+    140: {"name": "靈品luck丹140", "effect": "luck", "strength": 432, "price": 2880},
+    141: {"name": "玄品qi丹141", "effect": "qi", "strength": 436, "price": 2900},
+    142: {"name": "地品maxqi丹142", "effect": "maxqi", "strength": 440, "price": 2920},
+    143: {"name": "天品power丹143", "effect": "power", "strength": 444, "price": 2940},
+    144: {"name": "仙品stones丹144", "effect": "stones", "strength": 448, "price": 2960},
+    145: {"name": "凡品luck丹145", "effect": "luck", "strength": 452, "price": 2980},
+    146: {"name": "良品qi丹146", "effect": "qi", "strength": 456, "price": 3000},
+    147: {"name": "精品maxqi丹147", "effect": "maxqi", "strength": 460, "price": 3020},
+    148: {"name": "靈品power丹148", "effect": "power", "strength": 464, "price": 3040},
+    149: {"name": "玄品stones丹149", "effect": "stones", "strength": 468, "price": 3060},
+    150: {"name": "地品luck丹150", "effect": "luck", "strength": 472, "price": 3080},
+    151: {"name": "天品qi丹151", "effect": "qi", "strength": 476, "price": 3100},
+    152: {"name": "仙品maxqi丹152", "effect": "maxqi", "strength": 461, "price": 3120},
+    153: {"name": "凡品power丹153", "effect": "power", "strength": 465, "price": 3140},
+    154: {"name": "良品stones丹154", "effect": "stones", "strength": 469, "price": 3160},
+    155: {"name": "精品luck丹155", "effect": "luck", "strength": 473, "price": 3180},
+    156: {"name": "靈品qi丹156", "effect": "qi", "strength": 477, "price": 3200},
+    157: {"name": "玄品maxqi丹157", "effect": "maxqi", "strength": 481, "price": 3220},
+    158: {"name": "地品power丹158", "effect": "power", "strength": 485, "price": 3240},
+    159: {"name": "天品stones丹159", "effect": "stones", "strength": 489, "price": 3260},
+    160: {"name": "仙品luck丹160", "effect": "luck", "strength": 493, "price": 3280},
+    161: {"name": "凡品qi丹161", "effect": "qi", "strength": 497, "price": 3300},
+    162: {"name": "良品maxqi丹162", "effect": "maxqi", "strength": 501, "price": 3320},
+    163: {"name": "精品power丹163", "effect": "power", "strength": 505, "price": 3340},
+    164: {"name": "靈品stones丹164", "effect": "stones", "strength": 509, "price": 3360},
+    165: {"name": "玄品luck丹165", "effect": "luck", "strength": 513, "price": 3380},
+    166: {"name": "地品qi丹166", "effect": "qi", "strength": 517, "price": 3400},
+    167: {"name": "天品maxqi丹167", "effect": "maxqi", "strength": 521, "price": 3420},
+    168: {"name": "仙品power丹168", "effect": "power", "strength": 525, "price": 3440},
+    169: {"name": "凡品stones丹169", "effect": "stones", "strength": 529, "price": 3460},
+    170: {"name": "良品luck丹170", "effect": "luck", "strength": 533, "price": 3480},
+    171: {"name": "精品qi丹171", "effect": "qi", "strength": 518, "price": 3500},
+    172: {"name": "靈品maxqi丹172", "effect": "maxqi", "strength": 522, "price": 3520},
+    173: {"name": "玄品power丹173", "effect": "power", "strength": 526, "price": 3540},
+    174: {"name": "地品stones丹174", "effect": "stones", "strength": 530, "price": 3560},
+    175: {"name": "天品luck丹175", "effect": "luck", "strength": 534, "price": 3580},
+    176: {"name": "仙品qi丹176", "effect": "qi", "strength": 538, "price": 3600},
+    177: {"name": "凡品maxqi丹177", "effect": "maxqi", "strength": 542, "price": 3620},
+    178: {"name": "良品power丹178", "effect": "power", "strength": 546, "price": 3640},
+    179: {"name": "精品stones丹179", "effect": "stones", "strength": 550, "price": 3660},
+    180: {"name": "靈品luck丹180", "effect": "luck", "strength": 554, "price": 3680},
+    181: {"name": "玄品qi丹181", "effect": "qi", "strength": 558, "price": 3700},
+    182: {"name": "地品maxqi丹182", "effect": "maxqi", "strength": 562, "price": 3720},
+    183: {"name": "天品power丹183", "effect": "power", "strength": 566, "price": 3740},
+    184: {"name": "仙品stones丹184", "effect": "stones", "strength": 570, "price": 3760},
+    185: {"name": "凡品luck丹185", "effect": "luck", "strength": 574, "price": 3780},
+    186: {"name": "良品qi丹186", "effect": "qi", "strength": 578, "price": 3800},
+    187: {"name": "精品maxqi丹187", "effect": "maxqi", "strength": 582, "price": 3820},
+    188: {"name": "靈品power丹188", "effect": "power", "strength": 586, "price": 3840},
+    189: {"name": "玄品stones丹189", "effect": "stones", "strength": 590, "price": 3860},
+    190: {"name": "地品luck丹190", "effect": "luck", "strength": 575, "price": 3880},
+    191: {"name": "天品qi丹191", "effect": "qi", "strength": 579, "price": 3900},
+    192: {"name": "仙品maxqi丹192", "effect": "maxqi", "strength": 583, "price": 3920},
+    193: {"name": "凡品power丹193", "effect": "power", "strength": 587, "price": 3940},
+    194: {"name": "良品stones丹194", "effect": "stones", "strength": 591, "price": 3960},
+    195: {"name": "精品luck丹195", "effect": "luck", "strength": 595, "price": 3980},
+    196: {"name": "靈品qi丹196", "effect": "qi", "strength": 599, "price": 4000},
+    197: {"name": "玄品maxqi丹197", "effect": "maxqi", "strength": 603, "price": 4020},
+    198: {"name": "地品power丹198", "effect": "power", "strength": 607, "price": 4040},
+    199: {"name": "天品stones丹199", "effect": "stones", "strength": 611, "price": 4060},
+    200: {"name": "仙品luck丹200", "effect": "luck", "strength": 615, "price": 4080},
+    201: {"name": "凡品qi丹201", "effect": "qi", "strength": 619, "price": 4100},
+    202: {"name": "良品maxqi丹202", "effect": "maxqi", "strength": 623, "price": 4120},
+    203: {"name": "精品power丹203", "effect": "power", "strength": 627, "price": 4140},
+    204: {"name": "靈品stones丹204", "effect": "stones", "strength": 631, "price": 4160},
+    205: {"name": "玄品luck丹205", "effect": "luck", "strength": 635, "price": 4180},
+    206: {"name": "地品qi丹206", "effect": "qi", "strength": 639, "price": 4200},
+    207: {"name": "天品maxqi丹207", "effect": "maxqi", "strength": 643, "price": 4220},
+    208: {"name": "仙品power丹208", "effect": "power", "strength": 647, "price": 4240},
+    209: {"name": "凡品stones丹209", "effect": "stones", "strength": 632, "price": 4260},
+    210: {"name": "良品luck丹210", "effect": "luck", "strength": 636, "price": 4280},
+    211: {"name": "精品qi丹211", "effect": "qi", "strength": 640, "price": 4300},
+    212: {"name": "靈品maxqi丹212", "effect": "maxqi", "strength": 644, "price": 4320},
+    213: {"name": "玄品power丹213", "effect": "power", "strength": 648, "price": 4340},
+    214: {"name": "地品stones丹214", "effect": "stones", "strength": 652, "price": 4360},
+    215: {"name": "天品luck丹215", "effect": "luck", "strength": 656, "price": 4380},
+    216: {"name": "仙品qi丹216", "effect": "qi", "strength": 660, "price": 4400},
+    217: {"name": "凡品maxqi丹217", "effect": "maxqi", "strength": 664, "price": 4420},
+    218: {"name": "良品power丹218", "effect": "power", "strength": 668, "price": 4440},
+    219: {"name": "精品stones丹219", "effect": "stones", "strength": 672, "price": 4460},
+    220: {"name": "靈品luck丹220", "effect": "luck", "strength": 676, "price": 4480},
+    221: {"name": "玄品qi丹221", "effect": "qi", "strength": 680, "price": 4500},
+    222: {"name": "地品maxqi丹222", "effect": "maxqi", "strength": 684, "price": 4520},
+    223: {"name": "天品power丹223", "effect": "power", "strength": 688, "price": 4540},
+    224: {"name": "仙品stones丹224", "effect": "stones", "strength": 692, "price": 4560},
+    225: {"name": "凡品luck丹225", "effect": "luck", "strength": 696, "price": 4580},
+    226: {"name": "良品qi丹226", "effect": "qi", "strength": 700, "price": 4600},
+    227: {"name": "精品maxqi丹227", "effect": "maxqi", "strength": 704, "price": 4620},
+    228: {"name": "靈品power丹228", "effect": "power", "strength": 689, "price": 4640},
+    229: {"name": "玄品stones丹229", "effect": "stones", "strength": 693, "price": 4660},
+    230: {"name": "地品luck丹230", "effect": "luck", "strength": 697, "price": 4680},
+    231: {"name": "天品qi丹231", "effect": "qi", "strength": 701, "price": 4700},
+    232: {"name": "仙品maxqi丹232", "effect": "maxqi", "strength": 705, "price": 4720},
+    233: {"name": "凡品power丹233", "effect": "power", "strength": 709, "price": 4740},
+    234: {"name": "良品stones丹234", "effect": "stones", "strength": 713, "price": 4760},
+    235: {"name": "精品luck丹235", "effect": "luck", "strength": 717, "price": 4780},
+    236: {"name": "靈品qi丹236", "effect": "qi", "strength": 721, "price": 4800},
+    237: {"name": "玄品maxqi丹237", "effect": "maxqi", "strength": 725, "price": 4820},
+    238: {"name": "地品power丹238", "effect": "power", "strength": 729, "price": 4840},
+    239: {"name": "天品stones丹239", "effect": "stones", "strength": 733, "price": 4860},
+    240: {"name": "仙品luck丹240", "effect": "luck", "strength": 737, "price": 4880},
+    241: {"name": "凡品qi丹241", "effect": "qi", "strength": 741, "price": 4900},
+    242: {"name": "良品maxqi丹242", "effect": "maxqi", "strength": 745, "price": 4920},
+    243: {"name": "精品power丹243", "effect": "power", "strength": 749, "price": 4940},
+    244: {"name": "靈品stones丹244", "effect": "stones", "strength": 753, "price": 4960},
+    245: {"name": "玄品luck丹245", "effect": "luck", "strength": 757, "price": 4980},
+    246: {"name": "地品qi丹246", "effect": "qi", "strength": 761, "price": 5000},
+    247: {"name": "天品maxqi丹247", "effect": "maxqi", "strength": 746, "price": 5020},
+    248: {"name": "仙品power丹248", "effect": "power", "strength": 750, "price": 5040},
+    249: {"name": "凡品stones丹249", "effect": "stones", "strength": 754, "price": 5060},
+    250: {"name": "良品luck丹250", "effect": "luck", "strength": 758, "price": 5080},
+    251: {"name": "精品qi丹251", "effect": "qi", "strength": 762, "price": 5100},
+    252: {"name": "靈品maxqi丹252", "effect": "maxqi", "strength": 766, "price": 5120},
+    253: {"name": "玄品power丹253", "effect": "power", "strength": 770, "price": 5140},
+    254: {"name": "地品stones丹254", "effect": "stones", "strength": 774, "price": 5160},
+    255: {"name": "天品luck丹255", "effect": "luck", "strength": 778, "price": 5180},
+    256: {"name": "仙品qi丹256", "effect": "qi", "strength": 782, "price": 5200},
+    257: {"name": "凡品maxqi丹257", "effect": "maxqi", "strength": 786, "price": 5220},
+    258: {"name": "良品power丹258", "effect": "power", "strength": 790, "price": 5240},
+    259: {"name": "精品stones丹259", "effect": "stones", "strength": 794, "price": 5260},
+    260: {"name": "靈品luck丹260", "effect": "luck", "strength": 798, "price": 5280},
+    261: {"name": "玄品qi丹261", "effect": "qi", "strength": 802, "price": 5300},
+    262: {"name": "地品maxqi丹262", "effect": "maxqi", "strength": 806, "price": 5320},
+    263: {"name": "天品power丹263", "effect": "power", "strength": 810, "price": 5340},
+    264: {"name": "仙品stones丹264", "effect": "stones", "strength": 814, "price": 5360},
+    265: {"name": "凡品luck丹265", "effect": "luck", "strength": 818, "price": 5380},
+    266: {"name": "良品qi丹266", "effect": "qi", "strength": 803, "price": 5400},
+    267: {"name": "精品maxqi丹267", "effect": "maxqi", "strength": 807, "price": 5420},
+    268: {"name": "靈品power丹268", "effect": "power", "strength": 811, "price": 5440},
+    269: {"name": "玄品stones丹269", "effect": "stones", "strength": 815, "price": 5460},
+    270: {"name": "地品luck丹270", "effect": "luck", "strength": 819, "price": 5480},
+    271: {"name": "天品qi丹271", "effect": "qi", "strength": 823, "price": 5500},
+    272: {"name": "仙品maxqi丹272", "effect": "maxqi", "strength": 827, "price": 5520},
+    273: {"name": "凡品power丹273", "effect": "power", "strength": 831, "price": 5540},
+    274: {"name": "良品stones丹274", "effect": "stones", "strength": 835, "price": 5560},
+    275: {"name": "精品luck丹275", "effect": "luck", "strength": 839, "price": 5580},
+    276: {"name": "靈品qi丹276", "effect": "qi", "strength": 843, "price": 5600},
+    277: {"name": "玄品maxqi丹277", "effect": "maxqi", "strength": 847, "price": 5620},
+    278: {"name": "地品power丹278", "effect": "power", "strength": 851, "price": 5640},
+    279: {"name": "天品stones丹279", "effect": "stones", "strength": 855, "price": 5660},
+    280: {"name": "仙品luck丹280", "effect": "luck", "strength": 859, "price": 5680},
+    281: {"name": "凡品qi丹281", "effect": "qi", "strength": 863, "price": 5700},
+    282: {"name": "良品maxqi丹282", "effect": "maxqi", "strength": 867, "price": 5720},
+    283: {"name": "精品power丹283", "effect": "power", "strength": 871, "price": 5740},
+    284: {"name": "靈品stones丹284", "effect": "stones", "strength": 875, "price": 5760},
+    285: {"name": "玄品luck丹285", "effect": "luck", "strength": 860, "price": 5780},
+    286: {"name": "地品qi丹286", "effect": "qi", "strength": 864, "price": 5800},
+    287: {"name": "天品maxqi丹287", "effect": "maxqi", "strength": 868, "price": 5820},
+    288: {"name": "仙品power丹288", "effect": "power", "strength": 872, "price": 5840},
+    289: {"name": "凡品stones丹289", "effect": "stones", "strength": 876, "price": 5860},
+    290: {"name": "良品luck丹290", "effect": "luck", "strength": 880, "price": 5880},
+    291: {"name": "精品qi丹291", "effect": "qi", "strength": 884, "price": 5900},
+    292: {"name": "靈品maxqi丹292", "effect": "maxqi", "strength": 888, "price": 5920},
+    293: {"name": "玄品power丹293", "effect": "power", "strength": 892, "price": 5940},
+    294: {"name": "地品stones丹294", "effect": "stones", "strength": 896, "price": 5960},
+    295: {"name": "天品luck丹295", "effect": "luck", "strength": 900, "price": 5980},
+    296: {"name": "仙品qi丹296", "effect": "qi", "strength": 904, "price": 6000},
+    297: {"name": "凡品maxqi丹297", "effect": "maxqi", "strength": 908, "price": 6020},
+    298: {"name": "良品power丹298", "effect": "power", "strength": 912, "price": 6040},
+    299: {"name": "精品stones丹299", "effect": "stones", "strength": 916, "price": 6060},
+    300: {"name": "靈品luck丹300", "effect": "luck", "strength": 920, "price": 6080},
+    301: {"name": "玄品qi丹301", "effect": "qi", "strength": 924, "price": 6100},
+    302: {"name": "地品maxqi丹302", "effect": "maxqi", "strength": 928, "price": 6120},
+    303: {"name": "天品power丹303", "effect": "power", "strength": 932, "price": 6140},
+    304: {"name": "仙品stones丹304", "effect": "stones", "strength": 917, "price": 6160},
+    305: {"name": "凡品luck丹305", "effect": "luck", "strength": 921, "price": 6180},
+    306: {"name": "良品qi丹306", "effect": "qi", "strength": 925, "price": 6200},
+    307: {"name": "精品maxqi丹307", "effect": "maxqi", "strength": 929, "price": 6220},
+    308: {"name": "靈品power丹308", "effect": "power", "strength": 933, "price": 6240},
+    309: {"name": "玄品stones丹309", "effect": "stones", "strength": 937, "price": 6260},
+    310: {"name": "地品luck丹310", "effect": "luck", "strength": 941, "price": 6280},
+    311: {"name": "天品qi丹311", "effect": "qi", "strength": 945, "price": 6300},
+    312: {"name": "仙品maxqi丹312", "effect": "maxqi", "strength": 949, "price": 6320},
+    313: {"name": "凡品power丹313", "effect": "power", "strength": 953, "price": 6340},
+    314: {"name": "良品stones丹314", "effect": "stones", "strength": 957, "price": 6360},
+    315: {"name": "精品luck丹315", "effect": "luck", "strength": 961, "price": 6380},
+    316: {"name": "靈品qi丹316", "effect": "qi", "strength": 965, "price": 6400},
+    317: {"name": "玄品maxqi丹317", "effect": "maxqi", "strength": 969, "price": 6420},
+    318: {"name": "地品power丹318", "effect": "power", "strength": 973, "price": 6440},
+    319: {"name": "天品stones丹319", "effect": "stones", "strength": 977, "price": 6460},
+    320: {"name": "仙品luck丹320", "effect": "luck", "strength": 981, "price": 6480},
+    321: {"name": "凡品qi丹321", "effect": "qi", "strength": 985, "price": 6500},
+    322: {"name": "良品maxqi丹322", "effect": "maxqi", "strength": 989, "price": 6520},
+    323: {"name": "精品power丹323", "effect": "power", "strength": 974, "price": 6540},
+    324: {"name": "靈品stones丹324", "effect": "stones", "strength": 978, "price": 6560},
+    325: {"name": "玄品luck丹325", "effect": "luck", "strength": 982, "price": 6580},
+    326: {"name": "地品qi丹326", "effect": "qi", "strength": 986, "price": 6600},
+    327: {"name": "天品maxqi丹327", "effect": "maxqi", "strength": 990, "price": 6620},
+    328: {"name": "仙品power丹328", "effect": "power", "strength": 994, "price": 6640},
+    329: {"name": "凡品stones丹329", "effect": "stones", "strength": 998, "price": 6660},
+    330: {"name": "良品luck丹330", "effect": "luck", "strength": 1002, "price": 6680},
+    331: {"name": "精品qi丹331", "effect": "qi", "strength": 1006, "price": 6700},
+    332: {"name": "靈品maxqi丹332", "effect": "maxqi", "strength": 1010, "price": 6720},
+    333: {"name": "玄品power丹333", "effect": "power", "strength": 1014, "price": 6740},
+    334: {"name": "地品stones丹334", "effect": "stones", "strength": 1018, "price": 6760},
+    335: {"name": "天品luck丹335", "effect": "luck", "strength": 1022, "price": 6780},
+    336: {"name": "仙品qi丹336", "effect": "qi", "strength": 1026, "price": 6800},
+    337: {"name": "凡品maxqi丹337", "effect": "maxqi", "strength": 1030, "price": 6820},
+    338: {"name": "良品power丹338", "effect": "power", "strength": 1034, "price": 6840},
+    339: {"name": "精品stones丹339", "effect": "stones", "strength": 1038, "price": 6860},
+    340: {"name": "靈品luck丹340", "effect": "luck", "strength": 1042, "price": 6880},
+    341: {"name": "玄品qi丹341", "effect": "qi", "strength": 1046, "price": 6900},
+    342: {"name": "地品maxqi丹342", "effect": "maxqi", "strength": 1031, "price": 6920},
+    343: {"name": "天品power丹343", "effect": "power", "strength": 1035, "price": 6940},
+    344: {"name": "仙品stones丹344", "effect": "stones", "strength": 1039, "price": 6960},
+    345: {"name": "凡品luck丹345", "effect": "luck", "strength": 1043, "price": 6980},
+    346: {"name": "良品qi丹346", "effect": "qi", "strength": 1047, "price": 7000},
+    347: {"name": "精品maxqi丹347", "effect": "maxqi", "strength": 1051, "price": 7020},
+    348: {"name": "靈品power丹348", "effect": "power", "strength": 1055, "price": 7040},
+    349: {"name": "玄品stones丹349", "effect": "stones", "strength": 1059, "price": 7060},
+    350: {"name": "地品luck丹350", "effect": "luck", "strength": 1063, "price": 7080},
 }
 
-MAP_EXCLUSIVE_FISH = {
-    "一海・新手小池塘": {
-        "普通": [
-            ("🐟 吳郭魚", 15), ("🐠 小丑魚", 20), ("🐡 氣噗噗河豚", 25), 
-            ("🐟 綠頭擬鯉 (Roach)", 30), ("🐟 淡水鱸魚 (Perch)", 35), ("🐟 小青魚 (Minnow)", 18)
-        ],
-        "稀有": [
-            ("🐡 黃金河豚", 200), ("🐟 大口黑鱸 (Bass)", 180), ("🐟 紅點鮭魚 (Trout)", 250), ("🦀 溪流褐蟹", 150)
-        ], 
-        "傳奇": [
-            ("👑 黃金鯉魚", 800), ("🦈 鏡面巨鯉 (Mirror Carp)", 950), ("🐊 遠古短吻鱷 (Alligator)", 1500),
-            ("💎 奧術秩序裂片 (Arcane Stone)", 1000)
-        ]
-    },
-    "二海・黃金珊瑚礁": {
-        "普通": [
-            ("🐚 珊瑚礁小蝦", 10), ("🐠 七彩霓虹魚", 45), ("👟 舊鞋子", 2),
-            ("🐠 藍倒吊唐王魚 (Blue Tang)", 50), ("🐠 蝴蝶魚 (Butterflyfish)", 55), ("🐡 箱魨 (Cowfish)", 60)
-        ],
-        "稀有": [
-            (" Squid 大王烏賊", 150), ("🦈 藍色鯊魚", 350), ("🦀 帝王蟹", 400),
-            ("🐠 獅子魚 (Lionfish)", 280), ("🐍 豹紋海鰻 (Moray Eel)", 520)
-        ],
-        "傳奇": [
-            ("🔱 海神三叉戟", 1800), ("🦈 雙頭錘頭鯊 (Hammerhead)", 2500), ("🐙 巨型紅章魚 (Kraken Spawn)", 3000),
-            ("💎 混沌星星原石 (Nova Stone)", 2000)
-        ], 
-        "神話": [("🧜‍♀️ 美人魚的眼淚", 7500), ("👑 珊瑚礁之王・黃金旗魚", 12000)], 
-        "秘密": [("🏐 一顆...排球?", 27000)]
-    },
-    "三海_馬里亞娜海溝深淵": {
-        "普通": [("🐟 發光鮟鱇魚", 75), ("🧪 輻射基因流體", 110)],
-        "稀有": [("🐙 深淵巨型章魚", 280), ("🦈 遠古惡魔巨齒鯊", 650)],
-        "傳奇": [("🐳 藍鯨", 1500)], "秘密": [("🛸 外星科技零件", 25000)],
-        "神話": [("🐉 東方青龍", 35000), ("🔥 諸神湮滅核心 (Abyss Core)", 50000)], 
-        "作者級": [("💻 作者的未編譯源代碼", 100000), ("🤨神秘的SIGMAFACE", 300000)]
-    },
-    "四海・地幔熔岩禁地": {
-        "傳奇": [("🌋 熔岩火靈魚", 3500)],
-        "神話": [("🔥 煉獄不死鳥之眼", 12000), ("💎 熔岩核心巨鑽", 25000), ("👑 萬物主宰聖石 (Overlord Stone)", 66666)],
-        "秘密": [("🌋 古星核熱熔高壓液體", 55000)],
-        "作者級": [("🌌 SIGMA的熔岩超燃雪茄", 333333)]
-    }
-}
-# ======= 🎫 組六：製作者特殊公告 CODE 破譯、與全服動態幫助手冊 =======
-@bot.tree.command(name="兌換碼", description="輸入官方禮包碼兌換物資，製作者輸入超難加密 CODE 可發動全服智慧公告廣播功能")
-@app_commands.describe(code="請輸入你要兌換的代碼（製作者公告碼格式：GODFREY_ADMIN_MATRIX_CODE_2026_BY_SIGMA::公告內容）")
-async def redeem_code(interaction: discord.Interaction, code: str):
-    user_id = int(interaction.user.id)
-    
-    # 📢 1. 製作者極致難度特殊公告密鑰判定
-    if code.startswith("GODFREY_ADMIN_MATRIX_CODE_2026_BY_SIGMA::"):
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("❌ 權限不足！此特殊神級密鑰只有製作者兼最高管理員才能破譯！", ephemeral=True)
-            return
-            
-        announcement_content = code.replace("GODFREY_ADMIN_MATRIX_CODE_2026_BY_SIGMA::", "")
-        await interaction.response.send_message("🚀 密鑰破譯成功！正在啟動跨服智慧頻道過濾，準備發動大廣播...", ephemeral=True)
-        
-        embed = discord.Embed(title="📢 ── 歡樂釣魚場・官方製作者廣播公告 ── 📢", description=f"\n{announcement_content}\n", color=0x9B59B6)
-        embed.set_footer(text=f"⚙️ 雲端總控制台發布 • 管理員: {interaction.user.display_name}")
-        
-        # 🌍 跨服智慧過濾與公告頻道精準導流
-        for guild in bot.guilds:
-            target_channel = None
-            current_setting = db["guild_settings"].find_one({"guild_id": int(guild.id)})
-            if current_setting and "announcement_channel_id" in current_setting:
-                configured_channel_id = int(current_setting["announcement_channel_id"])
-                target_channel = guild.get_channel(configured_channel_id)
-                
-            if not target_channel:
-                for channel in guild.text_channels:
-                    c_name = channel.name.lower()
-                    if any(keyword in c_name for keyword in ["聊天頻道", "chat", "general", "main", "聊天"]):
-                        if channel.permissions_for(guild.me).send_messages:
-                            target_channel = channel
-                            break
-                            
-            if not target_channel:
-                for channel in guild.text_channels:
-                    if channel.permissions_for(guild.me).send_messages:
-                        target_channel = channel
-                        break
-                        
-            if target_channel:
-                try: await target_channel.send(embed=embed)
-                except: pass
-        return
 
-    # 🎁 2. 常規與大補償禮包碼兌換邏輯 (維持雲端安全版)
-    code_upper = code.upper()
-    if code_upper == "SORRY2026" or code_upper == "BACKUP":
-        user = get_user(user_id)
-        update_user(user_id, balance=user.get("balance", 100) + 8000, bait_count=user.get("bait_count", 5) + 30)
-        add_inventory(user_id, "🔵高級運氣藥水", 5)
-        add_inventory(user_id, "🟢普通運氣藥水", 10)
-        add_inventory(user_id, "⚡閃電速度藥水", 5)
-        add_inventory(user_id, "🥳神祕黃金寶箱", 3)
-        add_inventory(user_id, "🔋 彈性奈米反覆餌", 1)
-        
-        embed = discord.Embed(title="🌌 官方終極大補償 ── 庫存一鍵恢復成功！", description=f"親愛的 **{interaction.user.display_name}**，全套 4.0 頂級物資已全數灌注進你的雲端倉庫！", color=0x9B59B6)
-        await interaction.response.send_message(embed=embed)
-        return
-        
-    if code_upper == "NEWUPDATE":
-        user = get_user(user_id)
-        update_user(user_id, balance=user.get("balance", 100) + 1500, bait_count=user.get("bait_count", 5) + 10)
-        await interaction.response.send_message("🎁 禮包兌換成功！獲得 `1500` 金幣與 `10` 個普通魚餌補給！")
-    elif code_upper == "1UPDATE":
-        user = get_user(user_id)
-        update_user(user_id, balance=user.get("balance", 100) + 3000, bait_count=user.get("bait_count", 5) + 20)
-        await interaction.response.send_message("🎁 禮包兌換成功！獲得 `3000` 金幣與 `20` 個普通魚餌補給！")
-    else:
-        await interaction.response.send_message("❌ 兌換碼不存在、已過期，或特殊密鑰破譯失敗！", ephemeral=True)
 
-# ======= 📋 指令：5.0 諸神黃昏黑曜石互動式幫助手冊 =======
-HELP_SECTIONS = {
-    "🎣 核心玩法": (
-        "`/釣魚`：進行一次垂釣，受到天氣、魚竿、附魔、藥水與血脈影響。\n"
-        "`/背包`：查看 250 隻魚獲容量、無上限藥水與各種物資。\n"
-        "`/裝備`：用分類下拉選單快速切換魚竿、武器、載具與其他裝備。"
-    ),
-    "📚 圖鑑與收藏": (
-        "`/查看圖鑑`：查看魚類／工具百科。\n"
-        "🐟 未發現魚種會隱藏敏感資料。\n"
-        "🔎 背包可用搜尋欄快速找魚，並以 `💖` 標記最愛。"
-    ),
-    "💰 交易與經濟": (
-        "`/全賣`：出售未鎖定的魚獲（包含掛機魚），執行前會先跳出警告確認。\n"
-        "`/出售掛機魚`：只出售 💤 掛機殘留魚獲，並提供獨立警告確認。\n"
-        "`/交易所`：玩家固定價格掛單，官方成交稅 10%。\n"
-        "`/上架交易所`：上架前必須再次確認，避免誤賣。\n"
-        "`/拍賣場`：玩家競標制，最高出價者得標。"
-    ),
-    "⚒️ 後期系統": (
-        "`/鍛造`：消耗材料製作高階道具。\n"
-        "`/探險`：派出探險隊獲得材料與金幣。\n"
-        "`/世界boss`：全服共同挑戰世界 Boss。\n"
-        "`/血脈`：升級遠古血脈與覺醒版本。"
-    ),
-    "🏰 任務與公會": (
-        "`/刷新任務`、`/接取任務`、`/任務進度`：日常星級委託。\n"
-        "`/創立公會`、`/加入公會`、`/公會背包`：公會系統。\n"
-        "`/公會遠征`、`/召喚魔王`：公會團隊戰。"
-    ),
-}
-
-class HelpCategorySelect(discord.ui.Select):
-    def __init__(self):
-        options = [discord.SelectOption(label=key, value=str(i), description="查看此分類說明") for i, key in enumerate(HELP_SECTIONS.keys())]
-        super().__init__(placeholder="📖 選擇幫助分類…", min_values=1, max_values=1, options=options)
-
-    async def callback(self, interaction: discord.Interaction):
-        key = list(HELP_SECTIONS.keys())[int(self.values[0])]
-        embed = discord.Embed(title="🎣 歡樂釣魚場 5.5.5 ── 幫助中心", description=HELP_SECTIONS[key], color=0x2ECC71)
-        embed.set_footer(text="下拉選單可切換其他分類")
-        await interaction.response.edit_message(embed=embed, view=HelpView())
-
-class HelpView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=300)
-        self.add_item(HelpCategorySelect())
-
-def create_help_embed(category=None):
-    if category is None:
-        return discord.Embed(
-            title="🎣 歡樂釣魚場 5.5.5 ── 幫助中心",
-            description=(
-                "歡迎來到歡樂釣魚場！請使用下方下拉選單查看不同系統。\n\n"
-                "🆕 新手玩家：請先完成 `/新手教學`。\n"
-                "⚠️ 魚獲容量上限：`250 隻`；藥水與一般消耗品不受此魚獲上限影響。"
-            ),
-            color=0x2ECC71
-        )
-    key = list(HELP_SECTIONS.keys())[category]
-    return discord.Embed(title="🎣 歡樂釣魚場 5.5.5 ── 幫助中心", description=HELP_SECTIONS[key], color=0x2ECC71)
-
-@bot.tree.command(name="幫助", description="開啟下拉式遊戲幫助中心")
-async def help_manual(interaction: discord.Interaction):
-    await interaction.response.send_message(embed=create_help_embed(), view=HelpView(), ephemeral=True)
-
-@bot.tree.command(name="help", description="Open the dropdown game help center")
-async def help_english(interaction: discord.Interaction):
-    await interaction.response.send_message(embed=create_help_embed(), view=HelpView(), ephemeral=True)
-
-# ======= 📢 組七：管理員自訂公告區、與實體按鈕控制台綁定 =======
-class AnnounceSetupView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None) # 永不逾時
-
-    @discord.ui.button(label="📢 一鍵綁定：將當前頻道設定為公告區", style=discord.ButtonStyle.green, custom_id="set_announce_channel_btn")
-    async def set_channel_callback(self, interaction: discord.Interaction):
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("❌ 權限被攔截！老哥，此實體控制台按鈕只有【最高管理員】才能點擊配置！", ephemeral=True)
-            return
-            
-        guild_id = int(interaction.guild_id) if interaction.guild_id else 0
-        channel_id = int(interaction.channel_id) if interaction.channel_id else 0
-        
-        db["guild_settings"].update_one(
-            {"guild_id": guild_id},
-            {"$set": {
-                "guild_name": interaction.guild.name if interaction.guild else "未知群組",
-                "announcement_channel_id": channel_id,
-                "configured_at": datetime.now().strftime("%Y-%m-%d %H:%M")
-            }},
-            upsert=True
-        )
-        await interaction.response.send_message(f"✅ **配置成功！** 已成功將 <#{channel_id}> 鎖定為官方製作者廣播的唯一指定綠燈通道！", ephemeral=True)
-
-@bot.tree.command(name="公告配置", description="【群主/管理員專屬】呼叫出官方公告實體按鈕控制台，方便在任意頻道一鍵點擊鎖定")
-async def show_announce_panel(interaction: discord.Interaction):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ 權限不足！只有最高管理員才能呼叫此引導面板。", ephemeral=True); return
-        
-    guild_id = int(interaction.guild_id) if interaction.guild_id else 0
-    current_setting = db["guild_settings"].find_one({"guild_id": guild_id})
-    status_str = f"🔒 唯一指定通道：<#{current_setting['announcement_channel_id']}>" if current_setting else "⚠️ 目前尚未配置（目前走預設聊天頻道智慧導流）"
-    
-    embed = discord.Embed(title="⚙️ 航海大世紀 ── 官方廣播總主機配置面板", description="`──────────────────────────`", color=0x9B59B6)
-    embed.add_field(name="📊 當前群組設定狀態", value=status_str, inline=False)
-    embed.add_field(name="🛠️ 點擊下方綠色按鈕", value="將會把**目前你正在說話的這一個頻道**，直接與官方製作者（老哥）的全服大廣播進行物理對齊綁定！", inline=False)
-    await interaction.response.send_message(embed=embed, view=AnnounceSetupView())
-# ======= 📅 組八：連續簽到天數疊加、與 5.5.5 指數級暴增全服大賭局 =======
-@bot.tree.command(name="簽到", description="【連續簽到加成】每日簽到領獎，連續天數越多，獲得的金幣與魚餌補給越豐厚！")
-async def daily_cmd(interaction: discord.Interaction):
-    user_id = int(interaction.user.id)
-    user = get_user(user_id)
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    
-    if user.get("last_daily", "2000-01-01") == today_str:
-        await interaction.response.send_message("❌ 老哥，你今天已經簽到隔天再來吧！", ephemeral=True); return
-        
-    last_daily_str = user.get("last_daily", "2000-01-01")
-    current_streak = int(user.get("daily_streak", 0))
-    
+def load_world() -> Dict[str, Any]:
+    if not DATA_FILE.exists():
+        return {"players": {}, "guilds": {}, "auctions": [], "world": {"boss_hp": 500000, "boss_max": 500000, "boss_name": "九霄天魔"}}
     try:
-        last_date = datetime.strptime(last_daily_str, "%Y-%m-%d")
-        today_date = datetime.strptime(today_str, "%Y-%m-%d")
-        if today_date - last_date == timedelta(days=1): current_streak = min(current_streak + 1, 7)
-        else: current_streak = 1
-    except: current_streak = 1
-        
-    base_money = 200 + (current_streak - 1) * 50
-    base_bait = 3 + (current_streak - 1) * 1
-    
-    update_user(user_id, balance=user.get("balance", 100) + base_money, bait_count=user.get("bait_count", 5) + base_bait, last_daily=today_str, daily_streak=current_streak, name=interaction.user.display_name)
-    
-    embed = discord.Embed(title="📅 ── 航海大世紀・雲端連續簽到 ── 📅", description=f"船長 **{interaction.user.display_name}** 今日報到成功！", color=0x3498DB)
-    embed.add_field(name=f"🔥 當前連續簽到進度：`【 {current_streak} / 7 天 】`", value=f"• 獲得基礎金幣：`{base_money} 🪙`\n• 獲得儲備普通餌：`+{base_bait} 個`", inline=False)
-    await interaction.response.send_message(embed=embed)
+        return json.loads(DATA_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"players": {}, "guilds": {}, "auctions": [], "world": {"boss_hp": 500000, "boss_max": 500000, "boss_name": "九霄天魔"}}
 
-# ======= 🎰 組八・補完：每週大賭局計數器自動雲端重置防線（4 空格精準縮排） =======
-def check_and_reset_gamble_week(user_id):
-    user = get_user(user_id)
-    now = datetime.now()
-    
-    # 讀取玩家上一次下注的年份與週數
-    last_gamble_time_str = user.get("last_gamble_date", "2000-01-01")
-    try:
-        last_date = datetime.strptime(last_gamble_time_str, "%Y-%m-%d")
-        # 如果今年或這週已經跟上一次不同，自動在雲端將本週賭局次數「重置歸零」！
-        if now.isocalendar() != last_date.isocalendar() or now.year != last_date.year:
-            users_col.update_one({"user_id": int(user_id)}, {"$set": {"weekly_gamble_count": 0, "last_gamble_date": now.strftime("%Y-%m-%d")}})
-    except:
-        users_col.update_one({"user_id": int(user_id)}, {"$set": {"weekly_gamble_count": 0, "last_gamble_date": now.strftime("%Y-%m-%d")}})
+WORLD = load_world()
 
-@bot.tree.command(name="大賭局", description="【5.5.5 指數博弈】本週賭局次數越高，賭資指數級暴增！但中大獎機率也會瘋狂暴增！")
-async def crazy_gamble(interaction: discord.Interaction):
-    user_id = int(interaction.user.id)
-    user = get_user(user_id)
-    check_and_reset_gamble_week(user_id) # 🟢 完美對齊 4 空格靠左，徹底除雷！
-    
-    # 🌟 1. 從雲端讀取或初始化本週玩家的下注次數 (每週重置欄位)
-    gamble_count = int(user.get("weekly_gamble_count", 0)) + 1
-    
-    # 🌟 2. 核心公式：根據當前輪次，精準計算出需要花費的金幣（指數級通膨）
-    if gamble_count == 1:
-        cost = 0  # 第一輪完全免費
-    elif gamble_count == 2:
-        cost = 5000  # 第二輪收 5000 
-    else:
-        cost = 5000 * (3 ** (gamble_count - 2))  # 第三輪 15000, 第四輪 45000, 第五輪 135000...
-        
-    if user.get("balance", 100) < cost:
-        await interaction.response.send_message(f"❌ 賭資不足！老哥，第 **{gamble_count}** 輪大賭局需要支付 `{cost}` 🪙 金幣，你目前只有 `{user.get('balance', 100)}`。", ephemeral=True)
-        return
-        
-    # 扣除賭資並同步更新下注次數
-    update_user(user_id, balance=user["balance"] - cost, weekly_gamble_count=gamble_count)
-    
-    # 🌟 3. 機率增加機制：每多下一輪，搖出三個相同數字的機率就會瘋狂往上拉
-    # 免費輪中獎率 10%，第二輪 25%，之後每多一輪中獎率多加 20%，直到 95% 封頂
-    if gamble_count == 1: win_chance = 10
-    elif gamble_count == 2: win_chance = 25
-    else: win_chance = min(25 + (gamble_count - 2) * 20, 95)
-    
-    # 進行純數字隨機落點大搖號
-    roll = random.uniform(0, 100)
-    embed = discord.Embed(title=f"🎰 ── 諸神黃昏・指數級星運大賭局 [第 {gamble_count} 輪] ── 🎰", color=0xF1C40F)
-    
-    if roll < win_chance:
-        # 🎉 恭喜中大獎！根據輪次發放對應的大盲盒
-        roll_1 = roll_2 = roll_3 = random.randint(1, 3)
-        if gamble_count == 1:
-            prize = random.choice(["🟢普通運氣藥水", "⚡閃電速度藥水", "💗性慾藥水"])
-            add_inventory(user_id, prize, 1)
-            embed.description = f"🎰 搖號結果 ➔ `[ {roll_1} ]` `[ {roll_2} ]` `[ {roll_3} ]` (中獎率: `{win_chance}%`)\n\n🎉 **免費輪連線成功！** 天降保底好運，你獲得了：【**{prize}**】 x1！"
-        elif gamble_count == 2:
-            add_inventory(user_id, "🎁 稀有藥水寶箱", 1)
-            embed.description = f"🎰 搖號結果 ➔ `[ {roll_1} ]` `[ {roll_2} ]` `[ {roll_3} ]` (中獎率: `{win_chance}%`)\n\n🏆 **高級輪大暴擊！** 恭喜老哥，你成功抱走大獎：【**🎁 稀有藥水寶箱**】 x1！"
-        else:
-            add_inventory(user_id, "🎁 傳奇藥水寶箱", 1)
-            embed.description = f"🎰 搖號結果 ➔ `[ {roll_1} ]` `[ {roll_2} ]` `[ {roll_3} ]` (中獎率: `{win_chance}%`)\n\n🌌 🔥 **【諸神領域・終極豹子連線！】** 🔥 🌌\n指數級機率大突破！老哥你成功抱走至高戰略盲盒：【**🎁 傳奇藥水寶箱**】 x1！"
-    else:
-        # 😢 槓龜了
-        roll_1, roll_2, roll_3 = random.randint(1, 3), random.randint(1, 3), random.randint(1, 3)
-        if roll_1 == roll_2 == roll_3: roll_3 = (roll_3 % 3) + 1  # 強制防呆錯位
-        
-        # 指數級賭局即使槓龜，也保底退還 20% 的安慰獎金
-        pity_cash = int(cost * 0.2)
-        update_user(user_id, balance=get_user(user_id)["balance"] + pity_cash)
-        
-        embed.description = f"🎰 搖號結果 ➔ `[ {roll_1} ]` `[ {roll_2} ]` `[ {roll_3} ]` (中獎率: `{win_chance}%`)\n\n😢 **槓龜了老哥！數字未能連線！**\n投入的金幣已被市場回收。總控制台啟動低保機制，保底退還 20% 安慰金 `+{pity_cash} 🪙`！"
-        embed.set_footer(text=f"💡 老哥提示：下一輪 [第 {gamble_count+1} 輪] 的開獎機率將直接提高到 {min(win_chance+20, 95)}%！要再搏一把嗎？")
-        
-    await interaction.response.send_message(embed=embed)
-# ======= 🎰 組九：5.5 隨機 3選1 星級任務刷新、與 12h 雲端留存鎖 =======
-@bot.tree.command(name="刷新任務", description="【每日 24h 限制】依據權限機率在雲端生成 3 個隨機趣味日常星級懸賞，越高級星機率越低！")
-async def refresh_daily_quests(interaction: discord.Interaction):
-    user_id = int(interaction.user.id)
-    user = get_user(user_id)
-    
-    # 🌟 5.5 全方位擴充：15 大日常任務庫
-    quest_database = {
-        1: [
-            {"name": "🎣 基礎池塘清道夫 (1⭐)", "target": 5, "reward": 350, "crystal": 2},
-            {"name": "👟 海域垃圾清除兵 (1⭐)", "target": 2, "reward": 300, "crystal": 2},
-            {"name": "🛍️ 碼頭揮金如土商 (1⭐)", "target": 2, "reward": 250, "crystal": 1}
-        ],
-        2: [
-            {"name": "🦀 珊瑚礁淺灘採集 (2⭐)", "target": 4, "reward": 600, "crystal": 5},
-            {"name": "🐟 綠頭擬鯉圍捕令 (2⭐)", "target": 3, "reward": 550, "crystal": 4},
-            {"name": "🧪 簽到小福星累積 (2⭐)", "target": 1, "reward": 400, "crystal": 3}
-        ],
-        3: [
-            {"name": "⚙️ 廢棄外星遺跡回收 (3⭐)", "target": 3, "reward": 950, "crystal": 9},
-            {"name": "🔮 遠古附魔台共振 (3⭐)", "target": 2, "reward": 850, "crystal": 8},
-            {"name": "📦 補給箱快遞速遞 (3⭐)", "target": 1, "reward": 750, "crystal": 7}
-        ],
-        4: [
-            {"name": "🦈 二海巨鯊深海獵殺 (4⭐)", "target": 2, "reward": 1500, "crystal": 15},
-            {"name": "🧬 基因奇蹟驚天異變 (4⭐)", "target": 1, "reward": 1800, "crystal": 18},
-            {"name": "🦁 公會遠征重裝討伐 (4⭐)", "target": 3, "reward": 1600, "crystal": 16}
-        ],
-        5: [
-            {"name": "🌋 地幔核心熔岩碎裂 (5⭐)", "target": 2, "reward": 3500, "crystal": 30},
-            {"name": "🌌 終極星空奇點共振 (5⭐)", "target": 1, "reward": 5000, "crystal": 45},
-            {"name": "👑 捕獲珊瑚礁之王 (5⭐)", "target": 1, "reward": 4500, "crystal": 40}
-        ]
-    }
-    
-    chosen_3 = []
-    random.seed(int(time.time() / 86400) + user_id)
-    for _ in range(3):
-        roll_star = random.uniform(0, 100)
-        if roll_star < 40: star_level = 1
-        elif roll_star < 65: star_level = 2
-        elif roll_star < 83: star_level = 3
-        elif roll_star < 95: star_level = 4
-        else: star_level = 5
-        selected_q = random.choice(quest_database[star_level]).copy()
-        chosen_3.append(selected_q)
-    random.seed()
-    
-    db["quest_temp_locks"].update_one(
-        {"user_id": user_id},
-        {"$set": {"quests": chosen_3, "generated_at": time.time()}},
-        upsert=True
-    )
-    
-    embed = discord.Embed(title="🎰 ── 航海公會・全服星級權重懸賞令 ── 🎰", description="此批懸賞已在雲端安全留存 12h，星級越高機率越低！請輸入 `/接取任務 序號` 鎖定其一！", color=0xF39C12)
-    for idx, q in enumerate(chosen_3):
-        embed.add_field(name=f"【序號 {idx+1}】 {q['name']}", value=f"• 需求次數：`{q['target']}` 次\n• 賞金金幣：`{q['reward']} 🪙`\n• 榮譽結晶：`🌟 {q['crystal']} 個遠古星願晶石`", inline=False)
-    await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="接取任務", description="從雲端留存的 3 個不對等權重星級任務中，精準挑選其中一個鎖定開刷")
-@app_commands.describe(序號="請輸入你想接取的任務序號（1、2 或 3）")
-async def choose_quest_index(interaction: discord.Interaction, 序號: int):
-    # 🌟 5.5.5 鐵壁語法修復：補齊當初漏字與陣列攔截，100% 綠燈秒過！
-    if 序號 not in [1, 2, 3]:
-            await interaction.response.send_message("❌ 序號錯誤！老哥，只能挑選 1、2 或 3 號日常懸賞！", ephemeral=True)
-            return
-        
-    user_id = int(interaction.user.id)
-    user = get_user(user_id)
-    
-    if user.get("quest_type", "無") != "無":
-        await interaction.response.send_message("❌ 你身上已經掛著任務進度了，請先 `/回報任務` 領賞！", ephemeral=True)
-        return
-        
-    lock_data = db["quest_temp_locks"].find_one({"user_id": user_id})
-    if not lock_data or time.time() - lock_data.get("generated_at", 0) > 43200:
-        await interaction.response.send_message("❌ 留存逾時或名冊為空！這批任務在雲端已經超過 12h 蒸發了，請重新 `/刷新任務`！", ephemeral=True)
-        return
-        
-    q = lock_data["quests"][序號 - 1]
-    update_user(user_id, quest_type=q["name"], quest_target=q["target"], quest_progress=0, quest_reward=q["reward"], quest_reward_crystal=q["crystal"])
-    await interaction.response.send_message(f"🎯 **懸賞鎖定！** 你已成功接取：【**{q['name']}**】！衝吧老哥！")
+def save_world() -> None:
+    tmp = DATA_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(WORLD, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(DATA_FILE)
 
-# ======= 💤 組十：10 分鐘未使用自動切入 AFK 掛機、及 1hr 雲端大倉庫覆蓋防爆 =======
-def process_afk_fishing(user_id):
-    """結算掛機魚貨。一次聚合寫入，避免最多 120 次 MongoDB round-trip。"""
-    user = get_user(user_id)
-    now = time.time()
-    last_active = float(user.get("last_active_time", now))
-    if now - last_active < 600:
-        return 0
 
-    elapsed_seconds = max(0, now - last_active)
-    fish_caught = int(elapsed_seconds / 30)
-    if fish_caught <= 0:
-        users_col.update_one({"user_id": int(user_id)}, {"$set": {"last_active_time": now}})
-        return 0
-
-    max_hours = max(1, int(user.get("afk_save_hours", 1)))
-    allowed_max_fish = max_hours * 120
-    requested = min(fish_caught, allowed_max_fish)
-    capacity = get_inventory_capacity_remaining(user_id)
-    final_fish_count = min(requested, capacity)
-
-    afk_pool = ["🐟 吳郭魚", "🐠 小丑魚", "👟 舊鞋子"]
-    counts = {}
-    for _ in range(final_fish_count):
-        chosen_f = random.choice(afk_pool)
-        key = f"{AFK_PREFIX}{chosen_f}"
-        counts[key] = counts.get(key, 0) + 1
-
-    for item_name, amount in counts.items():
-        inventory_col.update_one(
-            {"user_id": int(user_id), "item_name": item_name},
-            {"$inc": {"item_count": int(amount)}, "$setOnInsert": {"is_favorite": 0}},
-            upsert=True
-        )
-
-    users_col.update_one({"user_id": int(user_id)}, {"$set": {"last_active_time": now}})
-    return final_fish_count
-
-@bot.tree.command(name="任務進度", description="查詢目前身上接取的日常星級任務進度")
-async def check_quest_flow(interaction: discord.Interaction):
-    user_id = int(interaction.user.id)
-    user = get_user(user_id)
-    update_user(user_id, last_active_time=time.time())  
-    
-    if user.get("quest_type", "無") == "無":
-        await interaction.response.send_message("🔍 你目前身上空空如也！請先輸入 `/刷新任務` 吧！", ephemeral=True)
-    else:
-        status = "✅ 可回報" if user["quest_progress"] >= user["quest_target"] else "⏳ 進行中"
-        await interaction.response.send_message(f"📋 **日常星級進度卡槽**：\n🎯 當前任務：【{user['quest_type']}】({status})\n• 目前數量：`{user['quest_progress']} / {user['quest_target']}`\n• 達成金幣：`{user['quest_reward']} 🪙`\n• 獲得星願石：`🌟 {user.get('quest_reward_crystal', 0)} 個遠古星願晶石`")
-# ======= 🧬 組十一：5.5.5 魚竿 V1~V3 覺醒、遠古種族血脈加成工具組（第 916 ~ 1010 行） =======
-def get_player_modifiers(user_id):
-    user = get_user(user_id)
-    
-    # 🌟 1. 讀取遠古種族等級（人類、鯊魚、海妖最高到 V3，亞特蘭提斯神族最高可衝到 V4）
-    race = user.get("race_type", "👤 常規人類")
-    race_v = int(user.get("race_version", 1))
-    
-    race_luck = 0.0
-    race_money = 0.0
-    
-    if "鯊魚" in race:
-        race_luck = 0.15 * race_v; race_money = 0.10 * race_v
-    elif "海妖" in race:
-        race_luck = 0.25 * race_v; race_money = 0.15 * race_v
-    elif "亞特蘭提斯" in race:
-        race_luck = 0.35 * race_v; race_money = 0.25 * race_v # 🌟 V4 時可達運氣+140%, 金幣+100%
-        
-    # 🌟 2. 遍歷雲端裝備卡槽中所有的多重寵物加成（動態累加，完美復刻截圖屬性鏈）
-    cursor = inventory_col.find({"user_id": int(user_id), "is_equipped_pet": 1})
-    equipped_pets = list(cursor)
-    
-    pet_luck_bonus = 0.0
-    pet_money_bonus = 0.0
-    pet_ids_str = []
-    
-    for p in equipped_pets:
-        p_name = p["item_name"]
-        pet_ids_str.append(str(p.get("pet_uid", random.randint(50, 65))))
-        if "招財貓" in p_name: pet_money_bonus += 0.15
-        elif "獵鷹" in p_name: pet_luck_bonus += 0.20
-        elif "小青龍" in p_name: pet_luck_bonus += 0.35; pet_money_bonus += 0.20
-        
-    final_luck = 1.0 + race_luck + pet_luck_bonus
-    final_money = 1.0 + race_money + pet_money_bonus
-    
+def player_template() -> Dict[str, Any]:
     return {
-        "luck_multiplier": final_luck,
-        "money_multiplier": final_money,
-        "pet_chain": ",".join(pet_ids_str) if pet_ids_str else "無裝備寵物",
-        "race_display": f"{race} V{race_v}"
+        "path": None,
+        "spirit_root": None,
+        "spirit_mult": 1.0,
+        "realm": 0,
+        "qi": 0,
+        "max_qi": 100,
+        "stones": 500,
+        "technique": None,
+        "technique_bonus": 1.0,
+        "power": 10,
+        "qi_layer": 1,
+        "phase": 0,
+        "breakthrough_bonus": 0.0,
+        "last_breakthrough_target": None,
+        "weapon": None,
+        "weapon_level": 0,
+        "weapon_attack": 0,
+        "inventory": {},
+        "recipes": [],
+        "quests": {},
+        "daily": {"last": 0, "streak": 0},
+        "sect": None,
+        "sect_role": None,
+        "contrib": 0,
+        "kills": 0,
+        "boss_damage": 0,
+        "last_meditate": 0,
+        "last_hunt": 0,
+        "last_secret": 0,
+        "last_market": 0,
+        "breakthroughs": 0,
+        "wins": 0,
+        "losses": 0,
+        "created": int(time.time()),
     }
 
-# ======= 🔄 指令三十一：滿級船長跨世代重生轉生系統 =======
-@bot.tree.command(name="轉生", description="【滿級極致突破】當前等級達到 LV.100 時可消耗所有金幣，換取 1 枚至高重復幣並覺醒高階種族！")
-async def reset_for_rebirth(interaction: discord.Interaction):
-    user_id = int(interaction.user.id)
-    user = get_user(user_id)
-    
-    if user.get("level", 0) < 100:
-        await interaction.response.send_message(f"❌ 轉生失敗！老哥，你的修為實力不足，需要達到 `LV.100` 滿級大關才能突破！（你目前：`LV.{user.get('level', 0)}`）", ephemeral=True)
-        return
-        
-    # 搖號覺醒全新遠古種族（有 15% 機率直接暴擊覺醒最高階的亞特蘭提斯神族！）
-    race_roll = random.random()
-    if race_roll < 0.15: new_race = "🔱 亞特蘭提斯神族"
-    elif race_roll < 0.50: new_race = "🦈 鯊魚血脈族"
-    else: new_race = "撕裂者海妖族"
-    
-    # 累加重生幣，並將等級金幣一鍵回歸起航點，保存時數永久增強
-    current_resets = int(user.get("reset_coins", 0)) + 1
-    
-    update_user(
-        user_id,
-        level=0, xp=0, balance=100,
-        reset_coins=current_resets,
-        race_type=new_race,
-        race_version=1,
-        rod="新手魚竿",
-        name=interaction.user.display_name
-    )
-    
-    embed = discord.Embed(title="🔄 ── 諸神黃昏・靈魂涅槃轉生成功 ── 🔄", description=f"船長 **{interaction.user.display_name}** 破繭重生，跨入高階血脈紀元！", color=0x9B59B6)
-    embed.add_field(name="✨ 轉生資產與血脈宣告", value=f"• 獲得至高重生幣：`{current_resets} 枚 🔄`\n• 覺醒遠古血脈：**{new_race} V1**\n• 錢包與漁具：重置回起航點，但你已獲得不可直視的被動複利！", inline=False)
-    await interaction.response.send_message(embed=embed)
-# ======= 🎣 組十二：4.0/5.5.5 核心完全體釣魚指令（前半段）（第 1011 ~ 1110 行） =======
-cooldowns = {}
 
-@bot.tree.command(name="釣魚", description="拋出釣竿！引進真實時間等待咬竿、種族加成與 10 大極端天氣共振異變！")
-async def fish(interaction: discord.Interaction):
-    # 🌟 1. 第一步 0.001 秒內完成預留應答，徹底封死未回應錯誤！
-    await interaction.response.defer()
-    import asyncio
-    
-    try:
-        user_id = int(interaction.user.id)
-        user = get_user(user_id)
-        
-        # 實時同步最新 Discord 使用者真實名字
-        update_user(user_id, name=interaction.user.display_name, last_active_time=time.time())
-        
-        current_map = user.get("current_map", "一海・新手小池塘")
-        current_rod = user.get("rod", "新手魚竿")
-        current_enchant = user.get("enchant", "無")
-        
-        if not current_map or current_map == "None": current_map = "一海・新手小池塘"
-        if not current_rod or current_rod == "None": current_rod = "新手魚竿"
-        if not current_enchant or current_enchant == "None": current_enchant = "無"
-        
-        # 🌟 2. 獲取老哥截圖指定的：種族加成、多寵物加成、以及寵物裝備鏈數據
-        mods = get_player_modifiers(user_id)
-        race_luck_mod = float(mods["luck_multiplier"])
-        pet_chain_display = mods["pet_chain"]
-        
-        weather_name, weather_info = get_global_weather()
-        rod_stat = ROD_STATS.get(current_rod, {"luck": 1.0, "speed_bonus": 0.0, "mutation": 0.05, "desc": "無"})
-        enc_stat = ENCHANT_POOL.get(current_enchant, {"luck_mod": 1.0, "speed_mod": 0.0, "mutate_mod": 0.0})
-        
-        enc_speed = enc_stat.get("speed_mod", 0.0) if enc_stat else 0.0
-        enc_luck = enc_stat.get("luck_mod", 1.0) if enc_stat else 1.0
-        enc_mutate = enc_stat.get("mutate_mod", 0.0) if enc_stat else 0.0
-        
-        # 🌟 3. 全新冷卻倒數公式：被動武器與種族大洗鍊
-        current_time = time.time()
-        base_cooldown = 10.0 - float(rod_stat.get("speed_bonus", 0.0)) - float(enc_speed)
-        w_speed = float(weather_info.get("speed_mod", 0.0))
-        base_cooldown += w_speed
-        
-        # 暗夜之竿 (Nocturnal Rod) 暴雨被動：冷卻直接強行砍半
-        if current_rod == "暗夜之竿 (Nocturnal Rod)" and weather_name in ["🌧️ 狂風暴雨", "🌌 蝕日奇點 (Solar Eclipse)", "⚡ 萬雷轟頂 (Thunderstorm)"]:
-            base_cooldown *= 0.5
-        if base_cooldown < 1.5: base_cooldown = 1.5  # 最低不允許低於 1.5 秒
-        
-        if user_id in cooldowns and current_time - cooldowns[user_id] < base_cooldown:
-            remaining = round(base_cooldown - (current_time - cooldowns[user_id]), 1)
-            await interaction.followup.send(f"🚨 拋竿速度太快了！手拉得好酸...再等 {remaining} 秒。(當前冷卻: {round(base_cooldown, 1)}秒)", ephemeral=True)
-            return
-        cooldowns[user_id] = current_time
-
-        # 智慧浮標載入：自動優先挑選最高階的消耗性浮標
-        player_bobbers = {}
-        for b_name in ['🔴 狂暴重力浮標', '🔵 藍海震盪浮標', '🟢 綠光電子浮標']:
-            b_rec = inventory_col.find_one({"user_id": user_id, "item_name": b_name, "item_count": {"$gt": 0}})
-            if b_rec: player_bobbers[b_name] = int(b_rec.get("item_count", 0))
-            
-        if player_bobbers.get('🔴 狂暴重力浮標', 0) > 0: bobber_name = '🔴 狂暴重力浮標'
-        elif player_bobbers.get('🔵 藍海震盪浮標', 0) > 0: bobber_name = '🔵 藍海震盪浮標'
-        elif player_bobbers.get('🟢 綠光電子浮標', 0) > 0: bobber_name = '🟢 綠光電子浮標'
-        else: bobber_name = '⚪ 常規軟木浮標'
-            
-        bobber_stat = BOBBER_POOL[bobber_name]
-        
-        await interaction.edit_original_response(content=f"🪝 **{interaction.user.display_name}** 裝配著【**{bobber_name}**】在【{current_map}】拋出釣竿...\n🧬 當前血脈：`{mods['race_display']}` | 寵物鏈：`[{pet_chain_display}]` 加持中... 🌊")
-# ======= 🎣 組十三：核心釣魚指令後半段與 15 大任務自動計數（第 1111 ~ 1210 行） =======
-        wait_seconds = random.randint(2, 3)
-        await asyncio.sleep(wait_seconds)
-        
-        cursor = inventory_col.find({"user_id": user_id, "item_count": {"$gt": 0}})
-        inv_data = {doc["item_name"]: int(doc["item_count"]) for doc in cursor}
-        
-        # 載入消耗物資
-        has_nano_bait = inv_data.get('🔋 彈性奈米反覆餌', 0) > 0
-        has_star_pot = inv_data.get('天體幸運藥水 (x2)', 0) > 0
-        has_rainbow_pot = inv_data.get('彩虹藥水 (x1)', 0) > 0
-        has_high_pot = inv_data.get('🔵高級運氣藥水', 0) > 0
-        has_normal_pot = inv_data.get('🟢普通運氣藥水', 0) > 0
-        
-        is_supported = (interaction.guild_id == SUPPORT_GUILD_ID) if interaction.guild_id else False
-        guild_bonus = 1.2 if is_supported else 1.0
-        
-        # 🌟 5.5.5 終極氣運共振：魚竿幸運 x 天氣幸運 x 附魔幸運 x 支援群加成 x 遠古種族血脈加成倍率！
-        w_luck = float(weather_info.get("luck_bonus", 1.0))
-        luck_multiplier = float(rod_stat.get("luck", 1.0)) * w_luck * float(enc_luck) * guild_bonus * race_luck_mod
-        
-        # 🌟 天氣環境限定突變率乘積
-        weather_mutate_mod = 1.0
-        if weather_name in ["⚡ 萬雷轟頂 (Thunderstorm)", "🌌 蝕日奇點 (Solar Eclipse)", "🌀 終極風暴 (Maelstrom)", "🌋 熔岩噴發 (Eruption)"]:
-            weather_mutate_mod = 2.5
-            
-        bait_msg = f"🌍 **全服實時氣象：【{weather_name}】** (*{weather_info['desc']}*)\n"
-        if current_enchant != "無": bait_msg += f"🔮 🔮漁具灌注附魔：**【{current_enchant}】** 加持中\n"
-        
-        # 消耗判定
-        if has_nano_bait:
-            luck_multiplier *= 2.0; bait_msg += "🔋 **[神級奈米反覆餌] 裝備了彈性反覆餌，本竿不消耗任何材料，且幸運值x2.0！**\n"
-        elif has_star_pot:
-            luck_multiplier *= 5.0; inventory_col.update_one({"user_id": user_id, "item_name": "天體幸運藥水 (x2)"}, {"$inc": {"item_count": -1}})
-            bait_msg += "✨ **[天體共鳴]** 你飲用了天體幸運藥水，爆率暴增 x5.0！\n"
-        elif has_rainbow_pot:
-            luck_multiplier *= 7.0; inventory_col.update_one({"user_id": user_id, "item_name": "彩虹藥水 (x1)"}, {"$inc": {"item_count": -1}})
-            bait_msg += "🌈 **[彩虹極光]** 飲用彩虹藥水，全卡槽品階大飛升 x7.0！！\n"
-        elif user.get("bait_count", 0) > 0:
-            update_user(user_id, bait_count=int(user["bait_count"]) - 1); bait_msg += "🐛 你消耗了 1 個 **普通魚餌**！\n"
-        else: bait_msg += "🪝 無魚餌素釣，全憑直覺！\n"
-        
-        if has_high_pot: inventory_col.update_one({"user_id": user_id, "item_name": "🔵高級運氣藥水"}, {"$inc": {"item_count": -1}}); luck_multiplier *= 2.0
-        elif has_normal_pot: inventory_col.update_one({"user_id": user_id, "item_name": "🟢普通運氣藥水"}, {"$inc": {"item_count": -1}}); luck_multiplier *= 1.3
-        if bobber_name != '⚪ 常規軟木浮標':
-            inventory_col.update_one({"user_id": user_id, "item_name": bobber_name}, {"$inc": {"item_count": -1}})
-            bait_msg += f"🚨 本竿自動消耗了 1 個 **{bobber_name}**！\n"
-
-        # 🌟 5.5.5 天降寶箱機制：只要玩家有使用任何魚餌或奈米餌，就有 0.5% 的極致機率直接從海裡拉起藥水/魚餌寶箱！
-        if user.get("bait_count", 0) > 0 or has_nano_bait:
-            if random.random() < 0.005:
-                chest_gift = random.choice(["🎁 基礎藥水寶箱", "🎁 稀有藥水寶箱", "🎁 傳奇藥水寶箱", "稀有魚餌 (x1)", "神話魚餌 (x1)"])
-                add_inventory(user_id, chest_gift, 1)
-                bait_msg += f"📦 **【⚠️ 天降橫財 ── 意外收穫！】** 拋竿激盪中，你竟然從海底漩渦順帶扯起了一個 【**{chest_gift}**】 塞進大倉庫！\n"
-
-        roll = random.uniform(0, 100)
-        luck_score = 10.0 * luck_multiplier
-        if luck_score >= 500000: chosen_rarity = "作者級" if roll < 40 else "秘密" if roll < 80 else "神話"
-        elif luck_score >= 150: chosen_rarity = "作者級" if roll < 1 else "秘密" if roll < 5 else "神話" if roll < 20 else "傳奇" if roll < 60 else "稀有"
-        elif luck_score >= 50: chosen_rarity = "神話" if roll < 2 else "傳奇" if roll < 15 else "稀有" if roll < 50 else "普通"
-        else: chosen_rarity = "傳奇" if roll < 1 else "稀有" if roll < 20 else "普通"
-
-        base_success = 95 - bobber_stat["success_rate"]
-        if current_rod == "穩健之竿 (Steady Rod)": base_success += 15
-        if base_success > 98: base_success = 98
-
-        if random.uniform(0, 100) > base_success:
-            await interaction.followup.send(f"🦈 **{interaction.user.display_name} 拉扯失敗！** 一隻極其巨大的 **【{chosen_rarity}】** 級生物猛烈咬線，扯斷了你的 【{bobber_name}】 吐信逃跑了...（拉竿成功率：`{int(base_success)}%`）")
-            return
-
-        available_fish = []
-        if current_map in MAP_EXCLUSIVE_FISH and chosen_rarity in MAP_EXCLUSIVE_FISH[current_map]:
-            available_fish = MAP_EXCLUSIVE_FISH[current_map][chosen_rarity]
-        if not available_fish: available_fish = FISH_POOL.get(chosen_rarity, FISH_POOL["普通"])
-        
-        fish_item = random.choice(available_fish)
-        fish_name, _ = fish_item
-        
-        # 🌟 天氣限定隱藏魚大暴動
-        if current_map == "一海・新手小池塘":
-            if weather_name == "⚡ 萬雷轟頂 (Thunderstorm)" and random.random() < 0.40: fish_name = "⚡ 電光電鰻 (Electric Eel)"
-            elif weather_name == "❄️ 冰天雪地 (Blizzard)" and random.random() < 0.45: fish_name = "❄️ 寒冬北極鱈 (Arctic Cod)"
-        elif current_map == "二海・黃金珊瑚礁":
-            if weather_name == "🌌 蝕日奇點 (Solar Eclipse)" and random.random() < 0.35: fish_name = "🌌 幽冥鬼蝠魟 (Ghost Ray)"
-            elif weather_name == "🎰 歐皇狂歡 (🎰 Super Lucky)" and random.random() < 0.50: fish_name = "🎰 命運幻彩錦鯉"
-
-        final_mutation_chance = (float(rod_stat.get("mutation", 0.05)) + float(enc_mutate) + float(bobber_stat.get("mutate_bonus", 0.0))) * weather_mutate_mod
-        if current_rod == "霓虹之竿 (Neon Rod)": final_mutation_chance += 0.25
-            
-        if random.random() < final_mutation_chance:
-            fish_name = f"{random.choice(['[🟢毒性突變]', '[🔵晶螢閃耀]', '[👑極致黃金]', '[🔴血色異變]', '[🌌星空突變]'])} {fish_name}"
-            
-        # 寫入雲端大倉庫；魚獲總容量上限 250 隻，藥水等消耗品不受此限制
-        added_fish = add_inventory(user_id, fish_name, 1)
-        if added_fish <= 0:
-            await interaction.followup.send(
-                "⚠️ **魚獲背包已滿！** 目前容量 `250/250`，本次魚獲沒有存入背包。\n"
-                "💡 請先 `/全賣` 或轉移部分魚獲，再繼續釣魚。",
-                ephemeral=True
-            )
-            return
-        register_fish_discovery(user_id, fish_name)
-        
-        # 🌟 15 大日常星級任務進度全自動過濾計數
-        q_type = user.get("quest_type", "無")
-        q_prog = int(user.get("quest_progress", 0))
-        if q_type != "無":
-            if q_type.startswith("🎣 出海大豐收"): update_user(user_id, quest_progress=q_prog + 1)
-            elif q_type.startswith("🪙 財氣東來") and chosen_rarity in ["稀有", "傳奇", "神話", "秘密", "作者級"]: update_user(user_id, quest_progress=q_prog + 1)
-            elif q_type.startswith("👟 海域垃圾") and "舊鞋子" in fish_name: update_user(user_id, quest_progress=q_prog + 1)
-            elif q_type.startswith("🧬 基因奇蹟") and any(p in fish_name for p in ["[🟢毒性]", "[🔵晶螢]", "[👑極致]", "[🔴血色]", "[🌌星空]"]): update_user(user_id, quest_progress=q_prog + 1)
-            elif q_type.startswith("🦀 珊瑚礁") and current_map == "二海・黃金珊瑚礁": update_user(user_id, quest_progress=q_prog + 1)
-            elif q_type.startswith("🦈 二海巨鯊") and "鯊魚" in fish_name: update_user(user_id, quest_progress=q_prog + 1)
-
-        # 經驗升級
-        xp_gained = int(random.randint(15, 30) * guild_bonus)
-        new_xp = int(user.get("xp", 0)) + xp_gained
-        current_lvl = int(user.get("level", 0))
-        xp_needed = (current_lvl + 1) * 50
-        lvl_up_msg = ""
-        while new_xp >= xp_needed:
-            new_xp -= xp_needed; current_lvl += 1; xp_needed = (current_lvl + 1) * 50
-            lvl_up_msg = f"\n⚡ **【LEVEL UP！】恭喜你升級到了 🌟 LV.{current_lvl} 🌟！！**"
-        update_user(user_id, level=current_lvl, xp=new_xp)
-
-        icons = {"普通": "⚪", "稀有": "🔵", "傳奇": "🟡", "神話": "🔴", "秘密": "🟣", "作者級": "🌌"}
-        embed = discord.Embed(title=f"🎣 拉竿成功！ ── 【{icons.get(chosen_rarity, '⚪')} {chosen_rarity}】", description=f"{bait_msg}🧬 順利捕捉：**{fish_name}**！ (成功率: `{int(base_success)}%`)\n🏆 獲得經驗：`+{xp_gained}xp` | 當前進度：`🧬 {new_xp}/{xp_needed} XP`{lvl_up_msg}", color=0x27AE60)
-        await interaction.followup.send(embed=embed)
-        
-    except Exception as error:
-        print(f"釣魚背景報錯日誌: {error}")
-        try:
-            add_inventory(interaction.user.id, "🐟 吳郭魚", 1)
-            await interaction.followup.send(f"🎣 系統提示：海流產生輕微波盪，**{interaction.user.display_name}** 順利收竿，釣到了一隻 **🐟 吳郭魚**！(報錯類型: {error})")
-        except: pass
-
-# ======= 🎒 組十三·五：Fisch 風格玩家背包面板 =======
-def format_compact_gold(value):
-    value = int(value)
-    if value >= 1_000_000_000:
-        return f"{value / 1_000_000_000:.1f}B"
-    if value >= 1_000_000:
-        return f"{value / 1_000_000:.1f}M"
-    if value >= 1_000:
-        return f"{value / 1_000:.1f}k"
-    return str(value)
-
-
-def get_backpack_items(user_id):
-    cursor = inventory_col.find(
-        {"user_id": int(user_id), "item_count": {"$gt": 0}},
-        {"item_name": 1, "item_count": 1, "is_favorite": 1, "_id": 0}
-    ).sort("item_name", 1)
-    return list(cursor)
-
-
-def classify_inventory_item(item_name):
-    equip_words = [
-        "魚竿", "魚叉", "巨弩", "破滅戟", "弒神劍", "潛水服", "潛水艇", "鑽探機", "Rod"
-    ]
-    if any(word in item_name for word in equip_words):
-        return "equipment"
-    if item_name.startswith(("🐟", "🐠", "🦈", "🐡", "🦑", "🦀", "🐙", "🐋", "🐬", "🐳", "🪼", "👟", "🐉", "🔥", "🌋", "🌌", "[")):
-        return "fish"
-    if any(word in item_name for word in ["魚餌", "餌", "浮標", "藥水", "寶箱", "禮包", "晶石"]):
-        return "consumable"
-    return "other"
-
-
-def create_backpack_embed(user_id, display_name):
-    user = get_user(user_id)
-    mods = get_player_modifiers(user_id)
-    items = get_backpack_items(user_id)
-
-    level = int(user.get("level", 0))
-    xp = int(user.get("xp", 0))
-    xp_need = (level + 1) * 50
-    balance = int(user.get("balance", 100))
-    current_rod = user.get("rod") or "新手魚竿"
-    current_map = user.get("current_map") or "一海・新手小池塘"
-    enchant = user.get("enchant") or "無"
-    bait_type = user.get("bait_type") or "無 (徒手肉搏)"
-    pet = user.get("pet") or "無 (徒手素釣)"
-    race_display = mods.get("race_display", "👤 常規人類 V1")
-    pet_chain = mods.get("pet_chain", "無裝備寵物")
-
-    fish_lines = []
-    consumable_lines = []
-    equipment_lines = []
-    other_lines = []
-
-    for item in items:
-        name = str(item.get("item_name", "未知物品"))
-        count = int(item.get("item_count", 0))
-        favorite = " 💖" if int(item.get("is_favorite", 0)) == 1 else ""
-        line = f"• {name} ×`{count}`{favorite}"
-        group = classify_inventory_item(name)
-        if group == "fish":
-            fish_lines.append(line)
-        elif group == "consumable":
-            consumable_lines.append(line)
-        elif group == "equipment":
-            equipment_lines.append(line)
-        else:
-            other_lines.append(line)
-
-    total_count = sum(int(item.get("item_count", 0)) for item in items)
-
-    embed = discord.Embed(
-        title=f"🎒 ── {display_name} 的黑曜石背包 ── 🎒",
-        description=(
-            f"💰 錢包：**`{format_compact_gold(balance)} 🪙`** 　"
-            f"🐟 魚獲容量：**`{get_fish_inventory_count(user_id)}/{FISH_BACKPACK_LIMIT}`** 　"
-            f"📦 物品總數：**`{total_count}`**\n"
-            "`────────────────────────────────`"
-        ),
-        color=0x34495E
-    )
-
-    embed.add_field(
-        name="📊 船長狀態",
-        value=(
-            f"🌟 等級：**LV.{level}**\n"
-            f"✨ 經驗：`{xp}/{xp_need}`\n"
-            f"🧬 血脈：**{race_display}**\n"
-            f"🍀 綜合幸運：`x{mods.get('luck_multiplier', 1.0):.2f}`\n"
-            f"💸 金幣倍率：`x{mods.get('money_multiplier', 1.0):.2f}`"
-        ),
-        inline=True
-    )
-    embed.add_field(
-        name="🎣 當前裝備",
-        value=(
-            f"🎣 魚竿：**{current_rod}**\n"
-            f"✨ 附魔：**{enchant}**\n"
-            f"🪱 魚餌：**{bait_type}**\n"
-            f"🚢 載具／副裝：**{pet}**"
-        ),
-        inline=True
-    )
-    embed.add_field(
-        name="🐾 寵物裝備鏈",
-        value=f"`[{pet_chain}]`",
-        inline=False
-    )
-
-    def add_inventory_section(title, lines, empty_text):
-        if not lines:
-            embed.add_field(name=title, value=empty_text, inline=False)
-            return
-        # Discord Embed field value 最多 1024 字元，超過時只切本頁顯示，避免指令直接報錯。
-        text = "\n".join(lines)
-        if len(text) > 1000:
-            text = text[:997] + "..."
-        embed.add_field(name=title, value=text, inline=False)
-
-    add_inventory_section("🐟 魚獲", fish_lines, "目前沒有魚獲。")
-    add_inventory_section("🧪 消耗品／道具", consumable_lines, "目前沒有消耗品。")
-    add_inventory_section("🛠️ 裝備", equipment_lines, "目前沒有額外裝備。")
-    if other_lines:
-        add_inventory_section("📦 其他物資", other_lines, "目前沒有其他物資。")
-
-    embed.set_footer(text="💖 被標記的最愛魚獲會在 /全賣 時自動跳過。下方可搜尋魚、切換裝備與標記最愛。")
-    return embed
-
-
-class BackpackSearchFavoriteSelect(discord.ui.Select):
-    def __init__(self, user_id, fish_items):
-        self.user_id = int(user_id)
-        options = []
-        for item in fish_items[:25]:
-            name = str(item.get("item_name", ""))
-            fav = int(item.get("is_favorite", 0)) == 1
-            options.append(discord.SelectOption(
-                label=name[:100], value=name,
-                description=("解除 💖 保護" if fav else "標記 💖 最愛") + f"｜x{int(item.get('item_count', 0))}",
-                emoji="💖" if fav else "🐟"
-            ))
-        if not options:
-            options.append(discord.SelectOption(label="沒有搜尋結果", value="__NO_RESULT__", description="請重新搜尋", emoji="📭"))
-        super().__init__(placeholder="💖 在搜尋結果中標記／解除最愛", min_values=1, max_values=1, options=options, row=2)
-
-    async def callback(self, interaction: discord.Interaction):
-        if int(interaction.user.id) != self.user_id:
-            await interaction.response.send_message("❌ 這不是你的搜尋結果。", ephemeral=True)
-            return
-        name = self.values[0]
-        if name == "__NO_RESULT__":
-            await interaction.response.send_message("❌ 沒有可標記的魚。", ephemeral=True)
-            return
-        doc = inventory_col.find_one({"user_id": self.user_id, "item_name": name, "item_count": {"$gt": 0}})
-        if not doc:
-            await interaction.response.send_message("❌ 魚獲已不存在，請重新搜尋。", ephemeral=True)
-            return
-        old = int(doc.get("is_favorite", 0))
-        new = 0 if old else 1
-        result = inventory_col.update_one({"_id": doc["_id"]}, {"$set": {"is_favorite": new}})
-        if result.modified_count != 1:
-            await interaction.response.send_message("❌ 更新失敗，請重新搜尋。", ephemeral=True)
-            return
-        await interaction.response.send_message(
-            (f"💖 已標記【{name}】為最愛，售賣與上架時會受到保護。" if new else f"🔓 已解除【{name}】的最愛保護。"),
-            ephemeral=True
-        )
-
-
-class BackpackSearchResultView(discord.ui.View):
-    def __init__(self, user_id, fish_items):
-        super().__init__(timeout=300)
-        self.add_item(BackpackSearchFavoriteSelect(user_id, fish_items))
-        self.add_item(BackpackFishSearchButton())
-
-
-class BackpackFishSearchModal(discord.ui.Modal, title="🔎 搜尋背包中的魚"):
-    keyword = discord.ui.TextInput(label="魚名關鍵字", placeholder="例如：青龍、鯊魚、黃金", required=True, max_length=40)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        keyword = str(self.keyword).strip().lower()
-        user_id = int(interaction.user.id)
-        fish_items = [
-            item for item in get_backpack_items(user_id)
-            if is_inventory_fish(item.get("item_name", ""))
-            and keyword in normalize_fish_name(item.get("item_name", "")).lower()
-        ]
-        embed = discord.Embed(
-            title=f"🔎 {interaction.user.display_name} 的魚獲搜尋",
-            description=f"關鍵字：`{keyword}`\n📦 魚獲容量：`{get_fish_inventory_count(user_id)}/{FISH_BACKPACK_LIMIT}`",
-            color=0x3498DB
-        )
-        if fish_items:
-            lines = []
-            for item in fish_items[:25]:
-                fav = " 💖" if int(item.get("is_favorite", 0)) == 1 else ""
-                lines.append(f"• {item['item_name']} ×`{int(item.get('item_count', 0))}`{fav}")
-            embed.add_field(name="🐟 搜尋結果", value="\n".join(lines)[:1000], inline=False)
-        else:
-            embed.add_field(name="🐟 搜尋結果", value="找不到符合關鍵字的魚獲。", inline=False)
-        embed.set_footer(text="💖 下方選單可直接標記／解除最愛")
-        await interaction.response.edit_message(embed=embed, view=BackpackSearchResultView(user_id, fish_items))
-
-class BackpackFishSearchButton(discord.ui.Button):
-    def __init__(self):
-        super().__init__(label="搜尋魚", emoji="🔎", style=discord.ButtonStyle.primary)
-
-    async def callback(self, interaction: discord.Interaction):
-        await interaction.response.send_modal(BackpackFishSearchModal())
-
-class BackpackView(discord.ui.View):
-    def __init__(self, user_id):
-        super().__init__(timeout=300)
-        items = get_backpack_items(user_id)
-        user_items = {str(item["item_name"]): int(item.get("item_count", 0)) for item in items}
-        self.add_item(BackpackFishSearchButton())
-        self.add_item(EquipmentSelect(user_items))
-        self.add_item(FavoriteFishSelect(user_id, [item for item in items if is_inventory_fish(item.get("item_name", ""))]))
-
-@bot.tree.command(name="背包", description="查看玩家黑曜石背包、屬性、裝備與最愛保護鎖")
-async def backpack_cmd(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
-    user_id = int(interaction.user.id)
-    afk_count = process_afk_fishing(user_id)
-    update_user(user_id, name=interaction.user.display_name, last_active_time=time.time())
-
-    embed = create_backpack_embed(user_id, interaction.user.display_name)
-    if afk_count > 0:
-        embed.description += f"\n💤 本次回歸已結算掛機殘留：**`{afk_count}`** 條，可在搜尋／最愛選單管理。"
-    await interaction.followup.send(embed=embed, view=BackpackView(user_id), ephemeral=True)
-
-# ======= 🦾 組十四：黑曜石主副手裝備選單、與背包下掛喜愛鎖控制類別 =======
-class EquipmentSelect(discord.ui.Select):
-    def __init__(self, user_items):
-        options = []
-        # Fisch 15 大被動神竿與重型武器名冊，自動掃描大倉庫
-        all_equipable = {
-            "初級魚竿": "🎣", "高級魚竿": "🎣", "深海魚竿": "🎣", "珊瑚礁共振竿": "🎣", "量子魚竿": "🎣", 
-            "穩健之竿 (Steady Rod)": "🎣", "長線之竿 (Long Rod)": "🎣", "霓虹之竿 (Neon Rod)": "🎣", 
-            "黃金之竿 (Golden Rod)": "🎣", "幸運之竿 (Lucky Rod)": "🎣", "暗夜之竿 (Nocturnal Rod)": "🎣",
-            "外星干擾重型桿": "🎣", "🔥 地心重型鑽探機": "🔥", "🔥 地心熔岩流體竿": "🎣", "諸神黃昏湮滅劫桿": "🎣",
-            "🤿 科技耐壓潛水服": "🤿", "🚢 量子核能潛水艇": "🚢", "⚔️ 鐵製魚叉": "⚔️", "⚔️ 精鋼巨弩": "⚔️",
-            "🔱 海神破滅戟": "🔱", "🌌 ADMIN破碼弒神劍": "🌌"
-        }
-        for item, emoji in all_equipable.items():
-            if user_items.get(item, 0) > 0:
-                options.append(discord.SelectOption(label=item, description="一鍵點擊穿戴切換此武裝", emoji=emoji))
-        if not options:
-            options.append(discord.SelectOption(label="無可用武裝", description="老哥，你的雲端大倉庫裡沒有多餘備用漁具"))
-        super().__init__(placeholder="點擊此處展開大倉庫，一鍵挑選並切換穿戴武裝...", min_values=1, max_values=1, options=options)
-
-    async def callback(self, interaction: discord.Interaction):
-        user_id = int(interaction.user.id)
-        chosen_item = self.values[0]
-        if chosen_item == "無可用武裝":
-            await interaction.response.send_message("❌ 你大倉庫裡沒有其他備用漁具可以更換！", ephemeral=True); return
-        user = get_user(user_id)
-        if "魚竿" in chosen_item or "桿" in chosen_item or "竿" in chosen_item or "Rod" in chosen_item:
-            update_user(user_id, rod=chosen_item)
-            msg = f"🟢 **主漁具穿戴成功！** 右手持竿已切換為：【**{chosen_item}**】！"
-        elif any(v in chosen_item for v in ["潛水服", "潛水艇", "鑽探機"]):
-            update_user(user_id, pet=chosen_item)
-            msg = f"🟢 **探險載具變更！** 已成功更換駕駛載具為：【**{chosen_item}**】！"
-        else:
-            update_user(user_id, bait_type=chosen_item)
-            msg = f"🟢 **遠征副手武器變更！** 已成功裝備武器為：【**{chosen_item}**】！"
-        await interaction.response.send_message(msg, ephemeral=True)
-
-class EquipmentView(discord.ui.View):
-    def __init__(self, user_items):
-        super().__init__(timeout=60)
-        self.add_item(EquipmentSelect(user_items))
-
-class FavoriteFishSelect(discord.ui.Select):
-    def __init__(self, user_id, fish_items=None):
-        self.user_id = int(user_id)
-        if fish_items is None:
-            fish_items = [item for item in get_backpack_items(self.user_id) if is_inventory_fish(item.get("item_name", ""))]
-        options = []
-        for item in fish_items:
-            item_name = str(item.get("item_name", ""))
-            item_count = int(item.get("item_count", 0))
-            if item_count <= 0:
-                continue
-            favorite = int(item.get("is_favorite", 0)) == 1
-            status = "已標記 💖" if favorite else "目前未標記"
-            options.append(discord.SelectOption(
-                label=item_name[:100], value=item_name,
-                description=f"{status}｜數量 {item_count}",
-                emoji="💖" if favorite else "🐟"
-            ))
-            if len(options) >= 25:
-                break
-        if not options:
-            options.append(discord.SelectOption(label="目前沒有可標記的魚", value="__NO_FISH__", description="先釣到魚再來標記 💖", emoji="📭"))
-        super().__init__(placeholder="💖 選擇魚獲：標記／解除最愛保護", min_values=1, max_values=1, options=options, row=2)
-
-    async def callback(self, interaction: discord.Interaction):
-        if int(interaction.user.id) != self.user_id:
-            await interaction.response.send_message("❌ 這不是你的背包控制台。", ephemeral=True)
-            return
-        chosen_fish = self.values[0]
-        if chosen_fish == "__NO_FISH__":
-            await interaction.response.send_message("❌ 背包內目前沒有可以標記的魚獲。", ephemeral=True)
-            return
-
-        doc = inventory_col.find_one({
-            "user_id": self.user_id, "item_name": chosen_fish, "item_count": {"$gt": 0}
-        })
-        if not doc or not is_inventory_fish(chosen_fish):
-            await interaction.response.send_message("❌ 這筆魚獲已不存在，請重新整理背包。", ephemeral=True)
-            return
-
-        current_fav = int(doc.get("is_favorite", 0))
-        new_fav = 0 if current_fav == 1 else 1
-        result = inventory_col.update_one(
-            {"_id": doc["_id"], "item_count": {"$gt": 0}},
-            {"$set": {"is_favorite": new_fav}}
-        )
-        if result.modified_count != 1:
-            await interaction.response.send_message("❌ 最愛狀態更新失敗，請重新整理背包後再試。", ephemeral=True)
-            return
-
-        action = "💖 最愛標記成功" if new_fav else "🔓 最愛保護解除"
-        action_desc = "之後 `/全賣` 與上架交易行時會被保護。" if new_fav else "現在可以正常出售或上架。"
-        await interaction.response.edit_message(
-            embed=create_backpack_embed(self.user_id, interaction.user.display_name),
-            view=BackpackView(self.user_id)
-        )
-        await interaction.followup.send(f"{action}！【{chosen_fish}】{action_desc}", ephemeral=True)
-
-class FavoriteFishView(discord.ui.View):
-    def __init__(self, user_id):
-        super().__init__(timeout=60)
-        self.add_item(FavoriteFishSelect(user_id))
-class EquipmentCategorySelect(discord.ui.Select):
-    def __init__(self, user_id, category, label, emoji):
-        self.user_id = int(user_id)
-        self.category = category
-        items = {item["item_name"]: int(item.get("item_count", 0)) for item in get_backpack_items(user_id)}
-        all_items = list(items.items())
-        if category == "rod":
-            pool = [(name, count) for name, count in all_items if name in ROD_STATS or "魚竿" in name or "桿" in name or "竿" in name or "Rod" in name]
-        elif category == "weapon":
-            pool = [(name, count) for name, count in all_items if name in WEAPONS_SHOP or any(x in name for x in ["魚叉", "巨弩", "破滅戟", "弒神劍"])]
-        elif category == "vehicle":
-            pool = [(name, count) for name, count in all_items if any(x in name for x in ["潛水服", "潛水艇", "鑽探機"])]
-        else:
-            pool = [(name, count) for name, count in all_items if not is_inventory_fish(name) and not any(x in name for x in ["魚餌", "餌", "藥水", "寶箱", "禮包"])]
-        options = [discord.SelectOption(label=name[:100], value=name, description=f"庫存 ×{count}", emoji=emoji) for name, count in pool[:25]]
-        if not options:
-            options = [discord.SelectOption(label="目前無可用裝備", value="__none__", description="此分類目前沒有可裝備物品", emoji="⚠️")]
-        super().__init__(placeholder=f"{emoji} 選擇{label}…", min_values=1, max_values=1, options=options)
-
-    async def callback(self, interaction: discord.Interaction):
-        chosen = self.values[0]
-        if chosen == "__none__":
-            await interaction.response.send_message("❌ 此分類目前沒有可以裝備的物品。", ephemeral=True)
-            return
-        user_id = int(interaction.user.id)
-        if self.category == "rod":
-            update_user(user_id, rod=chosen); msg = f"🎣 已裝備魚竿：**{chosen}**"
-        elif self.category == "vehicle":
-            update_user(user_id, pet=chosen); msg = f"🚢 已切換載具：**{chosen}**"
-        elif self.category == "weapon":
-            update_user(user_id, bait_type=chosen); msg = f"⚔️ 已裝備副手武器：**{chosen}**"
-        else:
-            msg = f"🛠️ 已選取裝備：**{chosen}**"
-        await interaction.response.send_message(msg, ephemeral=True)
-
-class EquipmentPageView(discord.ui.View):
-    def __init__(self, user_id):
-        super().__init__(timeout=300)
-        self.add_item(EquipmentCategorySelect(user_id, "rod", "魚竿", "🎣"))
-        self.add_item(EquipmentCategorySelect(user_id, "weapon", "武器", "⚔️"))
-        self.add_item(EquipmentCategorySelect(user_id, "vehicle", "載具", "🚢"))
-        self.add_item(EquipmentCategorySelect(user_id, "other", "其他裝備", "🛠️"))
-
-def create_equipment_embed(user_id):
-    user = get_user(user_id)
-    return discord.Embed(
-        title=f"🛠️ {user.get('name', '船長')} 的裝備控制台",
-        description=(
-            f"🎣 魚竿：**{user.get('rod', '新手魚竿')}**\n"
-            f"✨ 附魔：**{user.get('enchant', '無')}**\n"
-            f"🪱 魚餌：**{user.get('bait_type', '無 (徒手肉搏)')}**\n"
-            f"🚢 載具／主動裝備：**{user.get('pet', '無 (徒手素釣)')}**\n\n"
-            "請從下方分類下拉選單直接切換裝備。"
-        ),
-        color=0x5D6D7E
-    )
-
-@bot.tree.command(name="裝備", description="開啟分類下拉式裝備控制台")
-async def equipment_cmd(interaction: discord.Interaction):
-    await interaction.response.send_message(embed=create_equipment_embed(int(interaction.user.id)), view=EquipmentPageView(int(interaction.user.id)), ephemeral=True)
-
-# ======= 🏪 組十四・補完：5.5.5 全球商店、自適應海域限定店與附魔洗鍊台 =======
-@bot.tree.command(name="普通商店", description="顯示豐收漁具物資與神奇藥水大名冊")
-async def shop_cmd(interaction: discord.Interaction):
-    embed = discord.Embed(title="🏪 5.5.5 全球聯網普通物資商店", description="`──────────────────────────`", color=0x2ECC71)
-    shop_lines = [f"• {k}: `{v} 🪙`" for k, v in BAITS_SHOP.items()]
-    embed.add_field(name="🐛 全套消耗物資、魔法藥水與盲盒寶箱", value="\n".join(shop_lines), inline=False)
-    embed.set_footer(text="💡 提示：每個海域的專屬限定魚竿，必須前往該海域並向當地的駐島 NPC 購買！")
-    await interaction.response.send_message(embed=embed)
-
-@bot.tree.command(name="海域商店", description="向目前所在的島嶼駐島 NPC 採購限定高階漁具與神竿")
-async def island_shop_cmd(interaction: discord.Interaction):
-    user_id = int(interaction.user.id)
-    user = get_user(user_id)
-    current_map = user.get("current_map", "一海・新手小池塘")
-    if current_map not in MAPS:
-        await interaction.response.send_message("❌ 當前所處海域島嶼沒有登記的 NPC 商店商販！", ephemeral=True); return
-    m_data = MAPS[current_map]
-    embed = discord.Embed(title=f"🏝️ 【{current_map}】 ── 限定專屬店", description=f"駐島 NPC 商販：**{m_data['npc']}**\n`──────────────────────────`", color=0x1ABC9C)
-    rod_lines = [f"• {k}: `{v} 🪙`" for k, v in m_data["shop"].items()]
-    embed.add_field(name="🎣 限定魚竿清單 (具備海域幸運與專屬被動共振)", value="\n".join(rod_lines), inline=False)
-    await interaction.response.send_message(embed=embed)
-
-@app_commands.describe(item_name="物品或限定魚竿名稱", quantity="數量")
-@bot.tree.command(name="購買", description="採購普通商店物資，或採購目前海域的限定魚竿（魚竿每人限制購置一根）")
-async def buy_cmd(interaction: discord.Interaction, item_name: str, quantity: int = 1):
-    if quantity <= 0: return
-    user_id = int(interaction.user.id)
-    user = get_user(user_id)
-    current_map = user.get("current_map", "一海・新手小池塘")
-    price, is_rod = None, False
-    
-    if item_name in BAITS_SHOP: price = BAITS_SHOP[item_name]
-    elif current_map in MAPS and item_name in MAPS[current_map]["shop"]: price = MAPS[current_map]["shop"][item_name]; is_rod = True
-    if not price:
-        await interaction.response.send_message("❌ 找不到該商品！特定海域限定竿要在該海域才能購得。", ephemeral=True); return
-        
-    if is_rod:
-        if quantity > 1:
-            await interaction.response.send_message("❌ 貪心了老哥！魚竿極其珍稀，每人右手限握一根，不准多買！", ephemeral=True); return
-        existing_rod = inventory_col.find_one({"user_id": user_id, "item_name": item_name, "item_count": {"$gt": 0}})
-        if existing_rod or user.get("rod") == item_name:
-            await interaction.response.send_message(f"❌ 購買攔截！你的大倉庫裡早已登記了【{item_name}】的資產，不准重複浪費金幣！", ephemeral=True); return
-            
-    total_cost = price * quantity
-    if user.get("balance", 100) < total_cost:
-        await interaction.response.send_message("❌ 你的錢包金幣不足！", ephemeral=True); return
-        
-    update_user(user_id, balance=user["balance"] - total_cost)
-    if is_rod:
-        update_user(user_id, rod=item_name)
-        add_inventory(user_id, item_name, 1)
-        await interaction.response.send_message(f"🛍️ 採購成功！你向島嶼 NPC 購置並裝備了 Fisch 珍稀魚竿：**{item_name}**！(資產已鎖定)")
-    else:
-        add_inventory(user_id, item_name, quantity)
-        await interaction.response.send_message(f"🛍️ 採購成功！你將 {quantity} 個 **{item_name}** 收進雲端大倉庫！")
-
-@bot.tree.command(name="附魔", description="投入 500 金幣對你的右手主魚竿洗鍊洗鍊永久守護詞條")
-async def enchant_rod_cmd(interaction: discord.Interaction):
-    user_id = int(interaction.user.id)
-    user = get_user(user_id)
-    if user.get("balance", 100) < 500:
-        await interaction.response.send_message("❌ 金幣不足 500！無法啟動遠古附魔洗鍊台！", ephemeral=True); return
-    chosen_enchant = random.choice(list(ENCHANT_POOL.keys()))
-    update_user(user_id, balance=user["balance"] - 500, enchant=chosen_enchant)
-    await interaction.response.send_message(f"🔮 遠古附魔台共振成功！魚竿獲得永久屬性：**【{chosen_enchant}】** (*{ENCHANT_POOL[chosen_enchant]['desc']}*)")
-# ======= 🏰 公會系統核心一：創立與加入組織 (4 空格精準縮排) =======
-@bot.tree.command(name="創立公會", description="創立你專屬的航海公會（條件：需達到 LV.50 且支付 5000 金幣）")
-@app_commands.describe(公會名稱="你想為公會取什麼名字？")
-async def create_guild(interaction: discord.Interaction, 公會名稱: str):
-    user_id = int(interaction.user.id)
-    user = get_user(user_id)
-    if user.get("level", 0) < 50:
-        await interaction.response.send_message(f"❌ 創立失敗！等級實力不足！需要達到 `LV.50`。", ephemeral=True)
-        return
-    if user.get("balance", 100) < 5000:
-        await interaction.response.send_message(f"❌ 資金不足！向總部註冊公會需要 `5000` 金幣！", ephemeral=True)
-        return
-    if guilds_col.find_one({"members": user_id}):
-        await interaction.response.send_message("❌ 你已經是某個公會的成員了，請先退出組織！", ephemeral=True)
-        return
-    if guilds_col.find_one({"guild_name": 公會名稱}):
-        await interaction.response.send_message("❌ 這個公會名稱已經被搶先註冊了！", ephemeral=True)
-        return
-        
-    new_guild = {
-        "guild_name": 公會名稱, "leader_id": user_id, "vault": 0,
-        "current_boss": "無", "boss_hp": 0, "members": [user_id], "boss_damage": {}
-    }
-    guilds_col.insert_one(new_guild)
-    update_user(user_id, balance=user["balance"] - 5000)
-    await interaction.response.send_message(f"🏰 🎉 **【雲端公會開闢】** 恭喜 **{interaction.user.display_name}** 成功註冊大公會：【**{公會名稱}**】！")
-
-
-@bot.tree.command(name="加入公會", description="申請加入其他大師開創的航海公會")
-@app_commands.describe(公會名稱="你想加入的公會名稱")
-async def join_guild(interaction: discord.Interaction, 公會名稱: str):
-    user_id = int(interaction.user.id)
-    guild_data = guilds_col.find_one({"guild_name": 公會名稱})
-    if not guild_data:
-        await interaction.response.send_message("❌ 找不到這個公會！請確認名字是否輸入完整正確。", ephemeral=True)
-        return
-    if guilds_col.find_one({"members": user_id}):
-        await interaction.response.send_message("❌ 你身上已經有公會會籍了！", ephemeral=True)
-        return
-        
-    guilds_col.update_one({"guild_name": 公會名稱}, {"$push": {"members": user_id}})
-    await interaction.response.send_message(f"🤝 **{interaction.user.display_name}** 成功加入航海公會：【**{公會名稱}**】！")
-# ======= 🏰 公會系統核心二：公會背包面板與軍火庫商店 =======
-@bot.tree.command(name="公會背包", description="查看當前公會的資金金庫、世界 BOSS 狀態以及全體船長名單")
-async def guild_panel(interaction: discord.Interaction):
-    user_id = int(interaction.user.id)
-    guild_data = guilds_col.find_one({"members": user_id})
-    if not guild_data:
-        await interaction.response.send_message("❌ 老哥，你目前還是一介散人，沒有加入任何公會！", ephemeral=True)
-        return
-        
-    g_name = guild_data["guild_name"]
-    leader_id = guild_data["leader_id"]
-    vault = guild_data["vault"]
-    c_boss = guild_data["current_boss"]
-    b_hp = guild_data["boss_hp"]
-    members = guild_data["members"]
-    
-    leader_user = interaction.guild.get_member(leader_id) if interaction.guild else None
-    leader_name = leader_user.display_name if leader_user else f"老會長({leader_id})"
-    
-    m_list = []
-    for m_id in members:
-        m_user = interaction.guild.get_member(m_id) if interaction.guild else None
-        m_list.append(f"• {m_user.display_name if m_user else f'船長({m_id})'}")
-        
-    embed = discord.Embed(title=f"🏰 航海公會面板 ── 【{g_name}】", description="`──────────────────────────`", color=0x34495E)
-    embed.add_field(name="👑 公會領袖", value=f"`{leader_name}`", inline=True)
-    embed.add_field(name="💰 雲端金庫總資金", value=f"`{vault} 🪙`", inline=True)
-    
-    boss_status = f"🔴 **【{c_boss}】** 圍剿中！\n• 剩餘總血量：`❤️ {b_hp} Pts`" if c_boss != "無" else "💤 目前海域平靜，暫無魔王肆虐。"
-    embed.add_field(name="🐉 世界魔王狀態", value=boss_status, inline=False)
-    embed.add_field(name="👥 全體成員名單", value="\n".join(m_list), inline=False)
-    await interaction.response.send_message(embed=embed)
-
-
-@bot.tree.command(name="武器商店", description="向航海公會軍火庫採購討伐世界 BOSS 的重型武器裝備")
-async def weapon_shop(interaction: discord.Interaction):
-    embed = discord.Embed(title="⚔️ 遠古重型武器軍火庫", description="`──────────────────────────`", color=0xC0392B)
-    for k, v in WEAPONS_SHOP.items():
-        embed.add_field(name=k, value=f"• 採購費用：`{v['cost']} 🪙`\n• 討伐魔王基礎傷害：`💥 {v['dmg']} Pts`", inline=True)
-    await interaction.response.send_message(embed=embed)
-
-
-@bot.tree.command(name="購買武器", description="向軍火庫支付金幣採購並裝備重型武器")
-@app_commands.describe(武器名稱="請輸入完整的武器裝備名稱")
-async def buy_weapon(interaction: discord.Interaction, 武器名稱: str):
-    user_id = int(interaction.user.id)
-    user = get_user(user_id)
-    if 武器名稱 not in WEAPONS_SHOP:
-        await interaction.response.send_message("❌ 軍火庫裡找不到這把武器！", ephemeral=True)
-        return
-    w_data = WEAPONS_SHOP[武器名稱]
-    if user.get("balance", 100) < w_data["cost"]:
-        await interaction.response.send_message(f"❌ 金幣不足！需要 `{w_data['cost']}` 金幣！", ephemeral=True)
-        return
-        
-    # 一鍵清空以前所擁有的所有舊武器標記
-    for old_w in WEAPONS_SHOP.keys():
-        inventory_col.update_one({"user_id": user_id, "item_name": old_w}, {"$set": {"item_count": 0}})
-        
-    update_user(user_id, balance=user["balance"] - w_data["cost"])
-    add_inventory(user_id, 武器名稱, 1)
-    await interaction.response.send_message(f"🛍️ 裝備成功！**{interaction.user.display_name}** 成功裝備了重型殺器：【**{武器名稱}**】！")
-# ======= 🏰 公會系統核心三：世界 BOSS 召喚、與公會全員遠征圍剿副本 =======
-WEAPONS_SHOP = {
-    "⚔️ 鐵製魚叉": {"cost": 500, "dmg": 85}, "⚔️ 精鋼巨弩": {"cost": 2500, "dmg": 260},
-    "🔱 海神破滅戟": {"cost": 8500, "dmg": 680}, "🌌 ADMIN破碼弒神劍": {"cost": 99999, "dmg": 9999}
-}
-BOSS_POOL = {
-    "🐙 北海深淵巨怪・克拉肯": {"hp": 12000, "cost": 1000, "desc": "揮舞著千米觸手的遠古海怪，能輕易拍碎一整支遠征艦隊！"},
-    "🐉 滅世混亂巨龍・利維坦": {"hp": 25000, "cost": 2500, "desc": "沉睡在海底火山的熔岩魔龍，吐息能將整片海域化為灰燼！"}
-}
-
-@bot.tree.command(name="召喚魔王", description="【會長專屬】消耗公會金庫資金，向全服海域隨機召喚一隻史詩級世界 BOSS 巨獸！")
-async def summon_boss(interaction: discord.Interaction):
-    user_id = int(interaction.user.id)
-    guild_data = guilds_col.find_one({"leader_id": user_id})
-    if not guild_data:
-        await interaction.response.send_message("❌ 權限不足！只有【公會會長】才能發動魔王召喚！", ephemeral=True)
-        return
-        
-    g_name = guild_data["guild_name"]
-    if guild_data["current_boss"] != "無":
-        await interaction.response.send_message(f"❌ 召喚失敗！海域中已經有 【{guild_data['current_boss']}】 肆虐了！", ephemeral=True)
-        return
-        
-    b_name = random.choice(list(BOSS_POOL.keys()))
-    b_data = BOSS_POOL[b_name]
-    if guild_data["vault"] < b_data["cost"]:
-        await interaction.response.send_message(f"❌ 公會金庫資金不足！召喚需要 `{b_data['cost']}` 資金，目前金庫只有 `{guild_data['vault']}` 🪙。", ephemeral=True)
-        return
-        
-    guilds_col.update_one(
-        {"guild_name": g_name},
-        {"$set": {"current_boss": b_name, "boss_hp": b_data["hp"], "boss_damage": {}}, "$inc": {"vault": -b_data["cost"]}}
-    )
-    embed = discord.Embed(title="🚨 ── 全服警告：遠古魔王降臨 ── 🚨", description=f"🏰 【**{g_name}**】的會長使用了遠古共振器！\n\n🐉 **魔王現世**：【**{b_name}**】\n❤️ 初始總血量：`{b_data['hp']} Pts`\n\n*{b_data['desc']}*", color=0xE74C3C)
-    await interaction.response.send_message(embed=embed)
-
-
-@bot.tree.command(name="公會遠征", description="【全體成員可參與】集體進攻圍剿當前公會的世界 BOSS，共享雲端神話戰利品大獎禮包！")
-async def attack_boss(interaction: discord.Interaction):
-    await interaction.response.defer()
-    user_id = int(interaction.user.id)
-    user = get_user(user_id)
-    
-    guild_data = guilds_col.find_one({"members": user_id})
-    
-    # 🟢 完美補齊變數前置加載，徹底防範 NameError 未定義死鎖！
-    q_type = user.get("quest_type", "無")
-    q_prog = int(user.get("quest_progress", 0))
-    
-    if q_type.startswith("🦁 魔王討伐軍"):
-        update_user(user_id, quest_progress=q_prog + 1)
-        
-    if not guild_data:
-        await interaction.followup.send("❌ 遠征失敗！你必須先加入一個航海公會！", ephemeral=True)
-        return
-        
-    g_name = guild_data["guild_name"]
-    c_boss = guild_data["current_boss"]
-    b_hp = int(guild_data["boss_hp"])
-    if c_boss == "無" or b_hp <= 0:
-        await interaction.followup.send("❌ 遠征失敗！目前暫無魔王可以討伐。", ephemeral=True)
-        return
-        
-    player_dmg = 10
-    equipped_weapon = "🦴 徒手肉搏"
-    for w_name, w_info in WEAPONS_SHOP.items():
-        w_item = inventory_col.find_one({"user_id": user_id, "item_name": w_name, "item_count": {"$gt": 0}})
-        if w_item:
-            player_dmg = w_info["dmg"]
-            equipped_weapon = w_name
-            break
-        
-    crit_roll = random.choice([1.0, 1.0, 1.0, 1.5, 2.0])
-    final_dmg = int(player_dmg * crit_roll)
-    new_hp = max(0, b_hp - final_dmg)
-    
-    guilds_col.update_one({"guild_name": g_name}, {"$set": {"boss_hp": new_hp}, "$inc": {f"boss_damage.{user_id}": final_dmg}})
-    
-    crit_msg = "🔥 **【致命一擊】觸發超高倍率暴擊！**\n" if crit_roll > 1.0 else ""
-    msg = f"⚔️ **{interaction.user.display_name}** 裝備 【{equipped_weapon}】 投身遠征！\n{crit_msg}💥 輸出傷害：**`{final_dmg}`** Pts！ (❤️ 剩餘血量：`{new_hp} Pts`)\n"
-    
-    if new_hp <= 0:
-        updated_guild = guilds_col.find_one({"guild_name": g_name})
-        participants = list(updated_guild.get("boss_damage", {}).keys())
-        guilds_col.update_one({"guild_name": g_name}, {"$set": {"current_boss": "無", "boss_hp": 0, "boss_damage": {}}})
-        
-        msg += f"\n🏆 🎉 **【魔王雲端隕落・史詩大捷！】** 🎉 🏆\n🌌 **【全員大獎賞】參與成員（共 {len(participants)} 人）全部獲得戰利品：\n💰 錢包金幣 `+5000 🪙` | `🥳神祕黃金寶箱 x2` | `🔵高級運氣藥水 x3`！**"
-        for p_str_id in participants:
-            p_id = int(p_str_id)
-            update_user(p_id, balance=get_user(p_id).get("balance", 100) + 5000)
-            add_inventory(p_id, "🥳神祕黃金寶箱", 2)
-            add_inventory(p_id, "🔵高級運氣藥水", 3)
-            
-    await interaction.followup.send(msg)
-class SellAllConfirmView(discord.ui.View):
-    def __init__(self, user_id):
-        super().__init__(timeout=60)
-        self.user_id = int(user_id)
-
-    @discord.ui.button(label="確認售賣", emoji="💰", style=discord.ButtonStyle.danger)
-    async def confirm_sell(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if int(interaction.user.id) != self.user_id:
-            await interaction.response.send_message("❌ 這不是你的售賣確認視窗。", ephemeral=True)
-            return
-        for child in self.children:
-            child.disabled = True
-        await interaction.response.edit_message(content="⏳ 正在結算魚獲……", embed=None, view=self)
-        await execute_sell_all(interaction)
-
-    @discord.ui.button(label="取消", emoji="✖️", style=discord.ButtonStyle.secondary)
-    async def cancel_sell(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(content="✅ 已取消售賣，背包物品沒有任何變化。", embed=None, view=None)
-
-@bot.tree.command(name="全賣", description="出售未鎖定的魚獲，執行前會顯示警告確認")
-async def sell_all(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
-    user_id = int(interaction.user.id)
-    sale_items = list(inventory_col.find({
-        "user_id": user_id, "item_count": {"$gt": 0}, "is_favorite": {"$ne": 1}
-    }))
-    sellable = 0
-    for item in sale_items:
-        if is_inventory_fish(item.get("item_name", "")):
-            sellable += int(item.get("item_count", 0))
-    if sellable <= 0:
-        await interaction.response.send_message("📭 沒有可售出的魚獲。💖 最愛鎖定的魚會自動保留。", ephemeral=True)
-        return
-    embed = discord.Embed(
-        title="⚠️ 出售確認",
-        description=(
-            f"你即將出售背包內所有**未標記 💖 最愛**的可售魚獲。\n\n"
-            f"🐟 預計出售：**{sellable} 隻**\n"
-            "💖 最愛魚獲：**不會出售**\n"
-            "⚠️ 此操作完成後無法直接復原，確定要繼續嗎？"
-        ),
-        color=0xE74C3C
-    )
-    await interaction.followup.send(embed=embed, view=SellAllConfirmView(user_id), ephemeral=True)
-
-async def execute_sell_all(interaction: discord.Interaction, only_afk=False):
-    user_id = int(interaction.user.id)
-    user = get_user(user_id)
-    
-    cursor = inventory_col.find({"user_id": user_id, "item_count": {"$gt": 0}, "is_favorite": {"$ne": 1}})
-    items = list(cursor)
-    if not items:
-        await interaction.followup.send("📭 雲端大倉庫內沒有可回收的常規魚獲（或者你所有的突變神魚都已上鎖 ❤️ 保護中）。", ephemeral=True); return
-        
-    prices_map = {}
-    for _, v_list in FISH_POOL.items():
-        for fname, fprice in v_list: prices_map[fname] = fprice
-    for _, r_dict in MAP_EXCLUSIVE_FISH.items():
-        for _, f_list in r_dict.items():
-            for fname, fprice in f_list: prices_map[fname] = fprice
-            
-    total_revenue, sold_details, sold_any = 0, [], False
-    for item in items:
-        item_name = item["item_name"]
-        count = int(item["item_count"])
-        is_afk = str(item_name).startswith(AFK_PREFIX)
-        if only_afk and not is_afk:
-            continue
-        if not only_afk and not is_afk:
-            pass
-        base_name = normalize_fish_name(item_name)
-        if base_name in prices_map:
-            revenue = prices_map[base_name] * count
-            if "[🟢毒性突變]" in item_name: revenue = int(revenue * 1.3); tag = "(🔥1.3倍毒性)"
-            elif "[🔵晶螢閃耀]" in item_name: revenue = int(revenue * 1.6); tag = "(🔥1.6倍晶螢)"
-            elif "[👑極致黃金]" in item_name: revenue = int(revenue * 2.0); tag = "(🔥2.0倍黃金)"
-            elif "[🔴血色異變]" in item_name: revenue = int(revenue * 2.5); tag = "(🔥2.5倍血色)"
-            elif "[🌌星空突變]" in item_name: revenue = int(revenue * 3.0); tag = "(🔥3.0倍星空)"
-            else: tag = ""
-            
-            sold_details.append(f"• {item_name} x{count} -> 獲得 {revenue} 金幣 {tag}")
-            total_revenue += revenue; sold_any = True
-            inventory_col.update_one(
-                {"_id": item["_id"], "item_count": {"$gt": 0}, "is_favorite": {"$ne": 1}},
-                {"$set": {"item_count": 0}}
-            )
-            
-    if not sold_any or total_revenue == 0:
-        await interaction.followup.send("❌ 大倉庫內沒有常規可交易回收的魚獲物資。", ephemeral=True); return
-        
-    # 🌟 5.5.5 被動：如果是「黃金之竿 (Golden Rod)」全賣回收金幣永久享有 1.5 倍複利加成！
-    if user.get("rod") == "黃金之竿 (Golden Rod)":
-        total_revenue = int(total_revenue * 1.5)
-        sold_details.append("🔱 **【黃金之竿・點石成金】觸發 1.5 倍全服金幣回收增幅！**")
-        
-    # 城堡公會自動抽稅 5% 存入金庫
-    tax_msg = ""
-    guild_data = guilds_col.find_one({"members": user_id})
-    if guild_data:
-        g_name = guild_data["guild_name"]
-        tax_amount = int(total_revenue * 0.05)
-        total_revenue -= tax_amount
-        guilds_col.update_one({"guild_name": g_name}, {"$inc": {"vault": tax_amount}})
-        tax_msg = f"\n🏰 **【公會共榮】5% 稅金 ({tax_amount} 金幣) 已自動繳入【{g_name}】雲端金庫！**"
-        
-    update_user(user_id, balance=user.get("balance", 100) + total_revenue)
-    embed = discord.Embed(title="💰 魚獲交易結算完畢", description="\n".join(sold_details) + f"\n\n💵 實際賺得：**{total_revenue}** 金幣！{tax_msg}", color=0xF1C40F)
-    await interaction.followup.send(embed=embed)
-
-
-
-class SellAFKConfirmView(discord.ui.View):
-    def __init__(self, user_id):
-        super().__init__(timeout=60)
-        self.user_id = int(user_id)
-
-    @discord.ui.button(label="確認出售掛機魚", emoji="💤", style=discord.ButtonStyle.danger)
-    async def confirm_afk(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if int(interaction.user.id) != self.user_id:
-            await interaction.response.send_message("❌ 這不是你的掛機魚出售確認視窗。", ephemeral=True)
-            return
-        for child in self.children:
-            child.disabled = True
-        await interaction.response.edit_message(content="⏳ 正在結算掛機魚貨……", embed=None, view=self)
-        await execute_sell_all(interaction, only_afk=True)
-
-    @discord.ui.button(label="取消", emoji="✖️", style=discord.ButtonStyle.secondary)
-    async def cancel_afk(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(content="✅ 已取消，掛機魚貨沒有被扣除。", embed=None, view=None)
-
-
-@bot.tree.command(name="出售掛機魚", description="只出售背包中的掛機殘留魚貨，執行前會顯示警告確認")
-async def sell_afk_fish_cmd(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
-    user_id = int(interaction.user.id)
-    docs = list(inventory_col.find({
-        "user_id": user_id, "item_count": {"$gt": 0}, "is_favorite": {"$ne": 1}
-    }))
-    afk_count = sum(
-        int(d.get("item_count", 0))
-        for d in docs
-        if str(d.get("item_name", "")).startswith(AFK_PREFIX)
-    )
-    if afk_count <= 0:
-        await interaction.followup.send("📭 目前沒有可出售的 💤 掛機殘留魚貨。", ephemeral=True)
-        return
-
-    embed = discord.Embed(
-        title="⚠️ 掛機魚貨出售確認",
-        description=(
-            f"你即將出售所有未標記 💖 最愛的掛機殘留魚貨。\n\n"
-            f"💤 預計出售：**{afk_count} 隻**\n"
-            "💖 最愛魚獲：**不會出售**\n"
-            "⚠️ 確認後會依正常魚價結算金幣。"
-        ),
-        color=0xE67E22
-    )
-    await interaction.followup.send(embed=embed, view=SellAFKConfirmView(user_id), ephemeral=True)
-# ======= 📚 組十六：5.5.5 全新互動世界圖鑑 + 玩家交易所 =======
-# 魚類圖鑑：未發現魚種會隱藏名稱、代碼、售價、稀有度與條件；成功釣到後自動解鎖。
-# 工具圖鑑：直接讀取現有 ROD_STATS / BAITS_SHOP / WEAPONS_SHOP / ENCHANT_POOL / BOBBER_POOL。
-# 交易所：玩家魚獲掛單、官方 10% 稅、依稀有度限制最低售價、原子扣庫存。
-
-ENCYCLOPEDIA_COL = db["fish_encyclopedia"]
-MARKET_COL = db["fish_market"]
-
-RARITY_ORDER = ["普通", "稀有", "傳奇", "神話", "秘密", "作者級"]
-RARITY_ICONS = {
-    "普通": "⚪", "稀有": "🔵", "傳奇": "🟡",
-    "神話": "🔴", "秘密": "🟣", "作者級": "🌌"
-}
-
-# 玩家最低掛單價格 = 魚類正常售價 × 稀有度倍率。
-MARKET_FLOOR_MULTIPLIER = {
-    "普通": 2.5,
-    "稀有": 3.0,
-    "傳奇": 3.5,
-    "神話": 5.0,
-    "秘密": 5.5,
-    "作者級": 6.0,
-}
-MARKET_TAX_RATE = 0.10
-
-# 特殊魚可補充更詳細的指定魚餌、指定魚竿與特殊條件。
-# code 是「魚類內部產出代碼」，只在玩家已發現該魚後顯示。
-FISH_INFO = {
-    "🐉 東方青龍": {
-        "code": "F031",
-        "bait": ["深海魚餌", "神話魚餌"],
-        "rods": ["暗夜之竿 (Nocturnal Rod)", "諸神黃昏湮滅劫桿"],
-        "conditions": ["三海・馬里亞娜海溝深淵", "高幸運／特殊天氣時更容易出現"],
-    },
-    "🔥 諸神湮滅核心 (Abyss Core)": {
-        "code": "F032",
-        "bait": ["神話魚餌"],
-        "rods": ["諸神黃昏湮滅劫桿"],
-        "conditions": ["三海・馬里亞娜海溝深淵", "極高幸運條件"],
-    },
-    "🌋 熔岩火靈魚": {
-        "code": "F040",
-        "bait": ["熔岩魚餌", "神話魚餌"],
-        "rods": ["🔥 地心熔岩流體竿", "諸神黃昏湮滅劫桿"],
-        "conditions": ["四海・地幔熔岩禁地"],
-    },
-}
-
-
-def build_fish_catalog():
-    """將現有 FISH_POOL / MAP_EXCLUSIVE_FISH 統一成可供圖鑑與交易所使用的資料表。"""
-    catalog = {}
-    generated_index = 1
-
-    for rarity, fish_list in FISH_POOL.items():
-        for fish_name, price in fish_list:
-            if fish_name not in catalog:
-                catalog[fish_name] = {
-                    "code": f"F{generated_index:03d}",
-                    "name": fish_name,
-                    "rarity": rarity,
-                    "price": int(price),
-                    "maps": [],
-                    "rarities": [],
-                }
-                generated_index += 1
-            if rarity not in catalog[fish_name]["rarities"]:
-                catalog[fish_name]["rarities"].append(rarity)
-
-    for map_name, rarity_dict in MAP_EXCLUSIVE_FISH.items():
-        for rarity, fish_list in rarity_dict.items():
-            for fish_name, price in fish_list:
-                if fish_name not in catalog:
-                    catalog[fish_name] = {
-                        "code": f"F{generated_index:03d}",
-                        "name": fish_name,
-                        "rarity": rarity,
-                        "price": int(price),
-                        "maps": [],
-                        "rarities": [],
-                    }
-                    generated_index += 1
-                info = catalog[fish_name]
-                if map_name not in info["maps"]:
-                    info["maps"].append(map_name)
-                if rarity not in info["rarities"]:
-                    info["rarities"].append(rarity)
-                info["rarity"] = rarity
-                info["price"] = int(price)
-
-    for fish_name, extra in FISH_INFO.items():
-        if fish_name not in catalog:
-            continue
-        for key, value in extra.items():
-            if key != "code":
-                catalog[fish_name][key] = value
-        catalog[fish_name]["code"] = extra["code"]
-
-    for fish_name, info in catalog.items():
-        info.setdefault("bait", ["普通魚餌"])
-        info.setdefault("rods", ["任意可用魚竿"])
-        info.setdefault("conditions", [])
-        info.setdefault("rarities", [info["rarity"]])
-        if not info["maps"]:
-            info["maps"] = ["一般魚池"]
-        info["discovery_index"] = info["code"].replace("F", "")
-    return catalog
-
-
-def get_fish_catalog():
-    return build_fish_catalog()
-
-
-def get_fish_by_code(code):
-    code = str(code).strip().upper()
-    for fish in get_fish_catalog().values():
-        if fish["code"].upper() == code:
-            return fish
+def get_player(user_id: int) -> Dict[str, Any]:
+    key = str(user_id)
+    players = WORLD.setdefault("players", {})
+    if key not in players:
+        players[key] = player_template()
+        save_world()
+    normalize_cultivation(players[key])
+    return players[key]
+
+
+def normalize_cultivation(p: Dict[str, Any]) -> None:
+    p.setdefault("qi_layer", 1)
+    p.setdefault("phase", 0)
+    p.setdefault("breakthrough_bonus", 0.0)
+    p.setdefault("last_breakthrough_target", None)
+    p.setdefault("weapon", None)
+    p.setdefault("weapon_level", 0)
+    p.setdefault("weapon_attack", 0)
+
+def cultivation_name(p: Dict[str, Any]) -> str:
+    normalize_cultivation(p)
+    realm = p.get("realm", 0)
+    if realm == 0:
+        return "凡人"
+    if realm == 1:
+        return f"煉氣{max(1, min(10, p.get('qi_layer', 1)))}重" + ("（圓滿）" if p.get("qi_layer", 1) >= 10 else "")
+    phase_names = ["初期", "中期", "後期", "圓滿"]
+    name = REALMS[realm][0]
+    phase = max(0, min(3, p.get("phase", 0)))
+    return f"{name}{phase_names[phase]}"
+
+def current_breakthrough_target(p: Dict[str, Any]) -> Optional[int]:
+    normalize_cultivation(p)
+    realm = p.get("realm", 0)
+    if realm == 1 and p.get("qi_layer", 1) >= 10:
+        return 2
+    if realm >= 2 and p.get("phase", 0) >= 3 and realm < len(REALMS) - 1:
+        return realm + 1
     return None
 
+def breakthrough_pill_for(p: Dict[str, Any]) -> Optional[int]:
+    target = current_breakthrough_target(p)
+    if target is None:
+        return None
+    for item_id, pill in BREAKTHROUGH_PILLS.items():
+        if pill["for_realm"] == target:
+            return item_id
+    return None
 
-def is_fish_discovered(user_id, fish_name):
-    return ENCYCLOPEDIA_COL.find_one({
-        "user_id": int(user_id),
-        "fish_name": fish_name,
-        "discovered": True
-    }) is not None
+def breakthrough_chance(p: Dict[str, Any]) -> float:
+    target = current_breakthrough_target(p)
+    if target is None:
+        return 1.0
+    return 0.70 if p.get("breakthrough_bonus", 0.0) > 0 else 0.50
 
-
-def register_fish_discovery(user_id, fish_name):
-    """成功捕獲後解鎖原始魚種；突變前綴不會污染圖鑑。"""
-    base_name = str(fish_name)
-    mutation_prefixes = [
-        "[🟢毒性突變] ", "[🔵晶螢閃耀] ", "[👑極致黃金] ",
-        "[🔴血色異變] ", "[🌌星空突變] "
-    ]
-    for prefix in mutation_prefixes:
-        if base_name.startswith(prefix):
-            base_name = base_name[len(prefix):]
-
-    fish = get_fish_catalog().get(base_name)
-    if not fish:
+def advance_realm_after_success(p: Dict[str, Any]) -> None:
+    normalize_cultivation(p)
+    target = current_breakthrough_target(p)
+    if target is None:
         return
-
-    ENCYCLOPEDIA_COL.update_one(
-        {"user_id": int(user_id), "fish_name": base_name},
-        {"$set": {
-            "fish_name": base_name,
-            "fish_code": fish["code"],
-            "discovered": True,
-            "unlocked_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        }},
-        upsert=True
-    )
-
-
-def fish_market_floor(fish_data):
-    multiplier = MARKET_FLOOR_MULTIPLIER.get(fish_data.get("rarity"), 2.5)
-    return int(fish_data.get("price", 0) * multiplier)
-
-
-def format_market_price(value):
-    return f"{int(value):,}"
-
-
-def chunk_lines(lines, max_chars=950):
-    chunks, current = [], []
-    current_len = 0
-    for line in lines:
-        line_len = len(line) + 1
-        if current and current_len + line_len > max_chars:
-            chunks.append("\n".join(current))
-            current = []
-            current_len = 0
-        current.append(line)
-        current_len += line_len
-    if current:
-        chunks.append("\n".join(current))
-    return chunks
-
-
-def get_discovered_fish_set(user_id):
-    return set(
-        doc.get("fish_name")
-        for doc in ENCYCLOPEDIA_COL.find(
-            {"user_id": int(user_id), "discovered": True},
-            {"fish_name": 1, "_id": 0}
-        )
-        if doc.get("fish_name")
-    )
-
-
-def create_encyclopedia_home_embed(user_id, display_name):
-    catalog = get_fish_catalog()
-    discovered = get_discovered_fish_set(user_id)
-    total = len(catalog)
-    found = sum(1 for name in catalog if name in discovered)
-    percent = (found / total * 100) if total else 0
-
-    embed = discord.Embed(
-        title=f"📚 {display_name} 的世界圖鑑",
-        description=(
-            f"🐟 魚類發現度：**{found}/{total}**（`{percent:.1f}%`）\n"
-            f"🔓 已解鎖：**{found}**　🔒 未發現：**{total - found}**\n\n"
-            "🐟 **魚類圖鑑**：依地圖、稀有度、全部魚類或搜尋。\n"
-            "🛠️ **工具圖鑑**：魚竿、魚餌、武器、載具、寵物、附魔、浮標。\n\n"
-            "🔐 未發現的魚不會透露名稱、代碼、稀有度、正常售價、指定魚竿、指定魚餌與特殊條件。\n"
-            "🎣 第一次成功捕獲該魚後，圖鑑會自動完整解鎖。"
-        ),
-        color=0x34495E
-    )
-    for rarity in RARITY_ORDER:
-        fishes = [f for f in catalog.values() if f.get("rarity") == rarity]
-        if not fishes:
-            continue
-        found_count = sum(1 for f in fishes if f["name"] in discovered)
-        embed.add_field(
-            name=f"{RARITY_ICONS[rarity]} {rarity}",
-            value=f"`{found_count}/{len(fishes)}` 已發現",
-            inline=True
-        )
-    return embed
-
-
-class EncyclopediaMainSelect(discord.ui.Select):
-    def __init__(self):
-        options = [
-            discord.SelectOption(label="🐟 魚類圖鑑", value="fish", description="地圖、稀有度、搜尋與完整收藏進度"),
-            discord.SelectOption(label="🛠️ 工具圖鑑", value="tools", description="魚竿、魚餌、武器、載具、寵物、附魔、浮標"),
-        ]
-        super().__init__(placeholder="選擇圖鑑大分類……", options=options)
-
-    async def callback(self, interaction: discord.Interaction):
-        if self.values[0] == "fish":
-            await interaction.response.edit_message(
-                embed=create_fish_index_embed(interaction.user.id),
-                view=FishIndexView()
-            )
-        else:
-            await interaction.response.edit_message(
-                embed=create_tool_index_embed(interaction.user.id),
-                view=ToolIndexView()
-            )
-
-
-class EncyclopediaMainView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=300)
-        self.add_item(EncyclopediaMainSelect())
-
-
-class FishIndexSelect(discord.ui.Select):
-    def __init__(self):
-        options = [
-            discord.SelectOption(label="🗺️ 依地圖", value="map", description="查看各海域魚種與地圖完成度"),
-            discord.SelectOption(label="⭐ 依稀有度", value="rarity", description="查看不同稀有度收藏進度"),
-            discord.SelectOption(label="📖 全部魚類", value="all", description="查看所有魚種的發現狀態"),
-        ]
-        super().__init__(placeholder="選擇魚類圖鑑瀏覽方式……", options=options)
-
-    async def callback(self, interaction: discord.Interaction):
-        choice = self.values[0]
-        if choice == "map":
-            embed = create_fish_map_embed(interaction.user.id)
-        elif choice == "rarity":
-            embed = create_fish_rarity_embed(interaction.user.id)
-        else:
-            embed = create_fish_list_embed(interaction.user.id)
-        await interaction.response.edit_message(embed=embed, view=FishIndexView())
-
-
-class BackToEncyclopediaButton(discord.ui.Button):
-    def __init__(self):
-        super().__init__(label="返回圖鑑首頁", emoji="📚", style=discord.ButtonStyle.secondary, row=1)
-
-    async def callback(self, interaction: discord.Interaction):
-        await interaction.response.edit_message(
-            embed=create_encyclopedia_home_embed(interaction.user.id, interaction.user.display_name),
-            view=EncyclopediaMainView()
-        )
-
-
-class FishSearchModal(discord.ui.Modal, title="🔎 搜尋魚類"): 
-    keyword = discord.ui.TextInput(
-        label="輸入已知魚名或產出代碼",
-        placeholder="例如：青龍、鯊魚、F031",
-        required=True,
-        max_length=50
-    )
-
-    async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.edit_message(
-            embed=create_fish_search_embed(interaction.user.id, str(self.keyword).strip()),
-            view=FishIndexView()
-        )
-
-
-class FishSearchButton(discord.ui.Button):
-    def __init__(self):
-        super().__init__(label="搜尋魚類", emoji="🔎", style=discord.ButtonStyle.primary, row=1)
-
-    async def callback(self, interaction: discord.Interaction):
-        await interaction.response.send_modal(FishSearchModal())
-
-
-class FishIndexView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=300)
-        self.add_item(FishIndexSelect())
-        self.add_item(FishSearchButton())
-        self.add_item(BackToEncyclopediaButton())
-
-
-def fish_display_line(user_id, fish):
-    discovered = is_fish_discovered(user_id, fish["name"])
-    if not discovered:
-        return "• 🔒 **未知魚種** — 尚未發現"
-    return (
-        f"• {RARITY_ICONS.get(fish['rarity'], '⚪')} **{fish['name']}** "
-        f"`{fish['code']}` — `{format_market_price(fish['price'])} 🪙`"
-    )
-
-
-def create_fish_index_embed(user_id):
-    catalog = get_fish_catalog()
-    discovered = get_discovered_fish_set(user_id)
-    embed = discord.Embed(
-        title="🐟 魚類世界圖鑑",
-        description=(
-            f"已發現：**{len(discovered & set(catalog))}/{len(catalog)}**\n\n"
-            "🗺️ 依地圖｜⭐ 依稀有度｜📖 全部魚類｜🔎 搜尋\n\n"
-            "🔒 未發現魚種只顯示『未知魚種』，完整情報會在首次捕獲後公開。"
-        ),
-        color=0x3498DB
-    )
-    return embed
-
-
-def create_fish_list_embed(user_id):
-    catalog = get_fish_catalog()
-    embed = discord.Embed(
-        title="📖 全部魚類",
-        description="已發現會顯示完整資訊；未發現不透露內部代碼與任何稀有度情報。",
-        color=0x3498DB
-    )
-    for rarity in RARITY_ORDER:
-        fishes = [fish for fish in catalog.values() if fish.get("rarity") == rarity]
-        if not fishes:
-            continue
-        lines = [fish_display_line(user_id, fish) for fish in fishes]
-        found = sum(1 for fish in fishes if is_fish_discovered(user_id, fish["name"]))
-        chunks = chunk_lines(lines)
-        for idx, chunk in enumerate(chunks):
-            suffix = f"・{idx + 1}" if len(chunks) > 1 else ""
-            embed.add_field(
-                name=f"{RARITY_ICONS[rarity]} {rarity} ({found}/{len(fishes)}){suffix}",
-                value=chunk,
-                inline=False
-            )
-    return embed
-
-
-def create_fish_map_embed(user_id):
-    catalog = get_fish_catalog()
-    embed = discord.Embed(
-        title="🗺️ 魚類圖鑑・依地圖",
-        description="各海域的魚種會依發現狀態顯示。",
-        color=0x1ABC9C
-    )
-    for map_name in MAP_EXCLUSIVE_FISH.keys():
-        fishes = [fish for fish in catalog.values() if map_name in fish.get("maps", [])]
-        if not fishes:
-            continue
-        found = sum(1 for fish in fishes if is_fish_discovered(user_id, fish["name"]))
-        lines = [fish_display_line(user_id, fish) for fish in fishes]
-        text = "\n".join(lines)
-        if len(text) > 950:
-            text = text[:947] + "..."
-        embed.add_field(
-            name=f"🚢 {map_name} ({found}/{len(fishes)})",
-            value=text,
-            inline=False
-        )
-    return embed
-
-
-def create_fish_rarity_embed(user_id):
-    catalog = get_fish_catalog()
-    embed = discord.Embed(
-        title="⭐ 魚類圖鑑・依稀有度",
-        description="稀有度總覽只對已發現魚種公開；未發現魚種統一顯示未知。",
-        color=0x9B59B6
-    )
-    for rarity in RARITY_ORDER:
-        fishes = [fish for fish in catalog.values() if fish.get("rarity") == rarity]
-        if not fishes:
-            continue
-        found = sum(1 for fish in fishes if is_fish_discovered(user_id, fish["name"]))
-        lines = [fish_display_line(user_id, fish) for fish in fishes]
-        text = "\n".join(lines)
-        if len(text) > 950:
-            text = text[:947] + "..."
-        embed.add_field(
-            name=f"{RARITY_ICONS[rarity]} {rarity} ({found}/{len(fishes)})",
-            value=text,
-            inline=False
-        )
-    return embed
-
-
-def create_fish_search_embed(user_id, keyword):
-    catalog = get_fish_catalog()
-    key = str(keyword).strip().lower()
-    results = []
-    for fish in catalog.values():
-        # 搜尋名稱只為玩家方便；不會因搜尋而直接解鎖資料。
-        if key in fish["name"].lower() or key in fish["code"].lower():
-            results.append(fish)
-
-    embed = discord.Embed(title=f"🔎 搜尋結果：{keyword}", color=0x2980B9)
-    if not results:
-        embed.description = "❌ 沒有符合條件的魚類。"
-        return embed
-
-    lines = []
-    for fish in results[:25]:
-        if is_fish_discovered(user_id, fish["name"]):
-            lines.append(
-                f"{RARITY_ICONS.get(fish['rarity'], '⚪')} **{fish['name']}** `{fish['code']}`\n"
-                f"稀有度：**{fish['rarity']}**　正常售價：`{format_market_price(fish['price'])} 🪙`\n"
-                f"指定魚餌：{', '.join(fish.get('bait', ['普通魚餌']))}\n"
-                f"指定魚竿：{', '.join(fish.get('rods', ['任意可用魚竿']))}\n"
-                f"特殊條件：{'；'.join(fish.get('conditions', [])) or '無特殊條件'}"
-            )
-        else:
-            lines.append("🔒 **未知魚種**\n尚未解鎖任何情報。")
-    embed.description = "\n\n".join(lines)
-    return embed
-
-
-class ToolCategorySelect(discord.ui.Select):
-    def __init__(self):
-        options = [
-            discord.SelectOption(label="🎣 魚竿", value="rods", description="查看全部魚竿能力"),
-            discord.SelectOption(label="🪱 魚餌", value="bait", description="查看商店魚餌與價格"),
-            discord.SelectOption(label="🗡️ 武器", value="weapons", description="查看遠征與公會武器"),
-            discord.SelectOption(label="🚗 載具", value="vehicles", description="查看現有載具裝備"),
-            discord.SelectOption(label="🐾 寵物", value="pets", description="查看目前寵物效果"),
-            discord.SelectOption(label="✨ 附魔", value="enchant", description="查看附魔能力"),
-            discord.SelectOption(label="🎈 浮標", value="bobber", description="查看浮標能力"),
-        ]
-        super().__init__(placeholder="選擇工具圖鑑分類……", options=options)
-
-    async def callback(self, interaction: discord.Interaction):
-        await interaction.response.edit_message(
-            embed=create_tool_detail_embed(self.values[0]),
-            view=ToolIndexView()
-        )
-
-
-class ToolIndexView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=300)
-        self.add_item(ToolCategorySelect())
-        self.add_item(BackToEncyclopediaButton())
-
-
-def create_tool_index_embed(user_id):
-    return discord.Embed(
-        title="🛠️ 工具圖鑑",
-        description=(
-            "這裡集中整理目前遊戲中的主要工具資料。\n\n"
-            "🎣 魚竿　🪱 魚餌　🗡️ 武器　🚗 載具\n"
-            "🐾 寵物　✨ 附魔　🎈 浮標\n\n"
-            "資料直接讀取遊戲內現有設定，避免商店價格與圖鑑分離。"
-        ),
-        color=0xE67E22
-    )
-
-
-def create_tool_detail_embed(category):
-    embed = discord.Embed(title="🛠️ 工具圖鑑", color=0xE67E22)
-    if category == "rods":
-        for name, data in ROD_STATS.items():
-            embed.add_field(
-                name=f"🎣 {name}",
-                value=(
-                    f"🍀 Luck：`{data.get('luck', 1)}`\n"
-                    f"⚡ Speed：`+{data.get('speed_bonus', 0)}`\n"
-                    f"🧬 Mutation：`{data.get('mutation', 0)}`\n"
-                    f"{data.get('desc', '無特殊描述')}"
-                ),
-                inline=True
-            )
-    elif category == "bait":
-        lines = [f"• **{name}** — `{price:,} 🪙`" for name, price in BAITS_SHOP.items()]
-        chunks = chunk_lines(lines)
-        for idx, chunk in enumerate(chunks[:4]):
-            embed.add_field(name=f"🪱 魚餌 {idx + 1}", value=chunk, inline=False)
-    elif category == "enchant":
-        lines = []
-        for name, data in ENCHANT_POOL.items():
-            lines.append(
-                f"• ✨ **{name}**\n"
-                f"{data.get('desc', '無')}\n"
-                f"Luck `x{data.get('luck_mod', 1)}`｜Speed `+{data.get('speed_mod', 0)}`｜Mutation `+{data.get('mutate_mod', 0)}"
-            )
-        for idx, chunk in enumerate(chunk_lines(lines)[:4]):
-            embed.add_field(name=f"✨ 附魔 {idx + 1}", value=chunk, inline=False)
-    elif category == "bobber":
-        for name, data in BOBBER_POOL.items():
-            embed.add_field(
-                name=f"🎈 {name}",
-                value=(
-                    f"成功率：`+{data.get('success_rate', 0)}%`\n"
-                    f"異變：`+{data.get('mutate_bonus', 0)}`"
-                ),
-                inline=True
-            )
-    elif category == "weapons":
-        for name, data in WEAPONS_SHOP.items():
-            embed.add_field(
-                name=f"🗡️ {name}",
-                value=f"傷害：`{data.get('dmg', 0)}`",
-                inline=True
-            )
-    elif category == "vehicles":
-        embed.description = (
-            "🚗 目前載具共用玩家裝備欄位；現有資料可直接從玩家的 `pet` 欄位辨識。\n\n"
-            "已知載具：科技耐壓潛水服、量子核能潛水艇、地心重型鑽探機等。"
-        )
-    elif category == "pets":
-        embed.description = (
-            "🐾 寵物效果目前由 `get_player_modifiers()` 統一計算。\n\n"
-            "常見效果：招財貓＝金幣加成、獵鷹＝幸運加成、小青龍＝幸運＋金幣加成。"
-        )
-    return embed
-
-
-@bot.tree.command(name="查看圖鑑", description="開啟全新的互動式魚類與工具圖鑑")
-async def view_encyclopedia(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
-    user_id = int(interaction.user.id)
-    await interaction.followup.send(
-        embed=create_encyclopedia_home_embed(user_id, interaction.user.display_name),
-        view=EncyclopediaMainView()
-    )
-
-
-# ======= 🏪 組十七：玩家交易所 =======
-def generate_market_code():
-    """生成玩家可讀的 8 碼掛單代碼，避免直接暴露 Mongo ObjectId。"""
-    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-    for _ in range(30):
-        code = "".join(random.choice(alphabet) for _ in range(8))
-        if MARKET_COL.find_one({"listing_code": code}) is None:
-            return code
-    return f"{random.randint(10000000, 99999999)}"
-
-
-def get_market_listings(limit=10, keyword=None, seller_id=None):
-    query = {"status": "active", "quantity": {"$gt": 0}}
-    if keyword:
-        safe_keyword = str(keyword).strip()
-        if safe_keyword:
-            # Regex 特殊字元轉義，避免搜尋框內容干擾 Mongo 查詢。
-            import re
-            query["item_name"] = {"$regex": re.escape(safe_keyword), "$options": "i"}
-    if seller_id is not None:
-        query["seller_id"] = int(seller_id)
-    return list(MARKET_COL.find(query).sort([("unit_price", 1), ("created_at", 1)]).limit(limit))
-
-
-def create_market_embed(user_id, keyword=None, mine=False):
-    listings = get_market_listings(12, keyword, int(user_id) if mine else None)
-    embed = discord.Embed(
-        title="🏪 歡樂交易所",
-        description=(
-            f"🏛️ 官方交易稅：**{MARKET_TAX_RATE * 100:.0f}%**\n"
-            "💰 掛單最低售價：普通 2.5×｜稀有 3×｜傳奇 3.5×｜神話 5×｜秘密 5.5×｜作者級 6×\n"
-            "📦 目前僅開放魚類玩家掛單交易。"
-        ),
-        color=0xF1C40F
-    )
-    if keyword:
-        embed.description += f"\n🔎 搜尋：`{keyword}`"
-    if mine:
-        embed.description += "\n👤 目前顯示：**我的掛單**"
-
-    if not listings:
-        embed.add_field(
-            name="📭 沒有符合條件的掛單",
-            value="可以稍後再來看看，或使用 `/上架交易所` 建立第一筆掛單。",
-            inline=False
-        )
-        return embed
-
-    for listing in listings:
-        fish = get_fish_catalog().get(listing.get("item_name"))
-        if not fish:
-            continue
-        rarity = fish["rarity"]
-        floor = fish_market_floor(fish)
-        total_example = int(listing["unit_price"]) * min(1, int(listing["quantity"]))
-        seller_name = f"<@{int(listing['seller_id'])}>"
-        embed.add_field(
-            name=f"{RARITY_ICONS.get(rarity, '⚪')} {fish['name']}",
-            value=(
-                f"數量：`{int(listing['quantity'])}`\n"
-                f"單價：`{format_market_price(listing['unit_price'])} 🪙`\n"
-                f"起跳：`{format_market_price(floor)} 🪙`\n"
-                f"賣家：{seller_name}\n"
-                f"掛單：`{listing.get('listing_code', str(listing['_id'])[-8:])}`\n"
-                f"買 1 件：`{format_market_price(total_example)} 🪙`"
-            ),
-            inline=True
-        )
-    embed.set_footer(text="購買：/購買交易品 listing_id 數量　｜　上架：/上架交易所　｜　下架：/下架交易品")
-    return embed
-
-
-class MarketSearchModal(discord.ui.Modal, title="🔎 搜尋交易商品"):
-    keyword = discord.ui.TextInput(
-        label="商品名稱（可留空）",
-        placeholder="例如：青龍、鯊魚",
-        required=False,
-        max_length=50
-    )
-
-    async def on_submit(self, interaction: discord.Interaction):
-        keyword = str(self.keyword).strip()
-        await interaction.response.edit_message(
-            embed=create_market_embed(interaction.user.id, keyword or None),
-            view=MarketView()
-        )
-
-
-class MarketSearchButton(discord.ui.Button):
-    def __init__(self):
-        super().__init__(label="搜尋", emoji="🔎", style=discord.ButtonStyle.primary)
-
-    async def callback(self, interaction: discord.Interaction):
-        await interaction.response.send_modal(MarketSearchModal())
-
-
-class MarketRefreshButton(discord.ui.Button):
-    def __init__(self):
-        super().__init__(label="刷新", emoji="🔄", style=discord.ButtonStyle.secondary)
-
-    async def callback(self, interaction: discord.Interaction):
-        await interaction.response.edit_message(
-            embed=create_market_embed(interaction.user.id),
-            view=MarketView()
-        )
-
-
-class MarketView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=300)
-        self.add_item(MarketSearchButton())
-        self.add_item(MarketRefreshButton())
-
-
-@bot.tree.command(name="交易所", description="查看玩家交易所掛單與市場價格")
-async def market_cmd(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
-    await interaction.followup.send(
-        embed=create_market_embed(interaction.user.id),
-        view=MarketView(),
-        ephemeral=True
-    )
-
-
-class MarketListConfirmView(discord.ui.View):
-    def __init__(self, user_id, fish_name, quantity, unit_price):
-        super().__init__(timeout=60)
-        self.user_id = int(user_id); self.fish_name = fish_name; self.quantity = int(quantity); self.unit_price = int(unit_price)
-
-    @discord.ui.button(label="確認上架", emoji="🏪", style=discord.ButtonStyle.success)
-    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if int(interaction.user.id) != self.user_id:
-            await interaction.response.send_message("❌ 這不是你的上架確認視窗。", ephemeral=True); return
-        for child in self.children: child.disabled = True
-        await interaction.response.edit_message(content="⏳ 正在建立交易掛單……", embed=None, view=self)
-        await execute_market_list(interaction, self.fish_name, self.quantity, self.unit_price)
-
-    @discord.ui.button(label="取消", emoji="✖️", style=discord.ButtonStyle.secondary)
-    async def cancel(self, interaction: discord.Interaction, button: discord.Button):
-        await interaction.response.edit_message(content="✅ 已取消上架，魚獲沒有被扣除。", embed=None, view=None)
-
-@bot.tree.command(name="上架交易所", description="將已發現的魚類掛到玩家交易所（上架前會彈出警告確認）")
-@app_commands.describe(fish_name="要出售的魚名", quantity="出售數量", unit_price="單條售價")
-async def market_list_cmd(interaction: discord.Interaction, fish_name: str, quantity: int, unit_price: int):
-    await interaction.response.defer(ephemeral=True)
-    user_id = int(interaction.user.id); fish = get_fish_catalog().get(fish_name)
-    if not fish:
-        await interaction.followup.send("❌ 找不到這條魚。", ephemeral=True); return
-    if not is_fish_discovered(user_id, fish_name):
-        await interaction.followup.send("❌ 你尚未發現這條魚，不能上架交易所。", ephemeral=True); return
-    if quantity <= 0 or quantity > 999 or unit_price <= 0:
-        await interaction.followup.send("❌ 數量需 1～999，單價必須大於 0。", ephemeral=True); return
-    floor = fish_market_floor(fish)
-    if unit_price < floor:
-        mult = MARKET_FLOOR_MULTIPLIER.get(fish["rarity"], 2.5)
-        await interaction.followup.send(f"❌ 低於官方最低掛單價！最低 `{floor:,}` 🪙（正常價 × {mult:g}）。", ephemeral=True); return
-    owned = get_item_count(user_id, fish_name)
-    if owned < quantity:
-        await interaction.followup.send(f"❌ 背包只有 `{owned}` 隻 {fish_name}。", ephemeral=True); return
-    embed = discord.Embed(title="⚠️ 交易所上架確認", description=(
-        f"📦 商品：**{fish_name} ×{quantity}**\n"
-        f"💰 單價：`{unit_price:,} 🪙`\n"
-        f"💵 預估總價：`{unit_price * quantity:,} 🪙`\n"
-        f"🏛️ 官方成交稅：`{MARKET_TAX_RATE * 100:.0f}%`\n\n"
-        "⚠️ 確認後魚獲會立即從背包扣除並進入交易行。"), color=0xF39C12)
-    await interaction.followup.send(embed=embed, view=MarketListConfirmView(user_id, fish_name, quantity, unit_price), ephemeral=True)
-
-async def execute_market_list(interaction: discord.Interaction, fish_name: str, quantity: int, unit_price: int):
-    user_id = int(interaction.user.id); fish = get_fish_catalog().get(fish_name)
-    if not fish or not is_fish_discovered(user_id, fish_name):
-        await interaction.edit_original_response(content="❌ 上架失敗：魚種不存在或尚未發現。", embed=None, view=None); return
-    floor = fish_market_floor(fish)
-    if unit_price < floor:
-        await interaction.edit_original_response(content=f"❌ 上架失敗：低於官方最低價 `{floor:,}` 🪙。", embed=None, view=None); return
-    consumed = inventory_col.update_one({"user_id": user_id, "item_name": fish_name, "item_count": {"$gte": quantity}}, {"$inc": {"item_count": -quantity}})
-    if consumed.modified_count != 1:
-        await interaction.edit_original_response(content="❌ 上架失敗：背包數量在確認後已發生變化。", embed=None, view=None); return
-    listing_code = generate_market_code()
-    try:
-        MARKET_COL.insert_one({"listing_code": listing_code, "seller_id": user_id, "item_name": fish_name, "quantity": int(quantity), "unit_price": int(unit_price), "floor_price": int(floor), "rarity": fish["rarity"], "status": "active", "created_at": datetime.now()})
-    except Exception as exc:
-        add_inventory(user_id, fish_name, quantity); print(f"[MARKET] insert listing failed: {exc}")
-        await interaction.edit_original_response(content="❌ 建立掛單失敗，魚獲已退回背包。", embed=None, view=None); return
-    await interaction.edit_original_response(content=(
-        f"✅ 上架成功！\n📦 {fish_name} ×`{quantity}`\n💰 單價：`{unit_price:,} 🪙`\n"
-        f"🏛️ 成交後官方抽取 `{MARKET_TAX_RATE * 100:.0f}%` 稅金\n🆔 掛單代碼：`{listing_code}`"), embed=None, view=None)
-
-
-@bot.tree.command(name="購買交易品", description="購買玩家交易所中的魚類")
-@app_commands.describe(listing_id="交易所顯示的 8 碼掛單代碼", quantity="購買數量")
-async def market_buy_cmd(interaction: discord.Interaction, listing_id: str, quantity: int):
-    await interaction.response.defer(ephemeral=True)
-    buyer_id = int(interaction.user.id)
-    listing_id = str(listing_id).strip().upper()
-
-    if quantity <= 0 or quantity > 999:
-        await interaction.followup.send("❌ 數量必須介於 1～999。", ephemeral=True)
-        return
-
-    listing = MARKET_COL.find_one({
-        "listing_code": listing_id,
-        "status": "active",
-        "quantity": {"$gt": 0}
-    })
-    if not listing:
-        await interaction.followup.send("❌ 找不到有效掛單，可能已售罄或已下架。", ephemeral=True)
-        return
-
-    seller_id = int(listing["seller_id"])
-    if seller_id == buyer_id:
-        await interaction.followup.send("❌ 不能購買自己的掛單。", ephemeral=True)
-        return
-    available = int(listing["quantity"])
-    if quantity > available:
-        await interaction.followup.send(f"❌ 該掛單目前只有 `{available}` 件。", ephemeral=True)
-        return
-
-    total = int(listing["unit_price"]) * int(quantity)
-    buyer = get_user(buyer_id)
-    buyer_balance = int(buyer.get("balance", 100))
-    if buyer_balance < total:
-        await interaction.followup.send(f"❌ 金幣不足！需要 `{total:,} 🪙`。", ephemeral=True)
-        return
-
-    # 先搶到掛單庫存，避免多人同時購買造成超賣。
-    reserved = MARKET_COL.update_one(
-        {
-            "_id": listing["_id"],
-            "status": "active",
-            "quantity": {"$gte": quantity}
-        },
-        {"$inc": {"quantity": -int(quantity)}}
-    )
-    if reserved.modified_count != 1:
-        await interaction.followup.send("❌ 這筆掛單剛被其他玩家買走或數量不足，請刷新交易所。", ephemeral=True)
-        return
-
-    tax = int(total * MARKET_TAX_RATE)
-    seller_revenue = total - tax
-
-    # 交易結算採用可回滾流程：任何一步失敗都嘗試恢復掛單、買家金幣與庫存。
-    buyer_debited = False
-    seller_credited = False
-    try:
-        buyer_changed = users_col.update_one(
-            {"user_id": buyer_id, "balance": {"$gte": total}},
-            {"$inc": {"balance": -total}}
-        )
-        if buyer_changed.modified_count != 1:
-            raise RuntimeError("buyer balance changed")
-        buyer_debited = True
-
-        seller_changed = users_col.update_one(
-            {"user_id": seller_id},
-            {"$inc": {"balance": seller_revenue}}
-        )
-        if seller_changed.modified_count != 1:
-            raise RuntimeError("seller balance update failed")
-        seller_credited = True
-
-        add_inventory(buyer_id, listing["item_name"], quantity)
-    except Exception as exc:
-        MARKET_COL.update_one(
-            {"_id": listing["_id"]},
-            {"$inc": {"quantity": int(quantity)}, "$set": {"status": "active"}}
-        )
-        if buyer_debited:
-            users_col.update_one(
-                {"user_id": buyer_id},
-                {"$inc": {"balance": total}}
-            )
-        if seller_credited:
-            users_col.update_one(
-                {"user_id": seller_id},
-                {"$inc": {"balance": -seller_revenue}}
-            )
-        print(f"[MARKET] transaction rollback: {exc}")
-        await interaction.followup.send("❌ 交易結算發生錯誤，系統已嘗試自動回滾。請稍後再試。", ephemeral=True)
-        return
-
-    remaining = int(listing["quantity"]) - int(quantity)
-    if remaining <= 0:
-        MARKET_COL.update_one(
-            {"_id": listing["_id"], "quantity": 0},
-            {"$set": {"status": "sold", "closed_at": datetime.now()}}
-        )
-
-    await interaction.followup.send(
-        f"✅ 交易成功！\n"
-        f"📦 **{listing['item_name']}** ×`{quantity}`\n"
-        f"💰 成交總價：`{total:,} 🪙`\n"
-        f"🏛️ 官方 10% 稅：`{tax:,} 🪙`\n"
-        f"💵 賣家實收：`{seller_revenue:,} 🪙`",
-        ephemeral=True
-    )
-
-
-@bot.tree.command(name="下架交易品", description="下架自己的交易所掛單並取回剩餘魚獲")
-@app_commands.describe(listing_id="自己的 8 碼掛單代碼")
-async def market_cancel_cmd(interaction: discord.Interaction, listing_id: str):
-    await interaction.response.defer(ephemeral=True)
-    user_id = int(interaction.user.id)
-    listing_id = str(listing_id).strip().upper()
-
-    listing = MARKET_COL.find_one_and_update(
-        {
-            "listing_code": listing_id,
-            "seller_id": user_id,
-            "status": "active",
-            "quantity": {"$gt": 0}
-        },
-        {"$set": {"status": "cancelled", "closed_at": datetime.now()}},
-        return_document=True
-    )
-    if not listing:
-        await interaction.followup.send("❌ 找不到你名下的有效掛單。", ephemeral=True)
-        return
-
-    remaining = int(listing.get("quantity", 0))
-    if remaining > 0:
-        add_inventory(user_id, listing["item_name"], remaining)
-
-    await interaction.followup.send(
-        f"✅ 已下架掛單 `{listing_id}`。\n"
-        f"📦 取回：**{listing['item_name']} ×{remaining}**",
-        ephemeral=True
-    )
-
-
-# ======= 🧭 新架構 V6：新手教學 + 鍛造 + 探險 + 世界BOSS + 血脈 + 拍賣場 =======
-# 這一區全部使用 MongoDB 持久化；新增資料不會依賴 Render 本地磁碟。
-TUTORIAL_STEPS = [
-    {
-        "title": "🎣 ① 認識魚竿",
-        "desc": "歡迎來到歡樂釣魚場！你的第一支魚竿是【新手魚竿】。",
-        "reward": {"balance": 100},
-    },
-    {
-        "title": "🎒 ② 認識背包",
-        "desc": "背包會顯示你的金幣、魚竿、魚獲、消耗品與裝備。",
-        "reward": {"item": "普通魚餌", "amount": 3},
-    },
-    {
-        "title": "📘 ③ 認識圖鑑",
-        "desc": "成功捕獲魚種後，會自動加入雲端圖鑑；未發現的魚不會洩漏敏感資料。",
-        "reward": {"item": "🎁 基礎藥水寶箱", "amount": 1},
-    },
-    {
-        "title": "🏪 ④ 認識交易",
-        "desc": "交易所可以直接掛單；拍賣場則採競標制，最高出價者得標。",
-        "reward": {"balance": 500},
-    },
-    {
-        "title": "🧭 ⑤ 完成啟航",
-        "desc": "你已經掌握基本系統，可以解鎖鍛造、探險、世界 Boss、血脈與拍賣場。",
-        "reward": {"item": "海藻餌", "amount": 5},
-    },
-]
-
-FORGE_RECIPES = {
-    "🪝 強化鋼鉤": {
-        "materials": {"🐟 吳郭魚": 5, "普通魚餌": 10},
-        "cost": 1000,
-        "reward_item": "🪝 強化鋼鉤",
-        "desc": "基礎鍛造材料製成的強化魚鉤。",
-    },
-    "⚙️ 深海合金核心": {
-        "materials": {"🐡 黃金河豚": 2, "🪝 強化鋼鉤": 1},
-        "cost": 5000,
-        "reward_item": "⚙️ 深海合金核心",
-        "desc": "可作為高階裝備與未來神竿進化的核心材料。",
-    },
-    "🌌 星海神性核心": {
-        "materials": {"⚙️ 深海合金核心": 2, "🎁 傳奇藥水寶箱": 1, "🌟 遠古星願晶石": 5},
-        "cost": 25000,
-        "reward_item": "🌌 星海神性核心",
-        "desc": "極低產量的神性鍛造材料。",
-    },
-}
-
-ADVENTURE_TABLE = [
-    {"name": "🌿 近海遺跡", "minutes": 10, "weight": 45, "rewards": [("普通魚餌", 5), ("🐟 吳郭魚", 3), ("海藻餌", 4)], "gold": (100, 400)},
-    {"name": "🌊 深海裂谷", "minutes": 20, "weight": 30, "rewards": [("稀有魚餌 (x1)", 3), ("🐡 黃金河豚", 1), ("🎁 稀原藥水寶箱", 1)], "gold": (500, 1500)},
-    {"name": "🌌 星穹遺跡", "minutes": 30, "weight": 18, "rewards": [("傳說魚餌 (x1)", 2), ("🎁 傳奇藥水寶箱", 1), ("🌟 遠古星願晶石", 3)], "gold": (1200, 4500)},
-    {"name": "👑 諸神禁域", "minutes": 45, "weight": 7, "rewards": [("神話魚餌 (x1)", 2), ("🌌 星海神性核心", 1), ("🌟 遠古星願晶石", 8)], "gold": (3000, 12000)},
-]
-
-BLOODLINES = {
-    "👤 常規人類": {
-        "max_version": 1,
-        "unlock_cost": 0,
-        "requirements": "初始血脈",
-        "desc": "均衡且沒有額外偏科的基礎血脈。",
-    },
-    "🦈 深海鯊皇": {
-        "max_version": 3,
-        "unlock_cost": 5000,
-        "requirements": "LV.20",
-        "desc": "偏向幸運與金幣，適合長期農場。",
-    },
-    "🧜 海妖": {
-        "max_version": 3,
-        "unlock_cost": 15000,
-        "requirements": "LV.60",
-        "desc": "偏向高稀有度捕獲與突變。",
-    },
-    "🔱 亞特蘭提斯神族": {
-        "max_version": 4,
-        "unlock_cost": 60000,
-        "requirements": "LV.160 + 三海",
-        "desc": "最終階血脈，可成長至 V4。",
-    },
-}
-
-WORLD_BOSS_DEFAULT = {
-    "boss_id": "global_01",
-    "name": "🌊 深海古神・利維坦",
-    "max_hp": 10000000,
-    "hp": 10000000,
-    "active": True,
-    "created_at": time.time(),
-    "last_reset": time.time(),
-    "rewarded": False,
-    "round": 1,
-}
-
-forge_col = db["forge_history"]
-adventure_col = db["adventure_sessions"]
-world_boss_col = db["world_boss"]
-auction_col = db["auction_house"]
-
-
-def get_item_count(user_id, item_name):
-    doc = inventory_col.find_one({"user_id": int(user_id), "item_name": item_name})
-    return int(doc.get("item_count", 0)) if doc else 0
-
-
-def consume_item_atomic(user_id, item_name, amount):
-    amount = int(amount)
-    if amount <= 0:
-        return True
-    result = inventory_col.update_one(
-        {"user_id": int(user_id), "item_name": item_name, "item_count": {"$gte": amount}},
-        {"$inc": {"item_count": -amount}}
-    )
-    return result.modified_count == 1
-
-
-def apply_tutorial_reward(user_id, reward):
-    if not reward:
-        return ""
-    parts = []
-    if "balance" in reward:
-        amount = int(reward["balance"])
-        users_col.update_one({"user_id": int(user_id)}, {"$inc": {"balance": amount}})
-        parts.append(f"💰 +{amount:,} 金幣")
-    if reward.get("item"):
-        amount = int(reward.get("amount", 1))
-        add_inventory(user_id, reward["item"], amount)
-        parts.append(f"📦 {reward['item']} ×{amount}")
-    return "；".join(parts)
-
-
-async def tutorial_gate(interaction: discord.Interaction):
-    """全域新手鎖：完成教學前只允許新手教學與幫助。"""
-    user = get_user(int(interaction.user.id))
-    if bool(user.get("tutorial_completed", False)):
-        return True
-    command_name = interaction.command.name if interaction.command else ""
-    allowed = {"新手教學", "幫助", "help"}
-    if command_name in allowed:
-        return True
-    step = int(user.get("tutorial_step", 0))
-    step = max(0, min(step, len(TUTORIAL_STEPS)))
-    await interaction.response.send_message(
-        f"🔒 **新手保護鎖啟用中**\n\n"
-        f"你目前尚未完成新手教學。\n"
-        f"📖 目前進度：`{step}/{len(TUTORIAL_STEPS)}`\n"
-        f"請先使用 `/新手教學` 完成啟航流程。",
-        ephemeral=True
-    )
-    return False
-
-
-class TutorialNextButton(discord.ui.Button):
-    def __init__(self):
-        super().__init__(label="下一步", style=discord.ButtonStyle.primary, emoji="➡️")
-
-    async def callback(self, interaction: discord.Interaction):
-        user_id = int(interaction.user.id)
-        user = get_user(user_id)
-        step = int(user.get("tutorial_step", 0))
-        if step >= len(TUTORIAL_STEPS):
-            update_user(user_id, tutorial_completed=True)
-            await interaction.response.edit_message(content="✅ 新手教學已完成！現在可以自由使用所有遊戲功能。", embed=None, view=None)
-            return
-        reward_text = apply_tutorial_reward(user_id, TUTORIAL_STEPS[step]["reward"])
-        step += 1
-        completed = step >= len(TUTORIAL_STEPS)
-        update_user(user_id, tutorial_step=step, tutorial_completed=completed, last_active_time=time.time())
-        if completed:
-            embed = discord.Embed(
-                title="🎉 新手教學完成！",
-                description="你已成功完成啟航流程。\n\n🔓 **鍛造、探險、世界 Boss、血脈、交易所、拍賣場等系統全部解鎖！**",
-                color=0x2ECC71,
-            )
-            if reward_text:
-                embed.add_field(name="🎁 最終獎勵", value=reward_text, inline=False)
-            await interaction.response.edit_message(embed=embed, view=None)
-            return
-        next_step = TUTORIAL_STEPS[step]
-        embed = discord.Embed(title=next_step["title"], description=next_step["desc"], color=0x3498DB)
-        embed.set_footer(text=f"教學進度：{step}/{len(TUTORIAL_STEPS)}")
-        if reward_text:
-            embed.add_field(name="🎁 上一步獎勵", value=reward_text, inline=False)
-        await interaction.response.edit_message(embed=embed, view=TutorialView())
-
-
-class TutorialView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=900)
-        self.add_item(TutorialNextButton())
-
-
-@bot.tree.command(name="新手教學", description="完成強制新手教學後解鎖完整遊戲功能")
-async def new_player_tutorial(interaction: discord.Interaction):
-    user_id = int(interaction.user.id)
-    user = get_user(user_id)
-    step = int(user.get("tutorial_step", 0))
-    if bool(user.get("tutorial_completed", False)):
-        await interaction.response.send_message("✅ 你已經完成新手教學，所有系統均已解鎖。", ephemeral=True)
-        return
-    if step >= len(TUTORIAL_STEPS):
-        update_user(user_id, tutorial_completed=True)
-        await interaction.response.send_message("✅ 新手教學已完成，所有系統已解鎖。", ephemeral=True)
-        return
-    step_data = TUTORIAL_STEPS[step]
-    embed = discord.Embed(title=step_data["title"], description=step_data["desc"], color=0x3498DB)
-    embed.add_field(name="📖 教學規則", value="完成全部步驟後才會解除遊戲功能鎖。此進度永久儲存在 MongoDB。", inline=False)
-    embed.set_footer(text=f"教學進度：{step}/{len(TUTORIAL_STEPS)}")
-    await interaction.response.send_message(embed=embed, view=TutorialView(), ephemeral=True)
-
-
-def get_or_create_world_boss():
-    boss = world_boss_col.find_one({"boss_id": "global_01"})
-    if boss:
-        return boss
-    world_boss_col.insert_one(dict(WORLD_BOSS_DEFAULT))
-    return world_boss_col.find_one({"boss_id": "global_01"})
-
-
-def reset_world_boss_if_needed():
-    boss = get_or_create_world_boss()
-    if int(boss.get("hp", 0)) <= 0:
-        now = time.time()
-        world_boss_col.update_one(
-            {"boss_id": "global_01"},
-            {"$set": {"hp": int(boss["max_hp"]), "active": True, "rewarded": False, "last_reset": now}}
-        )
-        boss = world_boss_col.find_one({"boss_id": "global_01"})
-    return boss
-
-
-def get_world_boss_top(limit=10):
-    boss = get_or_create_world_boss()
-    round_id = int(boss.get("round", 1))
-    docs = list(world_boss_col.find({"boss_id": "global_01", "type": "damage", "round": round_id}).sort("damage", -1).limit(limit))
-    return docs
-
-
-@bot.tree.command(name="鍛造", description="消耗魚獲與材料製作鍛造物品")
-@app_commands.describe(配方="輸入要鍛造的配方名稱")
-async def forge_cmd(interaction: discord.Interaction, 配方: str = ""):
-    user_id = int(interaction.user.id)
-    if not 配方:
-        lines = []
-        for name, recipe in FORGE_RECIPES.items():
-            mat = "、".join(f"{k}×{v}" for k, v in recipe["materials"].items())
-            lines.append(f"**{name}**\n材料：{mat}\n金幣：`{recipe['cost']:,}` 🪙\n{recipe['desc']}")
-        embed = discord.Embed(title="⚒️ 鍛造工坊", description="\n\n".join(lines), color=0x8E44AD)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-        return
-
-    recipe = FORGE_RECIPES.get(配方.strip())
-    if not recipe:
-        await interaction.response.send_message("❌ 找不到這個鍛造配方，請再次使用 `/鍛造` 查看配方。", ephemeral=True)
-        return
-    user = get_user(user_id)
-    cost = int(recipe["cost"])
-    if int(user.get("balance", 0)) < cost:
-        await interaction.response.send_message(f"❌ 金幣不足，需要 `{cost:,}` 🪙。", ephemeral=True)
-        return
-
-    consumed = []
-    try:
-        for item_name, amount in recipe["materials"].items():
-            if not consume_item_atomic(user_id, item_name, amount):
-                raise RuntimeError(f"材料不足：{item_name}")
-            consumed.append((item_name, amount))
-        balance_result = users_col.update_one(
-            {"user_id": user_id, "balance": {"$gte": cost}},
-            {"$inc": {"balance": -cost}}
-        )
-        if balance_result.modified_count != 1:
-            raise RuntimeError("扣款失敗")
-        add_inventory(user_id, recipe["reward_item"], 1)
-        forge_col.insert_one({"user_id": user_id, "recipe": 配方.strip(), "created_at": time.time()})
-    except Exception as exc:
-        for item_name, amount in consumed:
-            add_inventory(user_id, item_name, amount)
-        await interaction.response.send_message(f"❌ 鍛造失敗：{exc}", ephemeral=True)
-        return
-
-    await interaction.response.send_message(
-        f"✅ **鍛造成功！**\n⚒️ 產物：**{recipe['reward_item']} ×1**\n💰 消耗：`{cost:,}` 🪙",
-        ephemeral=True
-    )
-
-
-@bot.tree.command(name="探險", description="派出探險隊前往隨機海域，完成後領取金幣與材料")
-async def adventure_cmd(interaction: discord.Interaction):
-    user_id = int(interaction.user.id)
-    active = adventure_col.find_one({"user_id": user_id, "status": "active"})
-    now = time.time()
-    if active:
-        remaining = max(0, int(active["finish_at"] - now))
-        if remaining > 0:
-            await interaction.response.send_message(f"🧭 你目前正在探險中，剩餘約 `{remaining//60} 分 {remaining%60} 秒`。", ephemeral=True)
-            return
-
-    # 逾時完成的舊探險先自動結算
-    if active and active.get("finish_at", 0) <= now:
-        reward = active["reward"]
-        add_inventory(user_id, reward["item"], int(reward["amount"]))
-        users_col.update_one({"user_id": user_id}, {"$inc": {"balance": int(reward["gold"])}})
-        adventure_col.update_one({"_id": active["_id"], "status": "active"}, {"$set": {"status": "completed", "completed_at": now}})
-        await interaction.response.send_message(
-            f"🎉 上次探險完成！\n📦 {reward['item']} ×{reward['amount']}\n💰 +{reward['gold']:,} 🪙\n\n再次使用 `/探險` 可出發新的旅程。",
-            ephemeral=True
-        )
-        return
-
-    total_weight = sum(x["weight"] for x in ADVENTURE_TABLE)
-    roll = random.uniform(0, total_weight)
-    selected = ADVENTURE_TABLE[-1]
-    cursor = 0
-    for area in ADVENTURE_TABLE:
-        cursor += area["weight"]
-        if roll <= cursor:
-            selected = area
-            break
-    reward_item, reward_amount = random.choice(selected["rewards"])
-    gold = random.randint(*selected["gold"])
-    started = now
-    finish = now + selected["minutes"] * 60
-    adventure_col.insert_one({
-        "user_id": user_id,
-        "status": "active",
-        "area": selected["name"],
-        "start_at": started,
-        "finish_at": finish,
-        "reward": {"item": reward_item, "amount": int(reward_amount), "gold": int(gold)},
-    })
-    await interaction.response.send_message(
-        f"🧭 **探險出發！**\n\n"
-        f"地點：**{selected['name']}**\n"
-        f"⏱️ 時間：`{selected['minutes']} 分鐘`\n"
-        f"🎁 預計獎勵：{reward_item} ×{reward_amount}\n"
-        f"💰 預計金幣：`{gold:,}`\n\n"
-        f"完成後再次使用 `/探險` 即可領取。",
-        ephemeral=True
-    )
-
-
-@bot.tree.command(name="世界boss", description="查看全服世界 Boss、傷害榜並進行一次攻擊")
-async def world_boss_cmd(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
-    user_id = int(interaction.user.id)
-    boss = reset_world_boss_if_needed()
-    hp = max(0, int(boss.get("hp", 0)))
-    max_hp = max(1, int(boss.get("max_hp", 1)))
-    user = get_user(user_id)
-    weapon_name = user.get("bait_type", "")
-    weapon = WEAPONS_SHOP.get(weapon_name, {}) if isinstance(WEAPONS_SHOP, dict) else {}
-    base_damage = int(weapon.get("dmg", 10)) if weapon else 10
-    level_bonus = max(0, int(user.get("level", 0)) * 2)
-    suggested = base_damage + level_bonus
-    boss_percent = hp / max_hp * 100
-    embed = discord.Embed(
-        title=f"👹 {boss['name']}",
-        description=f"❤️ HP：`{hp:,} / {max_hp:,}` ({boss_percent:.2f}%)\n⚔️ 你的單次預估傷害：`{suggested:,}`",
-        color=0xC0392B,
-    )
-    top = get_world_boss_top(5)
-    if top:
-        embed.add_field(name="🏆 全服傷害榜", value="\n".join(f"{i+1}. <@{d.get('user_id')}> — `{int(d.get('damage',0)):,}`" for i, d in enumerate(top)), inline=False)
-    embed.add_field(name="⚔️ 攻擊方法", value="再次使用 `/世界boss` 即可進行一次攻擊。世界 Boss HP 使用 MongoDB 原子扣血，避免多人覆蓋傷害。", inline=False)
-
-    if hp <= 0:
-        embed.description = "🏆 **Boss 已被全服擊破！正在進入新一輪重生。**"
-        reset_world_boss_if_needed()
-        await interaction.followup.send(embed=embed)
-        return
-
-    damage = max(1, int(suggested * random.uniform(0.85, 1.15)))
-    before_hp = hp
-    updated = world_boss_col.find_one_and_update(
-        {"boss_id": "global_01", "hp": {"$gt": 0}},
-        {"$inc": {"hp": -damage}},
-        return_document=ReturnDocument.AFTER,
-    )
-    if not updated:
-        await interaction.followup.send("⚠️ Boss 剛好被其他玩家擊破，請刷新後再戰。", ephemeral=True)
-        return
-
-    actual_damage = min(damage, before_hp)
-    world_boss_col.update_one(
-        {"boss_id": "global_01"},
-        {"$inc": {"total_damage": actual_damage}},
-    )
-    boss_round = int(updated.get("round", boss.get("round", 1)))
-    world_boss_col.update_one(
-        {"boss_id": "global_01", "type": "damage", "round": boss_round, "user_id": user_id},
-        {"$inc": {"damage": actual_damage}, "$set": {"updated_at": time.time()}},
-        upsert=True,
-    )
-    new_hp = max(0, int(updated.get("hp", 0)))
-    users_col.update_one({"user_id": user_id}, {"$inc": {"world_boss_damage": actual_damage}})
-
-    reward_msg = ""
-    if new_hp <= 0:
-        reward_gold = 5000
-        add_inventory(user_id, "🎁 傳奇藥水寶箱", 1)
-        users_col.update_one({"user_id": user_id}, {"$inc": {"balance": reward_gold}})
-        world_boss_col.update_one({"boss_id": "global_01"}, {"$set": {"rewarded": True, "active": False, "defeated_by": user_id, "defeated_at": time.time()}})
-        reward_msg = f"\n\n🏆 **你完成了終結一擊！**\n💰 +{reward_gold:,} 🪙\n🎁 傳奇藥水寶箱 ×1"
-
-    await interaction.followup.send(
-        f"⚔️ 你對 **{boss['name']}** 造成了 `{actual_damage:,}` 傷害！\n"
-        f"❤️ Boss 剩餘 HP：`{new_hp:,} / {max_hp:,}`{reward_msg}"
-    )
-
-
-@bot.tree.command(name="血脈", description="查看與覺醒你的遠古血脈")
-@app_commands.describe(目標血脈="留空查看目前血脈；填入血脈名稱可嘗試覺醒")
-async def bloodline_cmd(interaction: discord.Interaction, 目標血脈: str = ""):
-    await interaction.response.defer(ephemeral=True)
-    user_id = int(interaction.user.id)
-    user = get_user(user_id)
-    current = user.get("race_type", "👤 常規人類")
-    version = int(user.get("race_version", 1))
-
-    if not 目標血脈:
-        lines = [f"🧬 當前血脈：**{current} V{version}**"]
-        for name, data in BLOODLINES.items():
-            lines.append(f"\n**{name}**\n• 最高 V{data['max_version']}\n• 解鎖條件：{data['requirements']}\n• 首次費用：`{data['unlock_cost']:,}` 🪙\n• {data['desc']}")
-        embed = discord.Embed(title="🧬 血脈神殿", description="".join(lines), color=0x9B59B6)
-        await interaction.followup.send(embed=embed, ephemeral=True)
-        return
-
-    target = 目標血脈.strip()
-    if target not in BLOODLINES:
-        await interaction.followup.send("❌ 找不到指定血脈。請先使用 `/血脈` 查看完整血脈名冊。", ephemeral=True)
-        return
-    data = BLOODLINES[target]
-    level = int(user.get("level", 0))
-    if target == "🦈 深海鯊皇" and level < 20:
-        await interaction.followup.send("❌ 需要 LV.20 才能覺醒深海鯊皇。", ephemeral=True)
-        return
-    if target == "🧜 海妖" and level < 60:
-        await interaction.followup.send("❌ 需要 LV.60 才能覺醒海妖。", ephemeral=True)
-        return
-    if target == "🔱 亞特蘭提斯神族" and (level < 160 or user.get("current_map") != "三海_馬里亞娜海溝深淵"):
-        await interaction.followup.send("❌ 需要 LV.160 且位於三海才能覺醒亞特蘭提斯神族。", ephemeral=True)
-        return
-    cost = int(data["unlock_cost"] if target != current else max(5000, data["unlock_cost"] // 2))
-    current_version = version if current == target else 0
-    next_version = 1 if current != target else current_version + 1
-    if next_version > int(data["max_version"]):
-        await interaction.followup.send("✅ 你的這條血脈已達最高階。", ephemeral=True)
-        return
-    if int(user.get("balance", 0)) < cost:
-        await interaction.followup.send(f"❌ 金幣不足，需要 `{cost:,}` 🪙。", ephemeral=True)
-        return
-    changed = users_col.update_one(
-        {"user_id": user_id, "balance": {"$gte": cost}},
-        {"$inc": {"balance": -cost}, "$set": {"race_type": target, "race_version": next_version}}
-    )
-    if changed.modified_count != 1:
-        await interaction.followup.send("❌ 覺醒扣款失敗，這次操作未成立。", ephemeral=True)
-        return
-    await interaction.followup.send(
-        f"🧬 **血脈覺醒成功！**\n"
-        f"{current} V{version} → **{target} V{next_version}**\n"
-        f"💰 消耗：`{cost:,}` 🪙"
-    )
-
-
-def create_auction_embed():
-    now = time.time()
-    auctions = list(auction_col.find({"status": "active", "end_at": {"$gt": now}}).sort([("current_bid", 1), ("end_at", 1)]).limit(15))
-    if not auctions:
-        return discord.Embed(title="🔨 玩家拍賣場", description="目前沒有進行中的拍賣。\n使用 `/建立拍賣` 發起第一筆拍賣。", color=0xE67E22)
-    lines = []
-    for a in auctions:
-        remain = max(0, int(a["end_at"] - now))
-        bidder = f"<@{a['current_bidder']}>" if a.get("current_bidder") else "尚無出價"
-        lines.append(
-            f"`{a['auction_code']}` **{a['item_name']} ×{a['quantity']}**\n"
-            f"起標：`{a['start_bid']:,}`｜目前：`{a['current_bid']:,}`｜最高出價者：{bidder}\n"
-            f"剩餘：`{remain//60}分{remain%60}秒`｜賣家：<@{a['seller_id']}>"
-        )
-    return discord.Embed(title="🔨 玩家拍賣場", description="\n\n".join(lines), color=0xE67E22)
-
-
-def generate_auction_code():
-    chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-    for _ in range(50):
-        code = "A" + "".join(random.choice(chars) for _ in range(7))
-        if auction_col.find_one({"auction_code": code}) is None:
-            return code
-    raise RuntimeError("無法產生拍賣代碼")
-
-
-@bot.tree.command(name="拍賣場", description="查看玩家競標中的物品與剩餘時間")
-async def auction_house_cmd(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
-    embed = create_auction_embed()
-    await interaction.followup.send(embed=embed)
-
-
-@bot.tree.command(name="建立拍賣", description="把背包中的物品放入限時競標拍賣場")
-@app_commands.describe(物品名稱="背包中的物品名稱", 數量="拍賣數量", 起標價="起標總價", 分鐘="拍賣持續時間，10~1440 分鐘")
-async def create_auction_cmd(interaction: discord.Interaction, 物品名稱: str, 數量: int, 起標價: int, 分鐘: int = 60):
-    user_id = int(interaction.user.id)
-    item_name = 物品名稱.strip()
-    數量 = int(數量)
-    起標價 = int(起標價)
-    分鐘 = max(10, min(int(分鐘), 1440))
-    if 數量 < 1 or 起標價 < 1:
-        await interaction.response.send_message("❌ 數量與起標價必須大於 0。", ephemeral=True)
-        return
-    if get_item_count(user_id, item_name) < 數量:
-        await interaction.response.send_message("❌ 你的背包沒有足夠物品。", ephemeral=True)
-        return
-    if not consume_item_atomic(user_id, item_name, 數量):
-        await interaction.response.send_message("❌ 物品剛被其他操作消耗，請刷新背包。", ephemeral=True)
-        return
-    code = generate_auction_code()
-    now = time.time()
-    try:
-        auction_col.insert_one({
-            "auction_code": code,
-            "seller_id": user_id,
-            "item_name": item_name,
-            "quantity": 數量,
-            "start_bid": 起標價,
-            "current_bid": 起標價,
-            "current_bidder": None,
-            "status": "active",
-            "created_at": now,
-            "end_at": now + 分鐘 * 60,
-        })
-    except Exception:
-        add_inventory(user_id, item_name, 數量)
-        raise
-    await interaction.response.send_message(
-        f"✅ **拍賣建立成功！**\n🔨 代碼：`{code}`\n📦 {item_name} ×{數量}\n💰 起標價：`{起標價:,}`\n⏱️ 持續：`{分鐘} 分鐘`"
-    )
-
-
-@bot.tree.command(name="競標", description="對指定拍賣出價；前一位最高出價者會自動退回金幣")
-@app_commands.describe(拍賣代碼="拍賣場中的 8 碼代碼", 出價="新的總出價，必須高於目前出價")
-async def bid_auction_cmd(interaction: discord.Interaction, 拍賣代碼: str, 出價: int):
-    user_id = int(interaction.user.id)
-    code = 拍賣代碼.strip().upper()
-    出價 = int(出價)
-    now = time.time()
-    auction = auction_col.find_one({"auction_code": code, "status": "active"})
-    if not auction:
-        await interaction.response.send_message("❌ 找不到有效拍賣。", ephemeral=True)
-        return
-    if auction["seller_id"] == user_id:
-        await interaction.response.send_message("❌ 賣家不能自己競標自己的拍賣。", ephemeral=True)
-        return
-    if now >= float(auction["end_at"]):
-        await interaction.response.send_message("❌ 拍賣已截止，請使用 `/結算拍賣`。", ephemeral=True)
-        return
-    current_bid = int(auction.get("current_bid", auction["start_bid"]))
-    if 出價 <= current_bid:
-        await interaction.response.send_message(f"❌ 你的出價必須高於目前 ` {current_bid:,} ` 🪙。", ephemeral=True)
-        return
-    user = get_user(user_id)
-    if int(user.get("balance", 0)) < 出價:
-        await interaction.response.send_message(f"❌ 你的金幣不足，需要至少 `{出價:,}` 🪙。", ephemeral=True)
-        return
-
-    # 原子地搶下最高出價欄位，避免兩名玩家同時覆蓋彼此。
-    updated = auction_col.find_one_and_update(
-        {"_id": auction["_id"], "status": "active", "current_bid": current_bid},
-        {"$set": {"current_bid": 出價, "current_bidder": user_id, "last_bid_at": now}},
-        return_document=ReturnDocument.AFTER,
-    )
-    if not updated:
-        await interaction.response.send_message("❌ 有其他玩家同時出價成功，請重新查看拍賣場。", ephemeral=True)
-        return
-
-    charged = users_col.update_one({"user_id": user_id, "balance": {"$gte": 出價}}, {"$inc": {"balance": -出價}})
-    if charged.modified_count != 1:
-        auction_col.update_one(
-            {"_id": auction["_id"], "current_bidder": user_id, "current_bid": 出價},
-            {"$set": {"current_bid": current_bid, "current_bidder": auction.get("current_bidder")}},
-        )
-        await interaction.response.send_message("❌ 扣款失敗，這次競標未成立。", ephemeral=True)
-        return
-
-    previous_bidder = auction.get("current_bidder")
-    if previous_bidder:
-        users_col.update_one({"user_id": int(previous_bidder)}, {"$inc": {"balance": current_bid}})
-    await interaction.response.send_message(
-        f"✅ **競標成功！**\n🔨 `{code}`\n💰 你的最高出價：`{出價:,}` 🪙\n"
-        f"前一位出價者已退回 `{current_bid:,}` 🪙。"
-    )
-
-
-@bot.tree.command(name="結算拍賣", description="結算已到期拍賣；得標者取得物品，賣家取得金幣")
-@app_commands.describe(拍賣代碼="拍賣場中的 8 碼代碼")
-async def settle_auction_cmd(interaction: discord.Interaction, 拍賣代碼: str):
-    code = 拍賣代碼.strip().upper()
-    auction = auction_col.find_one({"auction_code": code, "status": "active"})
-    if not auction:
-        await interaction.response.send_message("❌ 找不到有效拍賣。", ephemeral=True)
-        return
-    if time.time() < float(auction["end_at"]):
-        await interaction.response.send_message("⏳ 拍賣尚未截止，還不能結算。", ephemeral=True)
-        return
-    closed = auction_col.find_one_and_update(
-        {"_id": auction["_id"], "status": "active", "end_at": {"$lte": time.time()}},
-        {"$set": {"status": "settled", "settled_at": time.time()}},
-        return_document=ReturnDocument.AFTER,
-    )
-    if not closed:
-        await interaction.response.send_message("❌ 這筆拍賣正在被其他人結算。", ephemeral=True)
-        return
-
-    bidder = closed.get("current_bidder")
-    if bidder:
-        final_bid = int(closed["current_bid"])
-        auction_tax = int(final_bid * 0.10)
-        seller_net = final_bid - auction_tax
-        add_inventory(int(bidder), closed["item_name"], int(closed["quantity"]))
-        users_col.update_one({"user_id": int(closed["seller_id"])}, {"$inc": {"balance": seller_net}})
-        await interaction.response.send_message(
-            f"🏆 **拍賣結算完成！**\n"
-            f"📦 {closed['item_name']} ×{closed['quantity']} → <@{bidder}>\n"
-            f"💰 成交價：`{final_bid:,}` 🪙\n"
-            f"🏛️ 官方 10% 拍賣稅：`{auction_tax:,}` 🪙\n"
-            f"💵 賣家實收：`{seller_net:,}` 🪙"
-        )
+    p["breakthrough_bonus"] = 0.0
+    p["last_breakthrough_target"] = target
+    p["realm"] = target
+    if target == 1:
+        p["qi_layer"] = 1
+        p["phase"] = 0
     else:
-        add_inventory(int(closed["seller_id"]), closed["item_name"], int(closed["quantity"]))
-        await interaction.response.send_message("🔨 本次拍賣無人出價，物品已退回賣家背包。")
+        p["phase"] = 0
+        p["qi_layer"] = 1
+    p["max_qi"] += 35 + target * 10
+    p["power"] += 25 + target * 15
+
+def realm_name(idx: int) -> str:
+    idx = max(0, min(idx, len(REALMS)-1))
+    return REALMS[idx][0]
 
 
-# 將所有現有 Slash Command 套上全域新手保護鎖。
-# `/新手教學` 與 `/幫助` 永遠開放，其餘指令在 tutorial_completed=True 前會被阻擋。
-def install_tutorial_gate():
-    for cmd in bot.tree.get_commands():
-        if getattr(cmd, "name", None) in {"新手教學", "幫助", "help"}:
-            continue
+def realm_req(idx: int) -> int:
+    return REALMS[max(0, min(idx, len(REALMS)-1))][1]
+
+
+def power_of(p: Dict[str, Any]) -> int:
+    normalize_cultivation(p)
+    realm_mult = REALMS[max(0, min(p.get("realm", 0), len(REALMS)-1))][2]
+    weapon = p.get("weapon_attack", 0)
+    return int((100 + p.get("power", 0) + weapon) * realm_mult * p.get("spirit_mult", 1.0) * p.get("technique_bonus", 1.0))
+
+
+def add_item(p: Dict[str, Any], item_id: int, count: int = 1) -> None:
+    inv = p.setdefault("inventory", {})
+    key = str(item_id)
+    inv[key] = inv.get(key, 0) + count
+    if inv[key] <= 0:
+        inv.pop(key, None)
+
+
+def count_item(p: Dict[str, Any], item_id: int) -> int:
+    return p.get("inventory", {}).get(str(item_id), 0)
+
+
+def remove_item(p: Dict[str, Any], item_id: int, count: int = 1) -> bool:
+    if count_item(p, item_id) < count:
+        return False
+    add_item(p, item_id, -count)
+    return True
+
+
+def path_locked(p: Dict[str, Any], target: str) -> bool:
+    return p.get("path") is not None and p.get("path") != target
+
+
+def unlocked(p: Dict[str, Any]) -> bool:
+    return p.get("path") is not None
+
+
+def cooldown_ready(p: Dict[str, Any], key: str, seconds: int) -> Tuple[bool, int]:
+    remain = max(0, seconds - (int(time.time()) - int(p.get(key, 0))))
+    return remain == 0, remain
+
+
+def format_seconds(sec: int) -> str:
+    if sec <= 0:
+        return "現在"
+    m, s = divmod(sec, 60)
+    h, m = divmod(m, 60)
+    if h:
+        return f"{h}小時{m}分{s}秒"
+    if m:
+        return f"{m}分{s}秒"
+    return f"{s}秒"
+
+
+def ensure_path(interaction: discord.Interaction) -> Optional[Dict[str, Any]]:
+    p = get_player(interaction.user.id)
+    if not unlocked(p):
+        return None
+    return p
+
+
+async def deny(interaction: discord.Interaction, msg: str) -> None:
+    if interaction.response.is_done():
+        await interaction.followup.send(msg, ephemeral=True)
+    else:
+        await interaction.response.send_message(msg, ephemeral=True)
+
+
+class OwnerView(discord.ui.View):
+    def __init__(self, owner_id: int, timeout: int = 180):
+        super().__init__(timeout=timeout)
+        self.owner_id = owner_id
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("這個面板不是你的。", ephemeral=True)
+            return False
+        return True
+
+
+class RootView(OwnerView):
+    @discord.ui.button(label="覺醒靈根", emoji="🌌", style=discord.ButtonStyle.primary)
+    async def awaken(self, interaction: discord.Interaction, button: discord.ui.Button):
+        p = get_player(interaction.user.id)
+        if p["spirit_root"]:
+            await interaction.response.send_message(f"你已覺醒：**{p['spirit_root']}**", ephemeral=True)
+            return
+        roll = random.random()
+        thresholds = [0.34,0.50,0.62,0.74,0.84,0.92,0.97,0.99,0.998,0.9995,1.0]
+        idx = next(i for i,t in enumerate(thresholds) if roll <= t)
+        name,mult,desc = ROOTS[idx]
+        p["spirit_root"] = name
+        p["spirit_mult"] = mult
+        p["max_qi"] += 10 + idx*5
+        save_world()
+        for child in self.children:
+            child.disabled=True
+        await interaction.response.edit_message(content=f"✨ 靈根覺醒：**{name}**\n修煉倍率 x{mult:.2f}\n{desc}", view=self)
+
+
+class PathView(OwnerView):
+    @discord.ui.button(label="正統仙途", emoji="☯️", style=discord.ButtonStyle.success, row=0)
+    async def cultivation(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.choose(interaction, "cultivation")
+
+    @discord.ui.button(label="上古傳承", emoji="📜", style=discord.ButtonStyle.primary, row=0)
+    async def inheritance(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.choose(interaction, "inheritance")
+
+    @discord.ui.button(label="煉體大道", emoji="💪", style=discord.ButtonStyle.danger, row=0)
+    async def body(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.choose(interaction, "body")
+
+    async def choose(self, interaction: discord.Interaction, path: str):
+        p = get_player(interaction.user.id)
+        if p["path"]:
+            await deny(interaction, f"你已經選擇 **{PATHS[p['path']]}**，其他道路永久鎖定。")
+            return
+        p["path"] = path
+        if path == "cultivation":
+            p["max_qi"] = 140
+            p["technique"] = "納氣訣"
+            p["technique_bonus"] = 1.08
+        elif path == "inheritance":
+            p["max_qi"] = 160
+            p["technique"] = "上古殘卷"
+            p["technique_bonus"] = 1.24
+            p["power"] += 35
+        else:
+            p["max_qi"] = 80
+            p["power"] += 80
+        save_world()
+        for child in self.children:
+            child.disabled=True
+        await interaction.response.edit_message(content=f"🌟 你正式選擇：**{PATHS[path]}**\n道路已鎖定。\n現在可以使用 `/menu` 開啟修仙主選單。", view=self)
+
+
+class MainMenuSelect(discord.ui.Select):
+    def __init__(self, owner_id: int):
+        opts = [
+            discord.SelectOption(label="角色狀態", value="status", emoji="📜"),
+            discord.SelectOption(label="靈根覺醒", value="root", emoji="🌌"),
+            discord.SelectOption(label="打坐修煉", value="meditate", emoji="🧘"),
+            discord.SelectOption(label="商街", value="market", emoji="🏮"),
+            discord.SelectOption(label="背包", value="bag", emoji="🎒"),
+            discord.SelectOption(label="任務", value="quests", emoji="📋"),
+            discord.SelectOption(label="秘境", value="dungeon", emoji="🗺️"),
+            discord.SelectOption(label="宗門", value="sect", emoji="🏯"),
+            discord.SelectOption(label="世界 Boss", value="boss", emoji="🐉"),
+            discord.SelectOption(label="排行榜", value="rank", emoji="🏆"),
+        ]
+        super().__init__(placeholder="選擇你要進入的功能…", min_values=1, max_values=1, options=opts)
+        self.owner_id = owner_id
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.owner_id:
+            await deny(interaction, "這不是你的主選單。")
+            return
+        key = self.values[0]
+        handlers = {
+            "status": show_status,
+            "root": show_root,
+            "meditate": do_meditate,
+            "market": show_market,
+            "bag": show_bag,
+            "quests": show_quests,
+            "dungeon": show_dungeon,
+            "sect": show_sect,
+            "boss": show_boss,
+            "rank": show_rank,
+        }
+        await handlers[key](interaction)
+
+
+class MainMenuView(OwnerView):
+    def __init__(self, owner_id: int):
+        super().__init__(owner_id, timeout=300)
+        self.add_item(MainMenuSelect(owner_id))
+        self.add_item(MainRefreshButton(owner_id))
+        self.add_item(MainCloseButton(owner_id))
+
+
+class MainRefreshButton(discord.ui.Button):
+    def __init__(self, owner_id: int):
+        super().__init__(label="重新整理", emoji="🔄", style=discord.ButtonStyle.secondary)
+        self.owner_id = owner_id
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.owner_id:
+            await deny(interaction, "這不是你的主選單。")
+            return
+        await interaction.response.edit_message(content=build_status_text(get_player(self.owner_id)), view=MainMenuView(self.owner_id))
+
+
+class MainCloseButton(discord.ui.Button):
+    def __init__(self, owner_id: int):
+        super().__init__(label="關閉", emoji="✖️", style=discord.ButtonStyle.danger)
+        self.owner_id = owner_id
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.owner_id:
+            await deny(interaction, "這不是你的主選單。")
+            return
+        for item in self.view.children:
+            item.disabled=True
+        await interaction.response.edit_message(content="主選單已關閉。使用 `/menu` 可以再次開啟。", view=self.view)
+
+
+def build_status_text(p: Dict[str, Any]) -> str:
+    path = PATHS.get(p.get("path"), "尚未踏入任何道路")
+    root = p.get("spirit_root") or "尚未覺醒"
+    tech = p.get("technique") or "無"
+    sect = p.get("sect") or "無"
+    return (f"☯️ **{WORLD_NAME} · 修仙面板**\n"
+            f"道路：**{path}**\n境界：**{realm_name(p['realm'])}**\n"
+            f"靈根：**{root}**\n靈氣：**{p['qi']}/{p['max_qi']}**\n"
+            f"靈石：**{p['stones']}**\n功法：**{tech}**\n"
+            f"宗門：**{sect}**\n戰力：**{power_of(p):,}**\n"
+            f"討伐：{p['kills']} 次 · 突破：{p['breakthroughs']} 次")
+
+
+async def show_status(interaction: discord.Interaction):
+    p = get_player(interaction.user.id)
+    await interaction.response.edit_message(content=build_status_text(p), view=MainMenuView(interaction.user.id))
+
+
+async def show_root(interaction: discord.Interaction):
+    p = get_player(interaction.user.id)
+    if p["spirit_root"]:
+        await interaction.response.edit_message(content=f"🌌 你的靈根：**{p['spirit_root']}**\n倍率 x{p['spirit_mult']:.2f}", view=MainMenuView(interaction.user.id))
+    else:
+        await interaction.response.edit_message(content="🌌 你還沒有覺醒靈根。可從這裡開始覺醒。", view=RootMenuView(interaction.user.id))
+
+
+class RootMenuView(OwnerView):
+    @discord.ui.button(label="覺醒靈根", emoji="🌌", style=discord.ButtonStyle.primary)
+    async def awaken(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("靈根覺醒儀式開始。", view=RootView(interaction.user.id), ephemeral=True)
+
+    @discord.ui.button(label="返回主選單", emoji="↩️", style=discord.ButtonStyle.secondary)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(content=build_status_text(get_player(interaction.user.id)), view=MainMenuView(interaction.user.id))
+
+
+async def do_meditate(interaction: discord.Interaction):
+    p = ensure_path(interaction)
+    if p is None:
+        await deny(interaction, "🔒 你尚未踏入任何修行道路。先使用 `/enter`。")
+        return
+    normalize_cultivation(p)
+    ready, remain = cooldown_ready(p, "last_meditate", 15)
+    if not ready:
+        await deny(interaction, f"你剛剛才收功，還需等待 **{format_seconds(remain)}**。")
+        return
+    gain = int(20 * p["spirit_mult"] * p["technique_bonus"] * (1.15 if p["path"] == "cultivation" else 1.0))
+    gain += random.randint(4, 12)
+    p["qi"] = min(p["max_qi"], p["qi"] + gain)
+    p["last_meditate"] = int(time.time())
+    broke = False
+    failed_breakthrough = False
+    target = current_breakthrough_target(p)
+    if target is None:
+        if p["realm"] == 1 and p["qi"] >= p["max_qi"]:
+            target = 2
+        elif p["realm"] >= 2 and p.get("phase", 0) >= 3 and p["qi"] >= p["max_qi"]:
+            target = p["realm"] + 1 if p["realm"] < len(REALMS)-1 else None
+    if target is not None and p["qi"] >= p["max_qi"]:
+        chance = breakthrough_chance(p)
+        p["last_breakthrough_target"] = target
+        if random.random() < chance:
+            p["qi"] -= p["max_qi"]
+            advance_realm_after_success(p)
+            p["breakthroughs"] += 1
+            broke = True
+        else:
+            p["breakthrough_bonus"] = 0.0
+            p["qi"] = p["max_qi"]
+            failed_breakthrough = True
+    save_world()
+    msg = f"🧘 打坐完成，吸收 **{gain}** 靈氣。\n目前：{p['qi']}/{p['max_qi']}\n修為：**{cultivation_name(p)}**"
+    if broke:
+        msg += f"\n\n⚡ **突破成功！**\n你踏入 **{cultivation_name(p)}**。"
+    elif failed_breakthrough:
+        msg += f"\n\n💥 **突破失敗！** 本次突破成功率：**{int(chance*100)}%**。"
+        if p.get("breakthrough_bonus", 0.0) <= 0:
+            pill_id = breakthrough_pill_for(p)
+            if pill_id:
+                msg += f"\n可使用 **{BREAKTHROUGH_PILLS[pill_id]['name']}** 將下一次目前突破提高至 70%。"
+    await interaction.response.edit_message(content=msg, view=MainMenuView(interaction.user.id))
+
+
+async def show_market(interaction: discord.Interaction):
+    await interaction.response.edit_message(content="🏮 **萬界商街**\n使用 `/buy <商品ID> <數量>` 購買。\n商品來源包含靈草、丹藥、材料、符籙與法寶素材。", view=MarketMenuView(interaction.user.id))
+
+
+class MarketMenuView(OwnerView):
+    @discord.ui.select(placeholder="選擇商街類別", options=[
+        discord.SelectOption(label="熱門商品", value="hot", emoji="🔥"),
+        discord.SelectOption(label="靈草", value="herb", emoji="🌿"),
+        discord.SelectOption(label="丹藥", value="pill", emoji="💊"),
+        discord.SelectOption(label="礦石", value="ore", emoji="⛏️"),
+        discord.SelectOption(label="符籙", value="talisman", emoji="📜"),
+        discord.SelectOption(label="武器", value="weapon", emoji="⚔️"),
+    ])
+    async def category(self, interaction: discord.Interaction, select: discord.ui.Select):
+        p = get_player(interaction.user.id)
+        wanted = {"herb":"靈草","pill":"丹藥","ore":"礦石","talisman":"符籙","weapon":"武器"}.get(select.values[0])
+        rows=[]
+        for item_id,item in list(ITEMS.items()):
+            if wanted and item["kind"] != wanted:
+                continue
+            if not wanted and item_id % 17 != 0:
+                continue
+            rows.append((item_id,item))
+            if len(rows)>=10:
+                break
+        text="🏮 **商街商品**\n"
+        for item_id,item in rows:
+            text += f"`{item_id}` {item['name']} · {item['buy']} 靈石 · 出售 {item['sell']}\n"
+        text += "\n使用 `/buy 商品ID 數量`。"
+        await interaction.response.edit_message(content=text, view=self)
+
+    @discord.ui.button(label="返回", emoji="↩️", style=discord.ButtonStyle.secondary)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(content=build_status_text(get_player(interaction.user.id)), view=MainMenuView(interaction.user.id))
+
+
+async def show_bag(interaction: discord.Interaction):
+    p = get_player(interaction.user.id)
+    inv=p.get("inventory",{})
+    if not inv:
+        text="🎒 **背包**\n目前是空的。"
+    else:
+        lines=["🎒 **背包**"]
+        for k,c in list(inv.items())[:40]:
+            item=ITEMS.get(int(k))
+            if item:
+                lines.append(f"`{k}` {item['name']} x{c}")
+        text="\n".join(lines)
+    await interaction.response.edit_message(content=text, view=BagMenuView(interaction.user.id))
+
+
+class BagMenuView(OwnerView):
+    @discord.ui.button(label="返回主選單", emoji="↩️", style=discord.ButtonStyle.secondary)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(content=build_status_text(get_player(interaction.user.id)), view=MainMenuView(interaction.user.id))
+
+
+async def show_quests(interaction: discord.Interaction):
+    p=get_player(interaction.user.id)
+    lines=["📋 **任務面板**"]
+    active=p.get("quests",{})
+    for qid,q in list(QUESTS.items())[:12]:
+        progress=active.get(str(qid),0)
+        done=progress>=q["target"]
+        lines.append(f"`{qid}` {q['name']} · {progress}/{q['target']} {'✅' if done else ''}")
+    lines.append("\n使用 `/quest 領取` 或 `/quest <任務ID>`。")
+    await interaction.response.edit_message(content="\n".join(lines), view=QuestMenuView(interaction.user.id))
+
+
+class QuestMenuView(OwnerView):
+    @discord.ui.button(label="刷新任務", emoji="🔄", style=discord.ButtonStyle.primary)
+    async def refresh(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await show_quests(interaction)
+
+    @discord.ui.button(label="返回", emoji="↩️", style=discord.ButtonStyle.secondary)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(content=build_status_text(get_player(interaction.user.id)), view=MainMenuView(interaction.user.id))
+
+
+async def show_dungeon(interaction: discord.Interaction):
+    await interaction.response.edit_message(content="🗺️ **秘境**\n使用 `/dungeon <1~10>` 挑戰對應層數。\n每層都有不同的靈石與材料掉落。", view=DungeonMenuView(interaction.user.id))
+
+
+class DungeonMenuView(OwnerView):
+    @discord.ui.select(placeholder="選擇秘境層數", options=[discord.SelectOption(label=f"秘境第{i}層", value=str(i)) for i in range(1,11)])
+    async def select(self, interaction: discord.Interaction, select: discord.ui.Select):
+        await run_dungeon(interaction, int(select.values[0]))
+
+    @discord.ui.button(label="返回", emoji="↩️", style=discord.ButtonStyle.secondary)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(content=build_status_text(get_player(interaction.user.id)), view=MainMenuView(interaction.user.id))
+
+
+async def run_dungeon(interaction: discord.Interaction, layer: int):
+    p=ensure_path(interaction)
+    if p is None:
+        await deny(interaction,"🔒 先踏入修行道路。")
+        return
+    required=min(9,(layer-1))
+    if p["realm"] < required:
+        await deny(interaction,f"境界不足，至少需要 **{realm_name(required)}**。")
+        return
+    enemy=500*layer+random.randint(0,200*layer)
+    chance=max(0.15,min(0.95,0.55+(power_of(p)-enemy)/(enemy*2)))
+    if random.random() < chance:
+        reward=random.randint(100*layer,350*layer)
+        p["stones"]+=reward
+        add_item(p,(layer-1)*10+1,random.randint(1,3))
+        p["wins"]+=1
+        save_world()
+        await interaction.response.edit_message(content=f"🗺️ 你突破秘境第 **{layer}** 層！\n獲得 **{reward} 靈石**與材料。", view=DungeonMenuView(interaction.user.id))
+    else:
+        p["losses"]+=1
+        loss=min(p["stones"],50*layer)
+        p["stones"]-=loss
+        save_world()
+        await interaction.response.edit_message(content=f"💥 秘境挑戰失敗，損失 {loss} 靈石。", view=DungeonMenuView(interaction.user.id))
+
+
+async def show_sect(interaction: discord.Interaction):
+    p=get_player(interaction.user.id)
+    sect=p.get("sect") or "尚未加入宗門"
+    text=f"🏯 **宗門系統**\n目前宗門：**{sect}**\n貢獻：{p['contrib']}"
+    await interaction.response.edit_message(content=text,view=SectMenuView(interaction.user.id))
+
+
+class SectMenuView(OwnerView):
+    @discord.ui.button(label="加入天玄宗", emoji="🏯", style=discord.ButtonStyle.success)
+    async def join1(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await join_sect(interaction,"天玄宗")
+    @discord.ui.button(label="加入紫霄宮", emoji="⚡", style=discord.ButtonStyle.primary)
+    async def join2(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await join_sect(interaction,"紫霄宮")
+    @discord.ui.button(label="加入太虛殿", emoji="🌌", style=discord.ButtonStyle.secondary)
+    async def join3(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await join_sect(interaction,"太虛殿")
+    @discord.ui.button(label="返回", emoji="↩️", style=discord.ButtonStyle.secondary, row=1)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(content=build_status_text(get_player(interaction.user.id)),view=MainMenuView(interaction.user.id))
+
+
+async def join_sect(interaction: discord.Interaction,name:str):
+    p=get_player(interaction.user.id)
+    if p["sect"]:
+        await deny(interaction,f"你已加入 **{p['sect']}**，不能重複入宗。")
+        return
+    p["sect"]=name
+    p["sect_role"]="外門弟子"
+    p["contrib"]+=10
+    save_world()
+    await interaction.response.edit_message(content=f"🏯 你加入了 **{name}**，成為外門弟子。",view=SectMenuView(interaction.user.id))
+
+
+async def show_boss(interaction: discord.Interaction):
+    w=WORLD["world"]
+    hp=w["boss_hp"]
+    maxhp=w["boss_max"]
+    await interaction.response.edit_message(content=f"🐉 **世界 Boss：{w['boss_name']}**\nHP：{hp:,}/{maxhp:,}\n使用 `/boss_attack` 參與討伐。",view=BossMenuView(interaction.user.id))
+
+
+class BossMenuView(OwnerView):
+    @discord.ui.button(label="討伐世界 Boss", emoji="⚔️", style=discord.ButtonStyle.danger)
+    async def attack(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await boss_attack(interaction)
+    @discord.ui.button(label="刷新", emoji="🔄", style=discord.ButtonStyle.secondary)
+    async def refresh(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await show_boss(interaction)
+    @discord.ui.button(label="返回", emoji="↩️", style=discord.ButtonStyle.secondary, row=1)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(content=build_status_text(get_player(interaction.user.id)),view=MainMenuView(interaction.user.id))
+
+
+async def boss_attack(interaction: discord.Interaction):
+    p=ensure_path(interaction)
+    if p is None:
+        await deny(interaction,"🔒 尚未踏入修行道路。")
+        return
+    damage=max(50,int(power_of(p)*random.uniform(0.7,1.25)))
+    w=WORLD["world"]
+    w["boss_hp"]=max(0,w["boss_hp"]-damage)
+    p["boss_damage"]+=damage
+    p["contrib"]+=max(1,damage//100)
+    if w["boss_hp"]==0:
+        reward=random.randint(5000,15000)
+        p["stones"]+=reward
+        w["boss_hp"]=w["boss_max"]
+        msg=f"🌠 你造成 **{damage:,}** 傷害，最終斬殺 **{w['boss_name']}**！\n額外獲得 {reward} 靈石。"
+    else:
+        msg=f"⚔️ 你對 **{w['boss_name']}** 造成 **{damage:,}** 傷害！\n剩餘 HP：{w['boss_hp']:,}/{w['boss_max']:,}"
+    save_world()
+    await interaction.response.edit_message(content=msg,view=BossMenuView(interaction.user.id))
+
+
+async def show_rank(interaction: discord.Interaction):
+    rows=[]
+    for uid,p in WORLD.get("players",{}).items():
+        rows.append((power_of(p),uid,p))
+    rows.sort(reverse=True,key=lambda x:x[0])
+    lines=["🏆 **九霄萬界戰力榜**"]
+    for rank,(power,uid,p) in enumerate(rows[:10],1):
+        lines.append(f"`#{rank}` <@{uid}> · {realm_name(p['realm'])} · 戰力 {power:,}")
+    await interaction.response.edit_message(content="\n".join(lines) if rows else "目前沒有榜單資料。",view=MainMenuView(interaction.user.id))
+
+
+@bot.tree.command(name="menu", description="開啟修仙主選單")
+async def menu(interaction: discord.Interaction):
+    p=get_player(interaction.user.id)
+    await interaction.response.send_message(build_status_text(p),view=MainMenuView(interaction.user.id),ephemeral=True)
+
+
+@bot.tree.command(name="root", description="覺醒靈根")
+async def root(interaction: discord.Interaction):
+    p=get_player(interaction.user.id)
+    if p["spirit_root"]:
+        await interaction.response.send_message(f"你的靈根是 **{p['spirit_root']}**",ephemeral=True)
+        return
+    await interaction.response.send_message("🌌 將神魂沉入識海。",view=RootView(interaction.user.id),ephemeral=True)
+
+
+@bot.tree.command(name="enter", description="100% 踏入正統仙途")
+async def enter(interaction: discord.Interaction):
+    p=get_player(interaction.user.id)
+    if p["path"]:
+        await deny(interaction,f"你已選擇 **{PATHS[p['path']]}**，其他道路鎖定。")
+        return
+    if not p["spirit_root"]:
+        await deny(interaction,"請先使用 `/root` 覺醒靈根。")
+        return
+    p["path"]="cultivation"
+    p["max_qi"]=140
+    p["technique"]="納氣訣"
+    p["technique_bonus"]=1.08
+    p["power"]+=50
+    save_world()
+    await interaction.response.send_message("🌠 **踏入仙途成功！**\n成功率 100%。\n道路已鎖定為 **正統仙途**。",ephemeral=True)
+
+
+@bot.tree.command(name="alternate_path", description="選擇替代修行道路")
+async def alternate_path(interaction: discord.Interaction):
+    p=get_player(interaction.user.id)
+    if p["path"]:
+        await deny(interaction,"你已選擇道路，無法再選。")
+        return
+    if not p["spirit_root"]:
+        await deny(interaction,"先覺醒靈根。")
+        return
+    await interaction.response.send_message("選擇你的第二條道路。",view=PathView(interaction.user.id),ephemeral=True)
+
+
+@bot.tree.command(name="meditate", description="打坐吸收天地靈氣")
+async def meditate(interaction: discord.Interaction):
+    p=ensure_path(interaction)
+    if p is None:
+        await deny(interaction,"🔒 未踏入仙途。")
+        return
+    await do_meditate(interaction)
+
+
+@bot.tree.command(name="buy", description="從萬界商街購買商品")
+@app_commands.describe(item_id="商品ID", quantity="購買數量")
+async def buy(interaction: discord.Interaction,item_id:int,quantity:app_commands.Range[int,1,99]):
+    p=ensure_path(interaction)
+    if p is None:
+        await deny(interaction,"🔒 未踏入仙途。")
+        return
+    item=ITEMS.get(item_id)
+    if not item:
+        await deny(interaction,"商品不存在。")
+        return
+    total=item["buy"]*quantity
+    if p["stones"]<total:
+        await deny(interaction,f"靈石不足，需要 {total}，目前只有 {p['stones']}。")
+        return
+    p["stones"]-=total
+    add_item(p,item_id,quantity)
+    save_world()
+    await interaction.response.send_message(f"🏮 購買成功：**{item['name']} x{quantity}**\n花費 {total} 靈石。",ephemeral=True)
+
+
+@bot.tree.command(name="sell", description="出售背包中的商品")
+@app_commands.describe(item_id="商品ID", quantity="出售數量")
+async def sell(interaction: discord.Interaction,item_id:int,quantity:app_commands.Range[int,1,99]):
+    p=ensure_path(interaction)
+    if p is None:
+        await deny(interaction,"🔒 未踏入仙途。")
+        return
+    item=ITEMS.get(item_id)
+    if not item or not remove_item(p,item_id,quantity):
+        await deny(interaction,"商品不存在，或你的數量不足。")
+        return
+    total=item["sell"]*quantity
+    p["stones"]+=total
+    save_world()
+    await interaction.response.send_message(f"💰 出售成功：{item['name']} x{quantity}\n獲得 {total} 靈石。",ephemeral=True)
+
+
+@bot.tree.command(name="hunt", description="討伐隨機妖獸")
+async def hunt(interaction: discord.Interaction):
+    p=ensure_path(interaction)
+    if p is None:
+        await deny(interaction,"🔒 未踏入仙途。")
+        return
+    ready,remain=cooldown_ready(p,"last_hunt",20)
+    if not ready:
+        await deny(interaction,f"你剛討伐過，還要等 {format_seconds(remain)}。")
+        return
+    monster=MONSTERS[random.randint(1,len(MONSTERS))]
+    chance=max(0.08,min(0.93,0.5+(power_of(p)-monster["power"])/(monster["power"]*2.5)))
+    p["last_hunt"]=int(time.time())
+    if random.random()<chance:
+        reward=random.randint(*monster["reward"])
+        p["stones"]+=reward
+        p["kills"]+=1
+        qid=(p["kills"]%len(QUESTS))+1
+        p["quests"][str(qid)]=p["quests"].get(str(qid),0)+1
+        drop_text = ""
+        target = current_breakthrough_target(p)
+        pill_id = None
+        if target is not None:
+            for candidate_id, pill in BREAKTHROUGH_PILLS.items():
+                if pill["for_realm"] == target and random.random() < pill["drop_rate"]:
+                    pill_id = candidate_id
+                    add_item(p, candidate_id, 1)
+                    drop_text = f"\n🎁 額外掉落：**{pill['name']}**（突破丹）"
+                    break
+        save_world()
+        await interaction.response.send_message(f"⚔️ 擊敗 **{monster['name']}**！\n獲得 {reward} 靈石。{drop_text}",ephemeral=True)
+    else:
+        loss=min(p["stones"],random.randint(10,50))
+        p["stones"]-=loss
+        p["losses"]+=1
+        save_world()
+        await interaction.response.send_message(f"💥 敗給 **{monster['name']}**，損失 {loss} 靈石。",ephemeral=True)
+
+
+@bot.tree.command(name="dungeon", description="挑戰秘境")
+@app_commands.describe(layer="秘境層數 1~10")
+async def dungeon(interaction: discord.Interaction,layer:app_commands.Range[int,1,10]):
+    await run_dungeon(interaction,int(layer))
+
+
+@bot.tree.command(name="sect", description="開啟宗門系統")
+async def sect(interaction: discord.Interaction):
+    p=get_player(interaction.user.id)
+    if not p["path"]:
+        await deny(interaction,"🔒 尚未踏入仙途。")
+        return
+    await interaction.response.send_message(f"🏯 宗門：{p['sect'] or '未加入'}\n貢獻：{p['contrib']}",view=SectMenuView(interaction.user.id),ephemeral=True)
+
+
+@bot.tree.command(name="boss_attack", description="攻擊世界 Boss")
+async def boss_attack_cmd(interaction: discord.Interaction):
+    await boss_attack(interaction)
+
+
+@bot.tree.command(name="daily", description="領取每日簽到")
+async def daily(interaction: discord.Interaction):
+    p=get_player(interaction.user.id)
+    now=int(time.time())
+    day=86400
+    last=p["daily"].get("last",0)
+    if now-last<day:
+        await deny(interaction,f"今日已簽到，剩餘 {format_seconds(day-(now-last))}。")
+        return
+    streak=p["daily"].get("streak",0)+1
+    reward=200+streak*30
+    p["daily"]={"last":now,"streak":streak}
+    p["stones"]+=reward
+    p["qi"]=min(p["max_qi"],p["qi"]+20+streak*3)
+    save_world()
+    await interaction.response.send_message(f"📅 每日簽到成功！\n連續簽到：{streak} 天\n獲得：{reward} 靈石。",ephemeral=True)
+
+
+@bot.tree.command(name="quest", description="查看或領取任務")
+@app_commands.describe(action="輸入 list / claim", quest_id="任務ID，可留空")
+async def quest(interaction: discord.Interaction,action:str="list",quest_id:Optional[int]=None):
+    p=ensure_path(interaction)
+    if p is None:
+        await deny(interaction,"🔒 尚未踏入仙途。")
+        return
+    if action.lower()=="list":
+        lines=["📋 任務清單"]
+        for qid,q in list(QUESTS.items())[:15]:
+            progress=p["quests"].get(str(qid),0)
+            lines.append(f"{qid}. {q['name']} {progress}/{q['target']}·獎勵 {q['reward']}")
+        await interaction.response.send_message("\n".join(lines),ephemeral=True)
+        return
+    if action.lower()=="claim" and quest_id:
+        q=QUESTS.get(quest_id)
+        if not q:
+            await deny(interaction,"任務不存在。")
+            return
+        progress=p["quests"].get(str(quest_id),0)
+        if progress<q["target"]:
+            await deny(interaction,f"進度不足：{progress}/{q['target']}。")
+            return
+        p["quests"][str(quest_id)]=-(10**9)
+        p["stones"]+=q["reward"]
+        p["power"]+=q["exp"]
+        save_world()
+        await interaction.response.send_message(f"🎁 完成 **{q['name']}**，獲得 {q['reward']} 靈石與 {q['exp']} 修為。",ephemeral=True)
+        return
+    await deny(interaction,"用法：`/quest list` 或 `/quest claim 任務ID`。")
+
+
+@bot.tree.command(name="shop", description="查看萬界商街")
+async def shop(interaction: discord.Interaction):
+    await show_market(interaction)
+
+
+@bot.tree.command(name="bag", description="查看背包")
+async def bag(interaction: discord.Interaction):
+    await show_bag(interaction)
+
+
+@bot.tree.command(name="status", description="查看修仙狀態")
+async def status(interaction: discord.Interaction):
+    p=get_player(interaction.user.id)
+    await interaction.response.send_message(build_status_text(p),ephemeral=True)
+
+
+@bot.tree.command(name="use_pill", description="使用境界突破丹，只對目前這次突破有效")
+@app_commands.describe(pill_id="突破丹 ID")
+async def use_pill(interaction: discord.Interaction, pill_id: app_commands.Range[int, 5001, 5007]):
+    p = ensure_path(interaction)
+    if p is None:
+        await deny(interaction, "🔒 尚未踏入仙途。")
+        return
+    normalize_cultivation(p)
+    pill = BREAKTHROUGH_PILLS.get(int(pill_id))
+    if not pill:
+        await deny(interaction, "這不是可用的境界突破丹。")
+        return
+    target = current_breakthrough_target(p)
+    if target != pill["for_realm"]:
+        await deny(interaction, f"目前的突破目標不是 {pill['name']} 對應的境界；丹藥不能提前使用。")
+        return
+    if count_item(p, int(pill_id)) <= 0:
+        await deny(interaction, f"你沒有 **{pill['name']}**。")
+        return
+    remove_item(p, int(pill_id), 1)
+    p["breakthrough_bonus"] = 0.20
+    p["last_breakthrough_target"] = target
+    save_world()
+    await interaction.response.send_message(
+        f"💊 已使用 **{pill['name']}**。\n"
+        f"本次目前突破成功率提升至 **70%**。\n"
+        "⚠️ 只對這一次目前的突破有效，突破成功或失敗後效果都會消失。",
+        ephemeral=True)
+
+
+@bot.tree.command(name="craft", description="煉丹")
+@app_commands.describe(pill_id="丹藥ID", quantity="數量")
+async def craft(interaction: discord.Interaction,pill_id:app_commands.Range[int,1,350],quantity:app_commands.Range[int,1,20]):
+    p=ensure_path(interaction)
+    if p is None:
+        await deny(interaction,"🔒 尚未踏入仙途。")
+        return
+    pill=PILLS.get(int(pill_id))
+    if not pill:
+        await deny(interaction,"丹方不存在。")
+        return
+    cost=pill["price"]*quantity//2
+    if p["stones"]<cost:
+        await deny(interaction,f"煉丹材料與火耗不足，需要 {cost} 靈石。")
+        return
+    p["stones"]-=cost
+    p["power"]+=pill["strength"]*quantity
+    p["recipes"].append(int(pill_id)) if int(pill_id) not in p["recipes"] else None
+    save_world()
+    await interaction.response.send_message(f"🔥 成功煉製 {pill['name']} x{quantity}，修為+{pill['strength']*quantity}。",ephemeral=True)
+
+
+@bot.tree.command(name="weapons", description="查看武器商店與已裝備武器")
+async def weapons(interaction: discord.Interaction):
+    p = get_player(interaction.user.id)
+    normalize_cultivation(p)
+    lines = ["⚔️ **萬界武器庫**"]
+    for wid, weapon in WEAPONS.items():
+        lines.append(f"`{wid}` **{weapon['name']}** · 基礎攻擊 {weapon['attack']} · 價格 {weapon['price']}")
+    lines.append(f"\n目前裝備：**{p.get('weapon') or '無'}** Lv.{p.get('weapon_level', 0)}")
+    lines.append("使用 `/buy_weapon 武器ID` 購買/裝備；使用 `/upgrade_weapon` 強化。")
+    await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
+@bot.tree.command(name="buy_weapon", description="購買並裝備武器")
+@app_commands.describe(weapon_id="武器 ID")
+async def buy_weapon(interaction: discord.Interaction, weapon_id: app_commands.Range[int,7001,7006]):
+    p = ensure_path(interaction)
+    if p is None:
+        await deny(interaction, "🔒 尚未踏入仙途。")
+        return
+    weapon = WEAPONS.get(int(weapon_id))
+    if not weapon:
+        await deny(interaction, "武器不存在。")
+        return
+    if p["stones"] < weapon["price"]:
+        await deny(interaction, f"靈石不足，需要 {weapon['price']}。")
+        return
+    p["stones"] -= weapon["price"]
+    p["weapon"] = weapon["name"]
+    p["weapon_level"] = 1
+    p["weapon_attack"] = weapon["attack"]
+    save_world()
+    await interaction.response.send_message(f"⚔️ 你裝備了 **{weapon['name']}**！攻擊力 +{weapon['attack']}。", ephemeral=True)
+
+@bot.tree.command(name="upgrade_weapon", description="強化目前武器")
+async def upgrade_weapon(interaction: discord.Interaction):
+    p = ensure_path(interaction)
+    if p is None:
+        await deny(interaction, "🔒 尚未踏入仙途。")
+        return
+    weapon_name = p.get("weapon")
+    if not weapon_name:
+        await deny(interaction, "你目前沒有裝備武器。先使用 `/weapons`。")
+        return
+    weapon = next((w for w in WEAPONS.values() if w["name"] == weapon_name), None)
+    if not weapon:
+        await deny(interaction, "找不到目前武器資料。")
+        return
+    level = p.get("weapon_level", 1)
+    if level >= weapon["max_level"]:
+        await deny(interaction, "武器已達目前強化上限。")
+        return
+    cost = int(weapon["price"] * (0.12 + level * 0.035))
+    if p["stones"] < cost:
+        await deny(interaction, f"強化需要 {cost} 靈石，目前只有 {p['stones']}。")
+        return
+    p["stones"] -= cost
+    p["weapon_level"] = level + 1
+    p["weapon_attack"] = weapon["attack"] + (level * level * 8) + (level * 12)
+    save_world()
+    await interaction.response.send_message(f"🔨 **{weapon_name} +{p['weapon_level']}** 強化成功！\n武器攻擊：{p['weapon_attack']}", ephemeral=True)
+
+
+@bot.tree.command(name="artifact", description="強化法寶")
+async def artifact(interaction: discord.Interaction):
+    p=ensure_path(interaction)
+    if p is None:
+        await deny(interaction,"🔒 尚未踏入仙途。")
+        return
+    cost=250+p["realm"]*150
+    if p["stones"]<cost:
+        await deny(interaction,f"強化需要 {cost} 靈石。")
+        return
+    p["stones"]-=cost
+    p["power"]+=75+p["realm"]*35
+    save_world()
+    await interaction.response.send_message(f"🔨 法寶淬鍊成功！戰力增加。",ephemeral=True)
+
+
+@bot.tree.command(name="secret", description="探索隱世洞天")
+async def secret(interaction: discord.Interaction):
+    p=ensure_path(interaction)
+    if p is None:
+        await deny(interaction,"🔒 尚未踏入仙途。")
+        return
+    ready,remain=cooldown_ready(p,"last_secret",45)
+    if not ready:
+        await deny(interaction,f"洞天尚未重開，還要 {format_seconds(remain)}。")
+        return
+    p["last_secret"]=int(time.time())
+    roll=random.random()
+    if roll<0.05:
+        gain=5000+p["realm"]*500
+        p["stones"]+=gain
+        msg=f"🌌 你發現了遠古仙藏！獲得 {gain} 靈石。"
+    elif roll<0.35:
+        p["power"]+=200+p["realm"]*30
+        msg="🗿 你悟得一縷法則，修為大增。"
+    else:
+        gain=random.randint(150,500)+p["realm"]*50
+        p["stones"]+=gain
+        msg=f"🌿 探索成功，帶回 {gain} 靈石。"
+    save_world()
+    await interaction.response.send_message(msg,ephemeral=True)
+
+
+@bot.tree.command(name="trade", description="玩家間簡易交易")
+@app_commands.describe(target="對方成員", stones="轉移靈石")
+async def trade(interaction: discord.Interaction,target:discord.Member,stones:app_commands.Range[int,1,100000]):
+    p=get_player(interaction.user.id)
+    q=get_player(target.id)
+    if interaction.user.id==target.id:
+        await deny(interaction,"不能和自己交易。")
+        return
+    if p["stones"]<stones:
+        await deny(interaction,"你的靈石不足。")
+        return
+    p["stones"]-=stones
+    q["stones"]+=stones
+    save_world()
+    await interaction.response.send_message(f"🤝 已向 {target.mention} 轉移 {stones} 靈石。",ephemeral=True)
+
+
+DUNGEON_TABLE_1 = {"layer": 1, "name": "九霄秘境001", "enemy_power": 417, "reward_min": 85, "reward_max": 211}
+DUNGEON_TABLE_2 = {"layer": 2, "name": "九霄秘境002", "enemy_power": 434, "reward_min": 90, "reward_max": 222}
+DUNGEON_TABLE_3 = {"layer": 3, "name": "九霄秘境003", "enemy_power": 451, "reward_min": 95, "reward_max": 233}
+DUNGEON_TABLE_4 = {"layer": 4, "name": "九霄秘境004", "enemy_power": 468, "reward_min": 100, "reward_max": 244}
+DUNGEON_TABLE_5 = {"layer": 5, "name": "九霄秘境005", "enemy_power": 485, "reward_min": 105, "reward_max": 255}
+DUNGEON_TABLE_6 = {"layer": 6, "name": "九霄秘境006", "enemy_power": 502, "reward_min": 110, "reward_max": 266}
+DUNGEON_TABLE_7 = {"layer": 7, "name": "九霄秘境007", "enemy_power": 519, "reward_min": 115, "reward_max": 277}
+DUNGEON_TABLE_8 = {"layer": 8, "name": "九霄秘境008", "enemy_power": 536, "reward_min": 120, "reward_max": 288}
+DUNGEON_TABLE_9 = {"layer": 9, "name": "九霄秘境009", "enemy_power": 553, "reward_min": 125, "reward_max": 299}
+DUNGEON_TABLE_10 = {"layer": 10, "name": "九霄秘境010", "enemy_power": 570, "reward_min": 130, "reward_max": 310}
+DUNGEON_TABLE_11 = {"layer": 1, "name": "九霄秘境011", "enemy_power": 587, "reward_min": 135, "reward_max": 321}
+DUNGEON_TABLE_12 = {"layer": 2, "name": "九霄秘境012", "enemy_power": 604, "reward_min": 140, "reward_max": 332}
+DUNGEON_TABLE_13 = {"layer": 3, "name": "九霄秘境013", "enemy_power": 621, "reward_min": 145, "reward_max": 343}
+DUNGEON_TABLE_14 = {"layer": 4, "name": "九霄秘境014", "enemy_power": 638, "reward_min": 150, "reward_max": 354}
+DUNGEON_TABLE_15 = {"layer": 5, "name": "九霄秘境015", "enemy_power": 655, "reward_min": 155, "reward_max": 365}
+DUNGEON_TABLE_16 = {"layer": 6, "name": "九霄秘境016", "enemy_power": 672, "reward_min": 160, "reward_max": 376}
+DUNGEON_TABLE_17 = {"layer": 7, "name": "九霄秘境017", "enemy_power": 689, "reward_min": 165, "reward_max": 387}
+DUNGEON_TABLE_18 = {"layer": 8, "name": "九霄秘境018", "enemy_power": 706, "reward_min": 170, "reward_max": 398}
+DUNGEON_TABLE_19 = {"layer": 9, "name": "九霄秘境019", "enemy_power": 723, "reward_min": 175, "reward_max": 409}
+DUNGEON_TABLE_20 = {"layer": 10, "name": "九霄秘境020", "enemy_power": 740, "reward_min": 180, "reward_max": 420}
+DUNGEON_TABLE_21 = {"layer": 1, "name": "九霄秘境021", "enemy_power": 757, "reward_min": 185, "reward_max": 431}
+DUNGEON_TABLE_22 = {"layer": 2, "name": "九霄秘境022", "enemy_power": 774, "reward_min": 190, "reward_max": 442}
+DUNGEON_TABLE_23 = {"layer": 3, "name": "九霄秘境023", "enemy_power": 791, "reward_min": 195, "reward_max": 453}
+DUNGEON_TABLE_24 = {"layer": 4, "name": "九霄秘境024", "enemy_power": 808, "reward_min": 200, "reward_max": 464}
+DUNGEON_TABLE_25 = {"layer": 5, "name": "九霄秘境025", "enemy_power": 825, "reward_min": 205, "reward_max": 475}
+DUNGEON_TABLE_26 = {"layer": 6, "name": "九霄秘境026", "enemy_power": 842, "reward_min": 210, "reward_max": 486}
+DUNGEON_TABLE_27 = {"layer": 7, "name": "九霄秘境027", "enemy_power": 859, "reward_min": 215, "reward_max": 497}
+DUNGEON_TABLE_28 = {"layer": 8, "name": "九霄秘境028", "enemy_power": 876, "reward_min": 220, "reward_max": 508}
+DUNGEON_TABLE_29 = {"layer": 9, "name": "九霄秘境029", "enemy_power": 893, "reward_min": 225, "reward_max": 519}
+DUNGEON_TABLE_30 = {"layer": 10, "name": "九霄秘境030", "enemy_power": 910, "reward_min": 230, "reward_max": 530}
+DUNGEON_TABLE_31 = {"layer": 1, "name": "九霄秘境031", "enemy_power": 927, "reward_min": 235, "reward_max": 541}
+DUNGEON_TABLE_32 = {"layer": 2, "name": "九霄秘境032", "enemy_power": 944, "reward_min": 240, "reward_max": 552}
+DUNGEON_TABLE_33 = {"layer": 3, "name": "九霄秘境033", "enemy_power": 961, "reward_min": 245, "reward_max": 563}
+DUNGEON_TABLE_34 = {"layer": 4, "name": "九霄秘境034", "enemy_power": 978, "reward_min": 250, "reward_max": 574}
+DUNGEON_TABLE_35 = {"layer": 5, "name": "九霄秘境035", "enemy_power": 995, "reward_min": 255, "reward_max": 585}
+DUNGEON_TABLE_36 = {"layer": 6, "name": "九霄秘境036", "enemy_power": 1012, "reward_min": 260, "reward_max": 596}
+DUNGEON_TABLE_37 = {"layer": 7, "name": "九霄秘境037", "enemy_power": 1029, "reward_min": 265, "reward_max": 607}
+DUNGEON_TABLE_38 = {"layer": 8, "name": "九霄秘境038", "enemy_power": 1046, "reward_min": 270, "reward_max": 618}
+DUNGEON_TABLE_39 = {"layer": 9, "name": "九霄秘境039", "enemy_power": 1063, "reward_min": 275, "reward_max": 629}
+DUNGEON_TABLE_40 = {"layer": 10, "name": "九霄秘境040", "enemy_power": 1080, "reward_min": 280, "reward_max": 640}
+DUNGEON_TABLE_41 = {"layer": 1, "name": "九霄秘境041", "enemy_power": 1097, "reward_min": 285, "reward_max": 651}
+DUNGEON_TABLE_42 = {"layer": 2, "name": "九霄秘境042", "enemy_power": 1114, "reward_min": 290, "reward_max": 662}
+DUNGEON_TABLE_43 = {"layer": 3, "name": "九霄秘境043", "enemy_power": 1131, "reward_min": 295, "reward_max": 673}
+DUNGEON_TABLE_44 = {"layer": 4, "name": "九霄秘境044", "enemy_power": 1148, "reward_min": 300, "reward_max": 684}
+DUNGEON_TABLE_45 = {"layer": 5, "name": "九霄秘境045", "enemy_power": 1165, "reward_min": 305, "reward_max": 695}
+DUNGEON_TABLE_46 = {"layer": 6, "name": "九霄秘境046", "enemy_power": 1182, "reward_min": 310, "reward_max": 706}
+DUNGEON_TABLE_47 = {"layer": 7, "name": "九霄秘境047", "enemy_power": 1199, "reward_min": 315, "reward_max": 717}
+DUNGEON_TABLE_48 = {"layer": 8, "name": "九霄秘境048", "enemy_power": 1216, "reward_min": 320, "reward_max": 728}
+DUNGEON_TABLE_49 = {"layer": 9, "name": "九霄秘境049", "enemy_power": 1233, "reward_min": 325, "reward_max": 739}
+DUNGEON_TABLE_50 = {"layer": 10, "name": "九霄秘境050", "enemy_power": 1250, "reward_min": 330, "reward_max": 750}
+DUNGEON_TABLE_51 = {"layer": 1, "name": "九霄秘境051", "enemy_power": 1267, "reward_min": 335, "reward_max": 761}
+DUNGEON_TABLE_52 = {"layer": 2, "name": "九霄秘境052", "enemy_power": 1284, "reward_min": 340, "reward_max": 772}
+DUNGEON_TABLE_53 = {"layer": 3, "name": "九霄秘境053", "enemy_power": 1301, "reward_min": 345, "reward_max": 783}
+DUNGEON_TABLE_54 = {"layer": 4, "name": "九霄秘境054", "enemy_power": 1318, "reward_min": 350, "reward_max": 794}
+DUNGEON_TABLE_55 = {"layer": 5, "name": "九霄秘境055", "enemy_power": 1335, "reward_min": 355, "reward_max": 805}
+DUNGEON_TABLE_56 = {"layer": 6, "name": "九霄秘境056", "enemy_power": 1352, "reward_min": 360, "reward_max": 816}
+DUNGEON_TABLE_57 = {"layer": 7, "name": "九霄秘境057", "enemy_power": 1369, "reward_min": 365, "reward_max": 827}
+DUNGEON_TABLE_58 = {"layer": 8, "name": "九霄秘境058", "enemy_power": 1386, "reward_min": 370, "reward_max": 838}
+DUNGEON_TABLE_59 = {"layer": 9, "name": "九霄秘境059", "enemy_power": 1403, "reward_min": 375, "reward_max": 849}
+DUNGEON_TABLE_60 = {"layer": 10, "name": "九霄秘境060", "enemy_power": 1420, "reward_min": 380, "reward_max": 860}
+DUNGEON_TABLE_61 = {"layer": 1, "name": "九霄秘境061", "enemy_power": 1437, "reward_min": 385, "reward_max": 871}
+DUNGEON_TABLE_62 = {"layer": 2, "name": "九霄秘境062", "enemy_power": 1454, "reward_min": 390, "reward_max": 882}
+DUNGEON_TABLE_63 = {"layer": 3, "name": "九霄秘境063", "enemy_power": 1471, "reward_min": 395, "reward_max": 893}
+DUNGEON_TABLE_64 = {"layer": 4, "name": "九霄秘境064", "enemy_power": 1488, "reward_min": 400, "reward_max": 904}
+DUNGEON_TABLE_65 = {"layer": 5, "name": "九霄秘境065", "enemy_power": 1505, "reward_min": 405, "reward_max": 915}
+DUNGEON_TABLE_66 = {"layer": 6, "name": "九霄秘境066", "enemy_power": 1522, "reward_min": 410, "reward_max": 926}
+DUNGEON_TABLE_67 = {"layer": 7, "name": "九霄秘境067", "enemy_power": 1539, "reward_min": 415, "reward_max": 937}
+DUNGEON_TABLE_68 = {"layer": 8, "name": "九霄秘境068", "enemy_power": 1556, "reward_min": 420, "reward_max": 948}
+DUNGEON_TABLE_69 = {"layer": 9, "name": "九霄秘境069", "enemy_power": 1573, "reward_min": 425, "reward_max": 959}
+DUNGEON_TABLE_70 = {"layer": 10, "name": "九霄秘境070", "enemy_power": 1590, "reward_min": 430, "reward_max": 970}
+DUNGEON_TABLE_71 = {"layer": 1, "name": "九霄秘境071", "enemy_power": 1607, "reward_min": 435, "reward_max": 981}
+DUNGEON_TABLE_72 = {"layer": 2, "name": "九霄秘境072", "enemy_power": 1624, "reward_min": 440, "reward_max": 992}
+DUNGEON_TABLE_73 = {"layer": 3, "name": "九霄秘境073", "enemy_power": 1641, "reward_min": 445, "reward_max": 1003}
+DUNGEON_TABLE_74 = {"layer": 4, "name": "九霄秘境074", "enemy_power": 1658, "reward_min": 450, "reward_max": 1014}
+DUNGEON_TABLE_75 = {"layer": 5, "name": "九霄秘境075", "enemy_power": 1675, "reward_min": 455, "reward_max": 1025}
+DUNGEON_TABLE_76 = {"layer": 6, "name": "九霄秘境076", "enemy_power": 1692, "reward_min": 460, "reward_max": 1036}
+DUNGEON_TABLE_77 = {"layer": 7, "name": "九霄秘境077", "enemy_power": 1709, "reward_min": 465, "reward_max": 1047}
+DUNGEON_TABLE_78 = {"layer": 8, "name": "九霄秘境078", "enemy_power": 1726, "reward_min": 470, "reward_max": 1058}
+DUNGEON_TABLE_79 = {"layer": 9, "name": "九霄秘境079", "enemy_power": 1743, "reward_min": 475, "reward_max": 1069}
+DUNGEON_TABLE_80 = {"layer": 10, "name": "九霄秘境080", "enemy_power": 1760, "reward_min": 480, "reward_max": 1080}
+DUNGEON_TABLE_81 = {"layer": 1, "name": "九霄秘境081", "enemy_power": 1777, "reward_min": 485, "reward_max": 1091}
+DUNGEON_TABLE_82 = {"layer": 2, "name": "九霄秘境082", "enemy_power": 1794, "reward_min": 490, "reward_max": 1102}
+DUNGEON_TABLE_83 = {"layer": 3, "name": "九霄秘境083", "enemy_power": 1811, "reward_min": 495, "reward_max": 1113}
+DUNGEON_TABLE_84 = {"layer": 4, "name": "九霄秘境084", "enemy_power": 1828, "reward_min": 500, "reward_max": 1124}
+DUNGEON_TABLE_85 = {"layer": 5, "name": "九霄秘境085", "enemy_power": 1845, "reward_min": 505, "reward_max": 1135}
+DUNGEON_TABLE_86 = {"layer": 6, "name": "九霄秘境086", "enemy_power": 1862, "reward_min": 510, "reward_max": 1146}
+DUNGEON_TABLE_87 = {"layer": 7, "name": "九霄秘境087", "enemy_power": 1879, "reward_min": 515, "reward_max": 1157}
+DUNGEON_TABLE_88 = {"layer": 8, "name": "九霄秘境088", "enemy_power": 1896, "reward_min": 520, "reward_max": 1168}
+DUNGEON_TABLE_89 = {"layer": 9, "name": "九霄秘境089", "enemy_power": 1913, "reward_min": 525, "reward_max": 1179}
+DUNGEON_TABLE_90 = {"layer": 10, "name": "九霄秘境090", "enemy_power": 1930, "reward_min": 530, "reward_max": 1190}
+DUNGEON_TABLE_91 = {"layer": 1, "name": "九霄秘境091", "enemy_power": 1947, "reward_min": 535, "reward_max": 1201}
+DUNGEON_TABLE_92 = {"layer": 2, "name": "九霄秘境092", "enemy_power": 1964, "reward_min": 540, "reward_max": 1212}
+DUNGEON_TABLE_93 = {"layer": 3, "name": "九霄秘境093", "enemy_power": 1981, "reward_min": 545, "reward_max": 1223}
+DUNGEON_TABLE_94 = {"layer": 4, "name": "九霄秘境094", "enemy_power": 1998, "reward_min": 550, "reward_max": 1234}
+DUNGEON_TABLE_95 = {"layer": 5, "name": "九霄秘境095", "enemy_power": 2015, "reward_min": 555, "reward_max": 1245}
+DUNGEON_TABLE_96 = {"layer": 6, "name": "九霄秘境096", "enemy_power": 2032, "reward_min": 560, "reward_max": 1256}
+DUNGEON_TABLE_97 = {"layer": 7, "name": "九霄秘境097", "enemy_power": 2049, "reward_min": 565, "reward_max": 1267}
+DUNGEON_TABLE_98 = {"layer": 8, "name": "九霄秘境098", "enemy_power": 2066, "reward_min": 570, "reward_max": 1278}
+DUNGEON_TABLE_99 = {"layer": 9, "name": "九霄秘境099", "enemy_power": 2083, "reward_min": 575, "reward_max": 1289}
+DUNGEON_TABLE_100 = {"layer": 10, "name": "九霄秘境100", "enemy_power": 2100, "reward_min": 580, "reward_max": 1300}
+DUNGEON_TABLE_101 = {"layer": 1, "name": "九霄秘境101", "enemy_power": 2117, "reward_min": 585, "reward_max": 1311}
+DUNGEON_TABLE_102 = {"layer": 2, "name": "九霄秘境102", "enemy_power": 2134, "reward_min": 590, "reward_max": 1322}
+DUNGEON_TABLE_103 = {"layer": 3, "name": "九霄秘境103", "enemy_power": 2151, "reward_min": 595, "reward_max": 1333}
+DUNGEON_TABLE_104 = {"layer": 4, "name": "九霄秘境104", "enemy_power": 2168, "reward_min": 600, "reward_max": 1344}
+DUNGEON_TABLE_105 = {"layer": 5, "name": "九霄秘境105", "enemy_power": 2185, "reward_min": 605, "reward_max": 1355}
+DUNGEON_TABLE_106 = {"layer": 6, "name": "九霄秘境106", "enemy_power": 2202, "reward_min": 610, "reward_max": 1366}
+DUNGEON_TABLE_107 = {"layer": 7, "name": "九霄秘境107", "enemy_power": 2219, "reward_min": 615, "reward_max": 1377}
+DUNGEON_TABLE_108 = {"layer": 8, "name": "九霄秘境108", "enemy_power": 2236, "reward_min": 620, "reward_max": 1388}
+DUNGEON_TABLE_109 = {"layer": 9, "name": "九霄秘境109", "enemy_power": 2253, "reward_min": 625, "reward_max": 1399}
+DUNGEON_TABLE_110 = {"layer": 10, "name": "九霄秘境110", "enemy_power": 2270, "reward_min": 630, "reward_max": 1410}
+DUNGEON_TABLE_111 = {"layer": 1, "name": "九霄秘境111", "enemy_power": 2287, "reward_min": 635, "reward_max": 1421}
+DUNGEON_TABLE_112 = {"layer": 2, "name": "九霄秘境112", "enemy_power": 2304, "reward_min": 640, "reward_max": 1432}
+DUNGEON_TABLE_113 = {"layer": 3, "name": "九霄秘境113", "enemy_power": 2321, "reward_min": 645, "reward_max": 1443}
+DUNGEON_TABLE_114 = {"layer": 4, "name": "九霄秘境114", "enemy_power": 2338, "reward_min": 650, "reward_max": 1454}
+DUNGEON_TABLE_115 = {"layer": 5, "name": "九霄秘境115", "enemy_power": 2355, "reward_min": 655, "reward_max": 1465}
+DUNGEON_TABLE_116 = {"layer": 6, "name": "九霄秘境116", "enemy_power": 2372, "reward_min": 660, "reward_max": 1476}
+DUNGEON_TABLE_117 = {"layer": 7, "name": "九霄秘境117", "enemy_power": 2389, "reward_min": 665, "reward_max": 1487}
+DUNGEON_TABLE_118 = {"layer": 8, "name": "九霄秘境118", "enemy_power": 2406, "reward_min": 670, "reward_max": 1498}
+DUNGEON_TABLE_119 = {"layer": 9, "name": "九霄秘境119", "enemy_power": 2423, "reward_min": 675, "reward_max": 1509}
+DUNGEON_TABLE_120 = {"layer": 10, "name": "九霄秘境120", "enemy_power": 2440, "reward_min": 680, "reward_max": 1520}
+DUNGEON_TABLE_121 = {"layer": 1, "name": "九霄秘境121", "enemy_power": 2457, "reward_min": 685, "reward_max": 1531}
+DUNGEON_TABLE_122 = {"layer": 2, "name": "九霄秘境122", "enemy_power": 2474, "reward_min": 690, "reward_max": 1542}
+DUNGEON_TABLE_123 = {"layer": 3, "name": "九霄秘境123", "enemy_power": 2491, "reward_min": 695, "reward_max": 1553}
+DUNGEON_TABLE_124 = {"layer": 4, "name": "九霄秘境124", "enemy_power": 2508, "reward_min": 700, "reward_max": 1564}
+DUNGEON_TABLE_125 = {"layer": 5, "name": "九霄秘境125", "enemy_power": 2525, "reward_min": 705, "reward_max": 1575}
+DUNGEON_TABLE_126 = {"layer": 6, "name": "九霄秘境126", "enemy_power": 2542, "reward_min": 710, "reward_max": 1586}
+DUNGEON_TABLE_127 = {"layer": 7, "name": "九霄秘境127", "enemy_power": 2559, "reward_min": 715, "reward_max": 1597}
+DUNGEON_TABLE_128 = {"layer": 8, "name": "九霄秘境128", "enemy_power": 2576, "reward_min": 720, "reward_max": 1608}
+DUNGEON_TABLE_129 = {"layer": 9, "name": "九霄秘境129", "enemy_power": 2593, "reward_min": 725, "reward_max": 1619}
+DUNGEON_TABLE_130 = {"layer": 10, "name": "九霄秘境130", "enemy_power": 2610, "reward_min": 730, "reward_max": 1630}
+DUNGEON_TABLE_131 = {"layer": 1, "name": "九霄秘境131", "enemy_power": 2627, "reward_min": 735, "reward_max": 1641}
+DUNGEON_TABLE_132 = {"layer": 2, "name": "九霄秘境132", "enemy_power": 2644, "reward_min": 740, "reward_max": 1652}
+DUNGEON_TABLE_133 = {"layer": 3, "name": "九霄秘境133", "enemy_power": 2661, "reward_min": 745, "reward_max": 1663}
+DUNGEON_TABLE_134 = {"layer": 4, "name": "九霄秘境134", "enemy_power": 2678, "reward_min": 750, "reward_max": 1674}
+DUNGEON_TABLE_135 = {"layer": 5, "name": "九霄秘境135", "enemy_power": 2695, "reward_min": 755, "reward_max": 1685}
+DUNGEON_TABLE_136 = {"layer": 6, "name": "九霄秘境136", "enemy_power": 2712, "reward_min": 760, "reward_max": 1696}
+DUNGEON_TABLE_137 = {"layer": 7, "name": "九霄秘境137", "enemy_power": 2729, "reward_min": 765, "reward_max": 1707}
+DUNGEON_TABLE_138 = {"layer": 8, "name": "九霄秘境138", "enemy_power": 2746, "reward_min": 770, "reward_max": 1718}
+DUNGEON_TABLE_139 = {"layer": 9, "name": "九霄秘境139", "enemy_power": 2763, "reward_min": 775, "reward_max": 1729}
+DUNGEON_TABLE_140 = {"layer": 10, "name": "九霄秘境140", "enemy_power": 2780, "reward_min": 780, "reward_max": 1740}
+DUNGEON_TABLE_141 = {"layer": 1, "name": "九霄秘境141", "enemy_power": 2797, "reward_min": 785, "reward_max": 1751}
+DUNGEON_TABLE_142 = {"layer": 2, "name": "九霄秘境142", "enemy_power": 2814, "reward_min": 790, "reward_max": 1762}
+DUNGEON_TABLE_143 = {"layer": 3, "name": "九霄秘境143", "enemy_power": 2831, "reward_min": 795, "reward_max": 1773}
+DUNGEON_TABLE_144 = {"layer": 4, "name": "九霄秘境144", "enemy_power": 2848, "reward_min": 800, "reward_max": 1784}
+DUNGEON_TABLE_145 = {"layer": 5, "name": "九霄秘境145", "enemy_power": 2865, "reward_min": 805, "reward_max": 1795}
+DUNGEON_TABLE_146 = {"layer": 6, "name": "九霄秘境146", "enemy_power": 2882, "reward_min": 810, "reward_max": 1806}
+DUNGEON_TABLE_147 = {"layer": 7, "name": "九霄秘境147", "enemy_power": 2899, "reward_min": 815, "reward_max": 1817}
+DUNGEON_TABLE_148 = {"layer": 8, "name": "九霄秘境148", "enemy_power": 2916, "reward_min": 820, "reward_max": 1828}
+DUNGEON_TABLE_149 = {"layer": 9, "name": "九霄秘境149", "enemy_power": 2933, "reward_min": 825, "reward_max": 1839}
+DUNGEON_TABLE_150 = {"layer": 10, "name": "九霄秘境150", "enemy_power": 2950, "reward_min": 830, "reward_max": 1850}
+DUNGEON_TABLE_151 = {"layer": 1, "name": "九霄秘境151", "enemy_power": 2967, "reward_min": 835, "reward_max": 1861}
+DUNGEON_TABLE_152 = {"layer": 2, "name": "九霄秘境152", "enemy_power": 2984, "reward_min": 840, "reward_max": 1872}
+DUNGEON_TABLE_153 = {"layer": 3, "name": "九霄秘境153", "enemy_power": 3001, "reward_min": 845, "reward_max": 1883}
+DUNGEON_TABLE_154 = {"layer": 4, "name": "九霄秘境154", "enemy_power": 3018, "reward_min": 850, "reward_max": 1894}
+DUNGEON_TABLE_155 = {"layer": 5, "name": "九霄秘境155", "enemy_power": 3035, "reward_min": 855, "reward_max": 1905}
+DUNGEON_TABLE_156 = {"layer": 6, "name": "九霄秘境156", "enemy_power": 3052, "reward_min": 860, "reward_max": 1916}
+DUNGEON_TABLE_157 = {"layer": 7, "name": "九霄秘境157", "enemy_power": 3069, "reward_min": 865, "reward_max": 1927}
+DUNGEON_TABLE_158 = {"layer": 8, "name": "九霄秘境158", "enemy_power": 3086, "reward_min": 870, "reward_max": 1938}
+DUNGEON_TABLE_159 = {"layer": 9, "name": "九霄秘境159", "enemy_power": 3103, "reward_min": 875, "reward_max": 1949}
+DUNGEON_TABLE_160 = {"layer": 10, "name": "九霄秘境160", "enemy_power": 3120, "reward_min": 880, "reward_max": 1960}
+DUNGEON_TABLE_161 = {"layer": 1, "name": "九霄秘境161", "enemy_power": 3137, "reward_min": 885, "reward_max": 1971}
+DUNGEON_TABLE_162 = {"layer": 2, "name": "九霄秘境162", "enemy_power": 3154, "reward_min": 890, "reward_max": 1982}
+DUNGEON_TABLE_163 = {"layer": 3, "name": "九霄秘境163", "enemy_power": 3171, "reward_min": 895, "reward_max": 1993}
+DUNGEON_TABLE_164 = {"layer": 4, "name": "九霄秘境164", "enemy_power": 3188, "reward_min": 900, "reward_max": 2004}
+DUNGEON_TABLE_165 = {"layer": 5, "name": "九霄秘境165", "enemy_power": 3205, "reward_min": 905, "reward_max": 2015}
+DUNGEON_TABLE_166 = {"layer": 6, "name": "九霄秘境166", "enemy_power": 3222, "reward_min": 910, "reward_max": 2026}
+DUNGEON_TABLE_167 = {"layer": 7, "name": "九霄秘境167", "enemy_power": 3239, "reward_min": 915, "reward_max": 2037}
+DUNGEON_TABLE_168 = {"layer": 8, "name": "九霄秘境168", "enemy_power": 3256, "reward_min": 920, "reward_max": 2048}
+DUNGEON_TABLE_169 = {"layer": 9, "name": "九霄秘境169", "enemy_power": 3273, "reward_min": 925, "reward_max": 2059}
+DUNGEON_TABLE_170 = {"layer": 10, "name": "九霄秘境170", "enemy_power": 3290, "reward_min": 930, "reward_max": 2070}
+DUNGEON_TABLE_171 = {"layer": 1, "name": "九霄秘境171", "enemy_power": 3307, "reward_min": 935, "reward_max": 2081}
+DUNGEON_TABLE_172 = {"layer": 2, "name": "九霄秘境172", "enemy_power": 3324, "reward_min": 940, "reward_max": 2092}
+DUNGEON_TABLE_173 = {"layer": 3, "name": "九霄秘境173", "enemy_power": 3341, "reward_min": 945, "reward_max": 2103}
+DUNGEON_TABLE_174 = {"layer": 4, "name": "九霄秘境174", "enemy_power": 3358, "reward_min": 950, "reward_max": 2114}
+DUNGEON_TABLE_175 = {"layer": 5, "name": "九霄秘境175", "enemy_power": 3375, "reward_min": 955, "reward_max": 2125}
+DUNGEON_TABLE_176 = {"layer": 6, "name": "九霄秘境176", "enemy_power": 3392, "reward_min": 960, "reward_max": 2136}
+DUNGEON_TABLE_177 = {"layer": 7, "name": "九霄秘境177", "enemy_power": 3409, "reward_min": 965, "reward_max": 2147}
+DUNGEON_TABLE_178 = {"layer": 8, "name": "九霄秘境178", "enemy_power": 3426, "reward_min": 970, "reward_max": 2158}
+DUNGEON_TABLE_179 = {"layer": 9, "name": "九霄秘境179", "enemy_power": 3443, "reward_min": 975, "reward_max": 2169}
+DUNGEON_TABLE_180 = {"layer": 10, "name": "九霄秘境180", "enemy_power": 3460, "reward_min": 980, "reward_max": 2180}
+DUNGEON_TABLE_181 = {"layer": 1, "name": "九霄秘境181", "enemy_power": 3477, "reward_min": 985, "reward_max": 2191}
+DUNGEON_TABLE_182 = {"layer": 2, "name": "九霄秘境182", "enemy_power": 3494, "reward_min": 990, "reward_max": 2202}
+DUNGEON_TABLE_183 = {"layer": 3, "name": "九霄秘境183", "enemy_power": 3511, "reward_min": 995, "reward_max": 2213}
+DUNGEON_TABLE_184 = {"layer": 4, "name": "九霄秘境184", "enemy_power": 3528, "reward_min": 1000, "reward_max": 2224}
+DUNGEON_TABLE_185 = {"layer": 5, "name": "九霄秘境185", "enemy_power": 3545, "reward_min": 1005, "reward_max": 2235}
+DUNGEON_TABLE_186 = {"layer": 6, "name": "九霄秘境186", "enemy_power": 3562, "reward_min": 1010, "reward_max": 2246}
+DUNGEON_TABLE_187 = {"layer": 7, "name": "九霄秘境187", "enemy_power": 3579, "reward_min": 1015, "reward_max": 2257}
+DUNGEON_TABLE_188 = {"layer": 8, "name": "九霄秘境188", "enemy_power": 3596, "reward_min": 1020, "reward_max": 2268}
+DUNGEON_TABLE_189 = {"layer": 9, "name": "九霄秘境189", "enemy_power": 3613, "reward_min": 1025, "reward_max": 2279}
+DUNGEON_TABLE_190 = {"layer": 10, "name": "九霄秘境190", "enemy_power": 3630, "reward_min": 1030, "reward_max": 2290}
+DUNGEON_TABLE_191 = {"layer": 1, "name": "九霄秘境191", "enemy_power": 3647, "reward_min": 1035, "reward_max": 2301}
+DUNGEON_TABLE_192 = {"layer": 2, "name": "九霄秘境192", "enemy_power": 3664, "reward_min": 1040, "reward_max": 2312}
+DUNGEON_TABLE_193 = {"layer": 3, "name": "九霄秘境193", "enemy_power": 3681, "reward_min": 1045, "reward_max": 2323}
+DUNGEON_TABLE_194 = {"layer": 4, "name": "九霄秘境194", "enemy_power": 3698, "reward_min": 1050, "reward_max": 2334}
+DUNGEON_TABLE_195 = {"layer": 5, "name": "九霄秘境195", "enemy_power": 3715, "reward_min": 1055, "reward_max": 2345}
+DUNGEON_TABLE_196 = {"layer": 6, "name": "九霄秘境196", "enemy_power": 3732, "reward_min": 1060, "reward_max": 2356}
+DUNGEON_TABLE_197 = {"layer": 7, "name": "九霄秘境197", "enemy_power": 3749, "reward_min": 1065, "reward_max": 2367}
+DUNGEON_TABLE_198 = {"layer": 8, "name": "九霄秘境198", "enemy_power": 3766, "reward_min": 1070, "reward_max": 2378}
+DUNGEON_TABLE_199 = {"layer": 9, "name": "九霄秘境199", "enemy_power": 3783, "reward_min": 1075, "reward_max": 2389}
+DUNGEON_TABLE_200 = {"layer": 10, "name": "九霄秘境200", "enemy_power": 3800, "reward_min": 1080, "reward_max": 2400}
+DUNGEON_TABLE_201 = {"layer": 1, "name": "九霄秘境201", "enemy_power": 3817, "reward_min": 1085, "reward_max": 2411}
+DUNGEON_TABLE_202 = {"layer": 2, "name": "九霄秘境202", "enemy_power": 3834, "reward_min": 1090, "reward_max": 2422}
+DUNGEON_TABLE_203 = {"layer": 3, "name": "九霄秘境203", "enemy_power": 3851, "reward_min": 1095, "reward_max": 2433}
+DUNGEON_TABLE_204 = {"layer": 4, "name": "九霄秘境204", "enemy_power": 3868, "reward_min": 1100, "reward_max": 2444}
+DUNGEON_TABLE_205 = {"layer": 5, "name": "九霄秘境205", "enemy_power": 3885, "reward_min": 1105, "reward_max": 2455}
+DUNGEON_TABLE_206 = {"layer": 6, "name": "九霄秘境206", "enemy_power": 3902, "reward_min": 1110, "reward_max": 2466}
+DUNGEON_TABLE_207 = {"layer": 7, "name": "九霄秘境207", "enemy_power": 3919, "reward_min": 1115, "reward_max": 2477}
+DUNGEON_TABLE_208 = {"layer": 8, "name": "九霄秘境208", "enemy_power": 3936, "reward_min": 1120, "reward_max": 2488}
+DUNGEON_TABLE_209 = {"layer": 9, "name": "九霄秘境209", "enemy_power": 3953, "reward_min": 1125, "reward_max": 2499}
+DUNGEON_TABLE_210 = {"layer": 10, "name": "九霄秘境210", "enemy_power": 3970, "reward_min": 1130, "reward_max": 2510}
+DUNGEON_TABLE_211 = {"layer": 1, "name": "九霄秘境211", "enemy_power": 3987, "reward_min": 1135, "reward_max": 2521}
+DUNGEON_TABLE_212 = {"layer": 2, "name": "九霄秘境212", "enemy_power": 4004, "reward_min": 1140, "reward_max": 2532}
+DUNGEON_TABLE_213 = {"layer": 3, "name": "九霄秘境213", "enemy_power": 4021, "reward_min": 1145, "reward_max": 2543}
+DUNGEON_TABLE_214 = {"layer": 4, "name": "九霄秘境214", "enemy_power": 4038, "reward_min": 1150, "reward_max": 2554}
+DUNGEON_TABLE_215 = {"layer": 5, "name": "九霄秘境215", "enemy_power": 4055, "reward_min": 1155, "reward_max": 2565}
+DUNGEON_TABLE_216 = {"layer": 6, "name": "九霄秘境216", "enemy_power": 4072, "reward_min": 1160, "reward_max": 2576}
+DUNGEON_TABLE_217 = {"layer": 7, "name": "九霄秘境217", "enemy_power": 4089, "reward_min": 1165, "reward_max": 2587}
+DUNGEON_TABLE_218 = {"layer": 8, "name": "九霄秘境218", "enemy_power": 4106, "reward_min": 1170, "reward_max": 2598}
+DUNGEON_TABLE_219 = {"layer": 9, "name": "九霄秘境219", "enemy_power": 4123, "reward_min": 1175, "reward_max": 2609}
+DUNGEON_TABLE_220 = {"layer": 10, "name": "九霄秘境220", "enemy_power": 4140, "reward_min": 1180, "reward_max": 2620}
+DUNGEON_TABLE_221 = {"layer": 1, "name": "九霄秘境221", "enemy_power": 4157, "reward_min": 1185, "reward_max": 2631}
+DUNGEON_TABLE_222 = {"layer": 2, "name": "九霄秘境222", "enemy_power": 4174, "reward_min": 1190, "reward_max": 2642}
+DUNGEON_TABLE_223 = {"layer": 3, "name": "九霄秘境223", "enemy_power": 4191, "reward_min": 1195, "reward_max": 2653}
+DUNGEON_TABLE_224 = {"layer": 4, "name": "九霄秘境224", "enemy_power": 4208, "reward_min": 1200, "reward_max": 2664}
+DUNGEON_TABLE_225 = {"layer": 5, "name": "九霄秘境225", "enemy_power": 4225, "reward_min": 1205, "reward_max": 2675}
+DUNGEON_TABLE_226 = {"layer": 6, "name": "九霄秘境226", "enemy_power": 4242, "reward_min": 1210, "reward_max": 2686}
+DUNGEON_TABLE_227 = {"layer": 7, "name": "九霄秘境227", "enemy_power": 4259, "reward_min": 1215, "reward_max": 2697}
+DUNGEON_TABLE_228 = {"layer": 8, "name": "九霄秘境228", "enemy_power": 4276, "reward_min": 1220, "reward_max": 2708}
+DUNGEON_TABLE_229 = {"layer": 9, "name": "九霄秘境229", "enemy_power": 4293, "reward_min": 1225, "reward_max": 2719}
+DUNGEON_TABLE_230 = {"layer": 10, "name": "九霄秘境230", "enemy_power": 4310, "reward_min": 1230, "reward_max": 2730}
+DUNGEON_TABLE_231 = {"layer": 1, "name": "九霄秘境231", "enemy_power": 4327, "reward_min": 1235, "reward_max": 2741}
+DUNGEON_TABLE_232 = {"layer": 2, "name": "九霄秘境232", "enemy_power": 4344, "reward_min": 1240, "reward_max": 2752}
+DUNGEON_TABLE_233 = {"layer": 3, "name": "九霄秘境233", "enemy_power": 4361, "reward_min": 1245, "reward_max": 2763}
+DUNGEON_TABLE_234 = {"layer": 4, "name": "九霄秘境234", "enemy_power": 4378, "reward_min": 1250, "reward_max": 2774}
+DUNGEON_TABLE_235 = {"layer": 5, "name": "九霄秘境235", "enemy_power": 4395, "reward_min": 1255, "reward_max": 2785}
+DUNGEON_TABLE_236 = {"layer": 6, "name": "九霄秘境236", "enemy_power": 4412, "reward_min": 1260, "reward_max": 2796}
+DUNGEON_TABLE_237 = {"layer": 7, "name": "九霄秘境237", "enemy_power": 4429, "reward_min": 1265, "reward_max": 2807}
+DUNGEON_TABLE_238 = {"layer": 8, "name": "九霄秘境238", "enemy_power": 4446, "reward_min": 1270, "reward_max": 2818}
+DUNGEON_TABLE_239 = {"layer": 9, "name": "九霄秘境239", "enemy_power": 4463, "reward_min": 1275, "reward_max": 2829}
+DUNGEON_TABLE_240 = {"layer": 10, "name": "九霄秘境240", "enemy_power": 4480, "reward_min": 1280, "reward_max": 2840}
+DUNGEON_TABLE_241 = {"layer": 1, "name": "九霄秘境241", "enemy_power": 4497, "reward_min": 1285, "reward_max": 2851}
+DUNGEON_TABLE_242 = {"layer": 2, "name": "九霄秘境242", "enemy_power": 4514, "reward_min": 1290, "reward_max": 2862}
+DUNGEON_TABLE_243 = {"layer": 3, "name": "九霄秘境243", "enemy_power": 4531, "reward_min": 1295, "reward_max": 2873}
+DUNGEON_TABLE_244 = {"layer": 4, "name": "九霄秘境244", "enemy_power": 4548, "reward_min": 1300, "reward_max": 2884}
+DUNGEON_TABLE_245 = {"layer": 5, "name": "九霄秘境245", "enemy_power": 4565, "reward_min": 1305, "reward_max": 2895}
+DUNGEON_TABLE_246 = {"layer": 6, "name": "九霄秘境246", "enemy_power": 4582, "reward_min": 1310, "reward_max": 2906}
+DUNGEON_TABLE_247 = {"layer": 7, "name": "九霄秘境247", "enemy_power": 4599, "reward_min": 1315, "reward_max": 2917}
+DUNGEON_TABLE_248 = {"layer": 8, "name": "九霄秘境248", "enemy_power": 4616, "reward_min": 1320, "reward_max": 2928}
+DUNGEON_TABLE_249 = {"layer": 9, "name": "九霄秘境249", "enemy_power": 4633, "reward_min": 1325, "reward_max": 2939}
+DUNGEON_TABLE_250 = {"layer": 10, "name": "九霄秘境250", "enemy_power": 4650, "reward_min": 1330, "reward_max": 2950}
+DUNGEON_TABLE_251 = {"layer": 1, "name": "九霄秘境251", "enemy_power": 4667, "reward_min": 1335, "reward_max": 2961}
+DUNGEON_TABLE_252 = {"layer": 2, "name": "九霄秘境252", "enemy_power": 4684, "reward_min": 1340, "reward_max": 2972}
+DUNGEON_TABLE_253 = {"layer": 3, "name": "九霄秘境253", "enemy_power": 4701, "reward_min": 1345, "reward_max": 2983}
+DUNGEON_TABLE_254 = {"layer": 4, "name": "九霄秘境254", "enemy_power": 4718, "reward_min": 1350, "reward_max": 2994}
+DUNGEON_TABLE_255 = {"layer": 5, "name": "九霄秘境255", "enemy_power": 4735, "reward_min": 1355, "reward_max": 3005}
+DUNGEON_TABLE_256 = {"layer": 6, "name": "九霄秘境256", "enemy_power": 4752, "reward_min": 1360, "reward_max": 3016}
+DUNGEON_TABLE_257 = {"layer": 7, "name": "九霄秘境257", "enemy_power": 4769, "reward_min": 1365, "reward_max": 3027}
+DUNGEON_TABLE_258 = {"layer": 8, "name": "九霄秘境258", "enemy_power": 4786, "reward_min": 1370, "reward_max": 3038}
+DUNGEON_TABLE_259 = {"layer": 9, "name": "九霄秘境259", "enemy_power": 4803, "reward_min": 1375, "reward_max": 3049}
+DUNGEON_TABLE_260 = {"layer": 10, "name": "九霄秘境260", "enemy_power": 4820, "reward_min": 1380, "reward_max": 3060}
+DUNGEON_TABLE_261 = {"layer": 1, "name": "九霄秘境261", "enemy_power": 4837, "reward_min": 1385, "reward_max": 3071}
+DUNGEON_TABLE_262 = {"layer": 2, "name": "九霄秘境262", "enemy_power": 4854, "reward_min": 1390, "reward_max": 3082}
+DUNGEON_TABLE_263 = {"layer": 3, "name": "九霄秘境263", "enemy_power": 4871, "reward_min": 1395, "reward_max": 3093}
+DUNGEON_TABLE_264 = {"layer": 4, "name": "九霄秘境264", "enemy_power": 4888, "reward_min": 1400, "reward_max": 3104}
+DUNGEON_TABLE_265 = {"layer": 5, "name": "九霄秘境265", "enemy_power": 4905, "reward_min": 1405, "reward_max": 3115}
+DUNGEON_TABLE_266 = {"layer": 6, "name": "九霄秘境266", "enemy_power": 4922, "reward_min": 1410, "reward_max": 3126}
+DUNGEON_TABLE_267 = {"layer": 7, "name": "九霄秘境267", "enemy_power": 4939, "reward_min": 1415, "reward_max": 3137}
+DUNGEON_TABLE_268 = {"layer": 8, "name": "九霄秘境268", "enemy_power": 4956, "reward_min": 1420, "reward_max": 3148}
+DUNGEON_TABLE_269 = {"layer": 9, "name": "九霄秘境269", "enemy_power": 4973, "reward_min": 1425, "reward_max": 3159}
+DUNGEON_TABLE_270 = {"layer": 10, "name": "九霄秘境270", "enemy_power": 4990, "reward_min": 1430, "reward_max": 3170}
+DUNGEON_TABLE_271 = {"layer": 1, "name": "九霄秘境271", "enemy_power": 5007, "reward_min": 1435, "reward_max": 3181}
+DUNGEON_TABLE_272 = {"layer": 2, "name": "九霄秘境272", "enemy_power": 5024, "reward_min": 1440, "reward_max": 3192}
+DUNGEON_TABLE_273 = {"layer": 3, "name": "九霄秘境273", "enemy_power": 5041, "reward_min": 1445, "reward_max": 3203}
+DUNGEON_TABLE_274 = {"layer": 4, "name": "九霄秘境274", "enemy_power": 5058, "reward_min": 1450, "reward_max": 3214}
+DUNGEON_TABLE_275 = {"layer": 5, "name": "九霄秘境275", "enemy_power": 5075, "reward_min": 1455, "reward_max": 3225}
+DUNGEON_TABLE_276 = {"layer": 6, "name": "九霄秘境276", "enemy_power": 5092, "reward_min": 1460, "reward_max": 3236}
+DUNGEON_TABLE_277 = {"layer": 7, "name": "九霄秘境277", "enemy_power": 5109, "reward_min": 1465, "reward_max": 3247}
+DUNGEON_TABLE_278 = {"layer": 8, "name": "九霄秘境278", "enemy_power": 5126, "reward_min": 1470, "reward_max": 3258}
+DUNGEON_TABLE_279 = {"layer": 9, "name": "九霄秘境279", "enemy_power": 5143, "reward_min": 1475, "reward_max": 3269}
+DUNGEON_TABLE_280 = {"layer": 10, "name": "九霄秘境280", "enemy_power": 5160, "reward_min": 1480, "reward_max": 3280}
+DUNGEON_TABLE_281 = {"layer": 1, "name": "九霄秘境281", "enemy_power": 5177, "reward_min": 1485, "reward_max": 3291}
+DUNGEON_TABLE_282 = {"layer": 2, "name": "九霄秘境282", "enemy_power": 5194, "reward_min": 1490, "reward_max": 3302}
+DUNGEON_TABLE_283 = {"layer": 3, "name": "九霄秘境283", "enemy_power": 5211, "reward_min": 1495, "reward_max": 3313}
+DUNGEON_TABLE_284 = {"layer": 4, "name": "九霄秘境284", "enemy_power": 5228, "reward_min": 1500, "reward_max": 3324}
+DUNGEON_TABLE_285 = {"layer": 5, "name": "九霄秘境285", "enemy_power": 5245, "reward_min": 1505, "reward_max": 3335}
+DUNGEON_TABLE_286 = {"layer": 6, "name": "九霄秘境286", "enemy_power": 5262, "reward_min": 1510, "reward_max": 3346}
+DUNGEON_TABLE_287 = {"layer": 7, "name": "九霄秘境287", "enemy_power": 5279, "reward_min": 1515, "reward_max": 3357}
+DUNGEON_TABLE_288 = {"layer": 8, "name": "九霄秘境288", "enemy_power": 5296, "reward_min": 1520, "reward_max": 3368}
+DUNGEON_TABLE_289 = {"layer": 9, "name": "九霄秘境289", "enemy_power": 5313, "reward_min": 1525, "reward_max": 3379}
+DUNGEON_TABLE_290 = {"layer": 10, "name": "九霄秘境290", "enemy_power": 5330, "reward_min": 1530, "reward_max": 3390}
+DUNGEON_TABLE_291 = {"layer": 1, "name": "九霄秘境291", "enemy_power": 5347, "reward_min": 1535, "reward_max": 3401}
+DUNGEON_TABLE_292 = {"layer": 2, "name": "九霄秘境292", "enemy_power": 5364, "reward_min": 1540, "reward_max": 3412}
+DUNGEON_TABLE_293 = {"layer": 3, "name": "九霄秘境293", "enemy_power": 5381, "reward_min": 1545, "reward_max": 3423}
+DUNGEON_TABLE_294 = {"layer": 4, "name": "九霄秘境294", "enemy_power": 5398, "reward_min": 1550, "reward_max": 3434}
+DUNGEON_TABLE_295 = {"layer": 5, "name": "九霄秘境295", "enemy_power": 5415, "reward_min": 1555, "reward_max": 3445}
+DUNGEON_TABLE_296 = {"layer": 6, "name": "九霄秘境296", "enemy_power": 5432, "reward_min": 1560, "reward_max": 3456}
+DUNGEON_TABLE_297 = {"layer": 7, "name": "九霄秘境297", "enemy_power": 5449, "reward_min": 1565, "reward_max": 3467}
+DUNGEON_TABLE_298 = {"layer": 8, "name": "九霄秘境298", "enemy_power": 5466, "reward_min": 1570, "reward_max": 3478}
+DUNGEON_TABLE_299 = {"layer": 9, "name": "九霄秘境299", "enemy_power": 5483, "reward_min": 1575, "reward_max": 3489}
+DUNGEON_TABLE_300 = {"layer": 10, "name": "九霄秘境300", "enemy_power": 5500, "reward_min": 1580, "reward_max": 3500}
+RELIC_1 = {"name": "萬界法寶001", "rank": 1, "attack": 33, "defense": 24, "price": 340}
+RELIC_2 = {"name": "萬界法寶002", "rank": 2, "attack": 46, "defense": 33, "price": 380}
+RELIC_3 = {"name": "萬界法寶003", "rank": 3, "attack": 59, "defense": 42, "price": 420}
+RELIC_4 = {"name": "萬界法寶004", "rank": 4, "attack": 72, "defense": 51, "price": 460}
+RELIC_5 = {"name": "萬界法寶005", "rank": 5, "attack": 85, "defense": 60, "price": 500}
+RELIC_6 = {"name": "萬界法寶006", "rank": 6, "attack": 98, "defense": 69, "price": 540}
+RELIC_7 = {"name": "萬界法寶007", "rank": 7, "attack": 111, "defense": 78, "price": 580}
+RELIC_8 = {"name": "萬界法寶008", "rank": 8, "attack": 124, "defense": 87, "price": 620}
+RELIC_9 = {"name": "萬界法寶009", "rank": 9, "attack": 137, "defense": 96, "price": 660}
+RELIC_10 = {"name": "萬界法寶010", "rank": 1, "attack": 150, "defense": 105, "price": 700}
+RELIC_11 = {"name": "萬界法寶011", "rank": 2, "attack": 163, "defense": 114, "price": 740}
+RELIC_12 = {"name": "萬界法寶012", "rank": 3, "attack": 176, "defense": 123, "price": 780}
+RELIC_13 = {"name": "萬界法寶013", "rank": 4, "attack": 189, "defense": 132, "price": 820}
+RELIC_14 = {"name": "萬界法寶014", "rank": 5, "attack": 202, "defense": 141, "price": 860}
+RELIC_15 = {"name": "萬界法寶015", "rank": 6, "attack": 215, "defense": 150, "price": 900}
+RELIC_16 = {"name": "萬界法寶016", "rank": 7, "attack": 228, "defense": 159, "price": 940}
+RELIC_17 = {"name": "萬界法寶017", "rank": 8, "attack": 241, "defense": 168, "price": 980}
+RELIC_18 = {"name": "萬界法寶018", "rank": 9, "attack": 254, "defense": 177, "price": 1020}
+RELIC_19 = {"name": "萬界法寶019", "rank": 1, "attack": 267, "defense": 186, "price": 1060}
+RELIC_20 = {"name": "萬界法寶020", "rank": 2, "attack": 280, "defense": 195, "price": 1100}
+RELIC_21 = {"name": "萬界法寶021", "rank": 3, "attack": 293, "defense": 204, "price": 1140}
+RELIC_22 = {"name": "萬界法寶022", "rank": 4, "attack": 306, "defense": 213, "price": 1180}
+RELIC_23 = {"name": "萬界法寶023", "rank": 5, "attack": 319, "defense": 222, "price": 1220}
+RELIC_24 = {"name": "萬界法寶024", "rank": 6, "attack": 332, "defense": 231, "price": 1260}
+RELIC_25 = {"name": "萬界法寶025", "rank": 7, "attack": 345, "defense": 240, "price": 1300}
+RELIC_26 = {"name": "萬界法寶026", "rank": 8, "attack": 358, "defense": 249, "price": 1340}
+RELIC_27 = {"name": "萬界法寶027", "rank": 9, "attack": 371, "defense": 258, "price": 1380}
+RELIC_28 = {"name": "萬界法寶028", "rank": 1, "attack": 384, "defense": 267, "price": 1420}
+RELIC_29 = {"name": "萬界法寶029", "rank": 2, "attack": 397, "defense": 276, "price": 1460}
+RELIC_30 = {"name": "萬界法寶030", "rank": 3, "attack": 410, "defense": 285, "price": 1500}
+RELIC_31 = {"name": "萬界法寶031", "rank": 4, "attack": 423, "defense": 294, "price": 1540}
+RELIC_32 = {"name": "萬界法寶032", "rank": 5, "attack": 436, "defense": 303, "price": 1580}
+RELIC_33 = {"name": "萬界法寶033", "rank": 6, "attack": 449, "defense": 312, "price": 1620}
+RELIC_34 = {"name": "萬界法寶034", "rank": 7, "attack": 462, "defense": 321, "price": 1660}
+RELIC_35 = {"name": "萬界法寶035", "rank": 8, "attack": 475, "defense": 330, "price": 1700}
+RELIC_36 = {"name": "萬界法寶036", "rank": 9, "attack": 488, "defense": 339, "price": 1740}
+RELIC_37 = {"name": "萬界法寶037", "rank": 1, "attack": 501, "defense": 348, "price": 1780}
+RELIC_38 = {"name": "萬界法寶038", "rank": 2, "attack": 514, "defense": 357, "price": 1820}
+RELIC_39 = {"name": "萬界法寶039", "rank": 3, "attack": 527, "defense": 366, "price": 1860}
+RELIC_40 = {"name": "萬界法寶040", "rank": 4, "attack": 540, "defense": 375, "price": 1900}
+RELIC_41 = {"name": "萬界法寶041", "rank": 5, "attack": 553, "defense": 384, "price": 1940}
+RELIC_42 = {"name": "萬界法寶042", "rank": 6, "attack": 566, "defense": 393, "price": 1980}
+RELIC_43 = {"name": "萬界法寶043", "rank": 7, "attack": 579, "defense": 402, "price": 2020}
+RELIC_44 = {"name": "萬界法寶044", "rank": 8, "attack": 592, "defense": 411, "price": 2060}
+RELIC_45 = {"name": "萬界法寶045", "rank": 9, "attack": 605, "defense": 420, "price": 2100}
+RELIC_46 = {"name": "萬界法寶046", "rank": 1, "attack": 618, "defense": 429, "price": 2140}
+RELIC_47 = {"name": "萬界法寶047", "rank": 2, "attack": 631, "defense": 438, "price": 2180}
+RELIC_48 = {"name": "萬界法寶048", "rank": 3, "attack": 644, "defense": 447, "price": 2220}
+RELIC_49 = {"name": "萬界法寶049", "rank": 4, "attack": 657, "defense": 456, "price": 2260}
+RELIC_50 = {"name": "萬界法寶050", "rank": 5, "attack": 670, "defense": 465, "price": 2300}
+RELIC_51 = {"name": "萬界法寶051", "rank": 6, "attack": 683, "defense": 474, "price": 2340}
+RELIC_52 = {"name": "萬界法寶052", "rank": 7, "attack": 696, "defense": 483, "price": 2380}
+RELIC_53 = {"name": "萬界法寶053", "rank": 8, "attack": 709, "defense": 492, "price": 2420}
+RELIC_54 = {"name": "萬界法寶054", "rank": 9, "attack": 722, "defense": 501, "price": 2460}
+RELIC_55 = {"name": "萬界法寶055", "rank": 1, "attack": 735, "defense": 510, "price": 2500}
+RELIC_56 = {"name": "萬界法寶056", "rank": 2, "attack": 748, "defense": 519, "price": 2540}
+RELIC_57 = {"name": "萬界法寶057", "rank": 3, "attack": 761, "defense": 528, "price": 2580}
+RELIC_58 = {"name": "萬界法寶058", "rank": 4, "attack": 774, "defense": 537, "price": 2620}
+RELIC_59 = {"name": "萬界法寶059", "rank": 5, "attack": 787, "defense": 546, "price": 2660}
+RELIC_60 = {"name": "萬界法寶060", "rank": 6, "attack": 800, "defense": 555, "price": 2700}
+RELIC_61 = {"name": "萬界法寶061", "rank": 7, "attack": 813, "defense": 564, "price": 2740}
+RELIC_62 = {"name": "萬界法寶062", "rank": 8, "attack": 826, "defense": 573, "price": 2780}
+RELIC_63 = {"name": "萬界法寶063", "rank": 9, "attack": 839, "defense": 582, "price": 2820}
+RELIC_64 = {"name": "萬界法寶064", "rank": 1, "attack": 852, "defense": 591, "price": 2860}
+RELIC_65 = {"name": "萬界法寶065", "rank": 2, "attack": 865, "defense": 600, "price": 2900}
+RELIC_66 = {"name": "萬界法寶066", "rank": 3, "attack": 878, "defense": 609, "price": 2940}
+RELIC_67 = {"name": "萬界法寶067", "rank": 4, "attack": 891, "defense": 618, "price": 2980}
+RELIC_68 = {"name": "萬界法寶068", "rank": 5, "attack": 904, "defense": 627, "price": 3020}
+RELIC_69 = {"name": "萬界法寶069", "rank": 6, "attack": 917, "defense": 636, "price": 3060}
+RELIC_70 = {"name": "萬界法寶070", "rank": 7, "attack": 930, "defense": 645, "price": 3100}
+RELIC_71 = {"name": "萬界法寶071", "rank": 8, "attack": 943, "defense": 654, "price": 3140}
+RELIC_72 = {"name": "萬界法寶072", "rank": 9, "attack": 956, "defense": 663, "price": 3180}
+RELIC_73 = {"name": "萬界法寶073", "rank": 1, "attack": 969, "defense": 672, "price": 3220}
+RELIC_74 = {"name": "萬界法寶074", "rank": 2, "attack": 982, "defense": 681, "price": 3260}
+RELIC_75 = {"name": "萬界法寶075", "rank": 3, "attack": 995, "defense": 690, "price": 3300}
+RELIC_76 = {"name": "萬界法寶076", "rank": 4, "attack": 1008, "defense": 699, "price": 3340}
+RELIC_77 = {"name": "萬界法寶077", "rank": 5, "attack": 1021, "defense": 708, "price": 3380}
+RELIC_78 = {"name": "萬界法寶078", "rank": 6, "attack": 1034, "defense": 717, "price": 3420}
+RELIC_79 = {"name": "萬界法寶079", "rank": 7, "attack": 1047, "defense": 726, "price": 3460}
+RELIC_80 = {"name": "萬界法寶080", "rank": 8, "attack": 1060, "defense": 735, "price": 3500}
+RELIC_81 = {"name": "萬界法寶081", "rank": 9, "attack": 1073, "defense": 744, "price": 3540}
+RELIC_82 = {"name": "萬界法寶082", "rank": 1, "attack": 1086, "defense": 753, "price": 3580}
+RELIC_83 = {"name": "萬界法寶083", "rank": 2, "attack": 1099, "defense": 762, "price": 3620}
+RELIC_84 = {"name": "萬界法寶084", "rank": 3, "attack": 1112, "defense": 771, "price": 3660}
+RELIC_85 = {"name": "萬界法寶085", "rank": 4, "attack": 1125, "defense": 780, "price": 3700}
+RELIC_86 = {"name": "萬界法寶086", "rank": 5, "attack": 1138, "defense": 789, "price": 3740}
+RELIC_87 = {"name": "萬界法寶087", "rank": 6, "attack": 1151, "defense": 798, "price": 3780}
+RELIC_88 = {"name": "萬界法寶088", "rank": 7, "attack": 1164, "defense": 807, "price": 3820}
+RELIC_89 = {"name": "萬界法寶089", "rank": 8, "attack": 1177, "defense": 816, "price": 3860}
+RELIC_90 = {"name": "萬界法寶090", "rank": 9, "attack": 1190, "defense": 825, "price": 3900}
+RELIC_91 = {"name": "萬界法寶091", "rank": 1, "attack": 1203, "defense": 834, "price": 3940}
+RELIC_92 = {"name": "萬界法寶092", "rank": 2, "attack": 1216, "defense": 843, "price": 3980}
+RELIC_93 = {"name": "萬界法寶093", "rank": 3, "attack": 1229, "defense": 852, "price": 4020}
+RELIC_94 = {"name": "萬界法寶094", "rank": 4, "attack": 1242, "defense": 861, "price": 4060}
+RELIC_95 = {"name": "萬界法寶095", "rank": 5, "attack": 1255, "defense": 870, "price": 4100}
+RELIC_96 = {"name": "萬界法寶096", "rank": 6, "attack": 1268, "defense": 879, "price": 4140}
+RELIC_97 = {"name": "萬界法寶097", "rank": 7, "attack": 1281, "defense": 888, "price": 4180}
+RELIC_98 = {"name": "萬界法寶098", "rank": 8, "attack": 1294, "defense": 897, "price": 4220}
+RELIC_99 = {"name": "萬界法寶099", "rank": 9, "attack": 1307, "defense": 906, "price": 4260}
+RELIC_100 = {"name": "萬界法寶100", "rank": 1, "attack": 1320, "defense": 915, "price": 4300}
+@bot.event
+async def on_ready():
+    try:
+        synced=await bot.tree.sync()
+        print(f"{WORLD_NAME} {VERSION} online")
+        print(f"synced={len(synced)}")
+        print(f"players={len(WORLD.get('players',{}))}")
+    except Exception as exc:
+        print(f"sync error: {exc}")
+
+
+async def periodic_autosave():
+    while True:
+        await asyncio.sleep(60)
         try:
-            cmd.add_check(tutorial_gate)
-        except AttributeError:
-            print(f"[TUTORIAL] 無法套用指令檢查：{getattr(cmd, 'name', 'unknown')}")
+            save_world()
+        except Exception as exc:
+            print(f"autosave error: {exc}")
 
 
-install_tutorial_gate()
-# ======= 🧭 新架構 V6 結束 =======
+async def starter_task():
+    await bot.wait_until_ready()
+    if not hasattr(bot,"_save_task"):
+        bot._save_task=asyncio.create_task(periodic_autosave())
 
-keep_alive()
-DISCORD_CODE = os.getenv("DISCORD_TOKEN")
+
+if not DISCORD_CODE:
+    raise RuntimeError("請先設定 DISCORD_CODE 環境變數。")
+
 bot.run(DISCORD_CODE)
-
-#@ESRSC是gay古月方圓才是作者123132
