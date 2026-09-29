@@ -6,7 +6,6 @@ from discord import app_commands
 from discord.ui import Select, View
 from dotenv import load_dotenv
 
-# 🌟 這裡修正了：正式把 GLOBAL_DAILY_LIMIT 載入進來，解決未定義變數 Bug！
 from core import (
     keep_alive, init_usage_db, check_and_update_dual_usage, get_quota_status,
     is_safety_valve_triggered, update_user_affection_and_get_action, feed_cat_canned,
@@ -26,9 +25,15 @@ class AIChatBot(commands.Bot):
     async def setup_hook(self):
         try:
             target_guild = discord.Object(id=OFFICIAL_GUILD_ID)
+            
+            # 🌟 核心清洗大絕招：強制清空全伺服器後台所有卡住的舊釣魚、舊航海垃圾指令！
+            self.tree.clear_commands(guild=target_guild)
+            await self.tree.sync(guild=target_guild)
+            
+            # 🌟 重新寫入乾淨的貓貓專屬指令：/help, /設定, /查看當前額度, /餵食
             self.tree.copy_global_to(guild=target_guild)
             await self.tree.sync(guild=target_guild)
-            print("【系統提示】自動偵測安全閥四核心系統同步完成！")
+            print("【💥 終極排毒成功】舊航海指令已全數清空！乾淨的貓貓斜線指令上線喵！")
         except Exception as e:
             print(f"【系統提示】指令同步失敗: {e}", file=sys.stderr)
 
@@ -45,6 +50,7 @@ class HelpSelect(Select):
         super().__init__(placeholder="請選擇你想查看的說明指南...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
         embed = discord.Embed(color=0x5865F2)
         
         if self.values == "basic":
@@ -73,7 +79,7 @@ class HelpSelect(Select):
                 "限定本喵只能在該文字頻道內聊天。鎖定後本喵在其他頻道被觸發時會完全裝死不回應，防爆安全性最高喵！"
             )
             
-        await interaction.response.edit_message(embed=embed, view=self.view)
+        await interaction.followup.edit_message(message_id=interaction.message.id, embed=embed, view=self.view)
 
 class HelpView(View):
     def __init__(self):
@@ -158,19 +164,16 @@ async def on_message(message):
             await message.reply("👀 找本喵嗎？直接 `@我` 或「直接回覆本喵的訊息」來聊天喵！可以使用 `/查看當前額度` 檢查剩餘次數！")
             return
 
-        # 1. 雙重配額扣除檢查
         allowed, g_rem, u_rem = check_and_update_dual_usage(user_id)
         if not allowed:
             await message.reply("MEOW")
             return
 
-        # 2. 自動偵測安全閥狀態（個人剩餘 >= 全服剩餘）
         if is_safety_valve_triggered(user_id):
             action_prompt = None
         else:
             action_prompt = update_user_affection_and_get_action(user_id)
 
-        # 3. 呼叫 AI (四核心調度)
         async with message.channel.typing():
             ai_reply = ask_hybrid_ai(clean_content if clean_content else message.content, action_prompt)
         
