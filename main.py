@@ -43,15 +43,16 @@ class AIChatBot(commands.Bot):
 
     async def setup_hook(self):
         try:
-            # 目前指令皆改為 guild-scoped。清空並同步全域清單，移除同一個
-            # Discord Application 過去留下的釣魚指令；不會影響其他 App。
-            self.tree.clear_commands(guild=None)
-            removed_global = await self.tree.sync()
-            logger.info("全域指令清除／同步完成，目前全域指令數：%s", len(removed_global))
-
-            # Guild sync 會以目前程式中的指令完整覆寫此伺服器的舊指令清單。
+            # 先確保新伺服器指令成功註冊，再移除舊全域指令；若 guild sync
+            # 失敗，舊指令仍保留，不會因啟動失敗而讓整個指令清單消失。
             synced_guild = await self.tree.sync(guild=GUILD_OBJECT)
             logger.info("伺服器指令同步完成：%s", [command.name for command in synced_guild])
+
+            # 所有目前指令皆為 guild-scoped；在 guild sync 成功後，清除同一個
+            # Discord Application 過去留下的全域指令，不影響其他 App。
+            self.tree.clear_commands(guild=None)
+            removed_global = await self.tree.sync()
+            logger.info("全域舊指令清除／同步完成，目前全域指令數：%s", len(removed_global))
         except Exception:
             logger.exception("斜線指令同步失敗")
 
@@ -235,7 +236,14 @@ async def on_message(message: discord.Message):
         return
 
     try:
-        if message.guild is None or message.guild.id != OFFICIAL_GUILD_ID:
+        if message.guild is None:
+            return
+        if message.guild.id != OFFICIAL_GUILD_ID:
+            logger.debug(
+                "忽略非目標伺服器訊息：收到 guild_id=%s，預期=%s",
+                message.guild.id,
+                OFFICIAL_GUILD_ID,
+            )
             return
 
         is_mentioned = bot.user is not None and bot.user in message.mentions
@@ -245,6 +253,11 @@ async def on_message(message: discord.Message):
 
         locked_channel_id = get_channel_lock()
         if locked_channel_id is not None and message.channel.id != locked_channel_id:
+            logger.info(
+                "忽略觸發訊息：頻道 %s 不符合已設定的鎖定頻道 %s",
+                message.channel.id,
+                locked_channel_id,
+            )
             return
 
         user_id = message.author.id
@@ -290,6 +303,7 @@ async def on_message(message: discord.Message):
 async def on_ready():
     logger.info("機器人已上線：%s (ID: %s)", bot.user, bot.user.id if bot.user else "unknown")
     logger.info("伺服器 ID 安全鎖定中：%s", OFFICIAL_GUILD_ID)
+    logger.info("機器人目前加入的伺服器 ID：%s", [guild.id for guild in bot.guilds])
     logger.info(
         "免費 AI 路徑狀態：Groq Free key=%s, OpenRouter Free=%s",
         bool(os.getenv("GROQ_API_KEY", "").strip()),
