@@ -21,6 +21,8 @@ OFFICIAL_GUILD_ID = 1471762037720879107
 GLOBAL_DAILY_LIMIT = 99999
 USER_DAILY_LIMIT = 40
 TAIPEI_TZ = ZoneInfo("Asia/Taipei")
+MEMORY_HISTORY_MESSAGES = 12
+MEMORY_MESSAGE_MAX_CHARS = 1200
 
 # ==================== Flask keep-alive endpoint (Render Web Service) ====================
 app = Flask(__name__)
@@ -92,6 +94,31 @@ def init_usage_db():
                 guild_id INTEGER PRIMARY KEY,
                 channel_id INTEGER NOT NULL
             )"""
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS memory_settings (
+                guild_id INTEGER NOT NULL,
+                scope TEXT NOT NULL CHECK(scope IN ('personal', 'group')),
+                scope_id INTEGER NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (guild_id, scope, scope_id)
+            )"""
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS chat_memory (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER NOT NULL,
+                scope TEXT NOT NULL CHECK(scope IN ('personal', 'group')),
+                scope_id INTEGER NOT NULL,
+                author_id INTEGER NOT NULL,
+                role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )"""
+        )
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS idx_chat_memory_scope
+               ON chat_memory (guild_id, scope, scope_id, id)"""
         )
 
 
@@ -254,11 +281,107 @@ def set_channel_lock(channel_id):
         )
 
 
+def set_memory_enabled(guild_id, scope, scope_id, enabled):
+    if scope not in {"personal", "group"}:
+        raise ValueError("scope must be 'personal' or 'group'")
+    with _db() as conn:
+        conn.execute(
+            """INSERT INTO memory_settings (guild_id, scope, scope_id, enabled)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(guild_id, scope, scope_id)
+               DO UPDATE SET enabled=excluded.enabled""",
+            (guild_id, scope, scope_id, int(bool(enabled))),
+        )
+
+
+def is_memory_enabled(guild_id, scope, scope_id):
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT enabled FROM memory_settings WHERE guild_id=? AND scope=? AND scope_id=?",
+            (guild_id, scope, scope_id),
+        ).fetchone()
+    if row is None:
+        # 個人記憶預設啟用；群組共享記憶預設關閉，需管理員明確開啟。
+        return scope == "personal"
+    return bool(row[0])
+
+
+def get_memory_scope(guild_id, user_id, channel_id):
+    """群組記憶優先；未開啟時才使用使用者自己的個人記憶。"""
+    if is_memory_enabled(guild_id, "group", channel_id):
+        return "group", channel_id
+    if is_memory_enabled(guild_id, "personal", user_id):
+        return "personal", user_id
+    return None
+
+
+def load_conversation_memory(guild_id, user_id, channel_id):
+    scope_info = get_memory_scope(guild_id, user_id, channel_id)
+    if scope_info is None:
+        return []
+    scope, scope_id = scope_info
+    with _db() as conn:
+        rows = conn.execute(
+            """SELECT role, content FROM chat_memory
+               WHERE guild_id=? AND scope=? AND scope_id=?
+               ORDER BY id DESC LIMIT ?""",
+            (guild_id, scope, scope_id, MEMORY_HISTORY_MESSAGES),
+        ).fetchall()
+    return [{"role": role, "content": content} for role, content in reversed(rows)]
+
+
+def save_conversation_turn(guild_id, user_id, channel_id, display_name, user_text, assistant_text):
+    scope_info = get_memory_scope(guild_id, user_id, channel_id)
+    if scope_info is None:
+        return False
+    scope, scope_id = scope_info
+    user_content = str(user_text).strip()[:MEMORY_MESSAGE_MAX_CHARS]
+    if scope == "group":
+        user_content = f"{str(display_name)[:80]}：{user_content}"
+    assistant_content = str(assistant_text).strip()[:MEMORY_MESSAGE_MAX_CHARS]
+    if not user_content or not assistant_content:
+        return False
+
+    now = datetime.datetime.now(TAIPEI_TZ).isoformat(timespec="seconds")
+    with _db() as conn:
+        conn.executemany(
+            """INSERT INTO chat_memory
+               (guild_id, scope, scope_id, author_id, role, content, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            [
+                (guild_id, scope, scope_id, user_id, "user", user_content, now),
+                (guild_id, scope, scope_id, user_id, "assistant", assistant_content, now),
+            ],
+        )
+        conn.execute(
+            """DELETE FROM chat_memory
+               WHERE guild_id=? AND scope=? AND scope_id=?
+                 AND id NOT IN (
+                   SELECT id FROM chat_memory
+                   WHERE guild_id=? AND scope=? AND scope_id=?
+                   ORDER BY id DESC LIMIT ?
+                 )""",
+            (guild_id, scope, scope_id, guild_id, scope, scope_id, MEMORY_HISTORY_MESSAGES),
+        )
+    return True
+
+
+def clear_conversation_memory(guild_id, scope, scope_id):
+    if scope not in {"personal", "group"}:
+        raise ValueError("scope must be 'personal' or 'group'")
+    with _db() as conn:
+        cursor = conn.execute(
+            "DELETE FROM chat_memory WHERE guild_id=? AND scope=? AND scope_id=?",
+            (guild_id, scope, scope_id),
+        )
+    return cursor.rowcount
+
+
 # ==================== AI API 呼叫 ====================
-def _provider_pool():
+def _provider_pool(vision=False):
     providers = []
     groq_key = os.getenv("GROQ_API_KEY", "").strip()
-    if groq_key:
+    if groq_key and not vision:
         providers.append(
             {
                 "name": "Groq Free Tier",
@@ -308,6 +431,7 @@ def _post_chat_completion(provider, messages):
         raise RuntimeError(f"HTTP {response.status_code}: {detail}")
 
     data = response.json()
+    logger.info("AI 回應模型 ID：%s", data.get("model", provider["model"]))
     choices = data.get("choices")
     if not isinstance(choices, list) or not choices:
         raise ValueError("回應沒有 choices 陣列")
@@ -324,9 +448,18 @@ def _post_chat_completion(provider, messages):
     raise ValueError("回應中沒有可用的文字內容")
 
 
-async def ask_hybrid_ai(user_message, cat_action_prompt=None):
-    providers = _provider_pool()
+async def ask_hybrid_ai(
+    user_message,
+    cat_action_prompt=None,
+    conversation_history=None,
+    image_payloads=None,
+):
+    image_payloads = image_payloads or []
+    providers = _provider_pool(vision=bool(image_payloads))
     if not providers:
+        if image_payloads:
+            logger.error("圖片分析需要 OPENROUTER_API_KEY；不會回退至付費或不支援圖片的模型")
+            return "本喵目前沒有可用的免費圖片分析服務；請檢查 OpenRouter Free 金鑰或稍後再試喵。"
         logger.error("未設定免費 AI API 金鑰；需要 OPENROUTER_API_KEY，或確認 Groq Free Plan 後啟用")
         return "本喵的免費 AI 服務尚未設定，請通知管理員檢查喵。"
 
@@ -342,12 +475,38 @@ async def ask_hybrid_ai(user_message, cat_action_prompt=None):
         "2. 你的自我稱呼必須是「本喵」或「本貓」，稱呼使用者為「人類」或「奴才」。\n"
         "3. 每句話（或多數句子）的結尾請加上「喵」、「～喵」或「喵嗚❤」。\n"
         f"4. {action_text}\n"
-        "5. 請使用繁體中文（台灣習慣用語）回答。"
+        "5. 請使用繁體中文（台灣習慣用語）回答。\n"
+        "6. 在安全、合法且能力允許的範圍內，盡力完成使用者真正要求的事情；能完成一部分時，先交付可完成的部分，不要過早放棄。\n"
+        "7. 對低風險且可調整的不明處，採合理假設並簡短說明；若不同選擇會明顯改變結果或涉及重要權限，再先詢問。\n"
+        "8. 不要捏造事實、來源、操作結果或自己沒有的能力；有不確定之處要坦白說明。\n"
+        "9. 尊重使用者隱私與記憶設定；不要要求、洩漏或重複顯示密碼、API 金鑰及其他秘密。\n"
+        "10. 若無法完整滿足要求，簡短說明限制並提供最接近且可行的替代方案。\n"
+        "11. 不要憑猜測宣稱自己使用哪個模型；若系統沒有提供模型資訊，就說無法確認。"
     )
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_message},
-    ]
+    messages = [{"role": "system", "content": system_prompt}]
+    if isinstance(conversation_history, list):
+        for item in conversation_history[-MEMORY_HISTORY_MESSAGES:]:
+            if not isinstance(item, dict) or item.get("role") not in {"user", "assistant"}:
+                continue
+            content = str(item.get("content", "")).strip()
+            if content:
+                messages.append(
+                    {"role": item["role"], "content": content[:MEMORY_MESSAGE_MAX_CHARS]}
+                )
+    current_content = str(user_message)[:MEMORY_MESSAGE_MAX_CHARS]
+    if image_payloads:
+        current_content = [{"type": "text", "text": current_content}]
+        for image in image_payloads:
+            mime_type = image.get("mime_type", "image/jpeg")
+            data = image.get("data", "")
+            if data:
+                current_content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime_type};base64,{data}"},
+                    }
+                )
+    messages.append({"role": "user", "content": current_content})
 
     # 逐一嘗試已設定的供應商，避免隨機挑到失效服務後就直接放棄。
     for provider in providers:
