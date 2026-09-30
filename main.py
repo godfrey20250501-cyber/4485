@@ -1,7 +1,6 @@
 import logging
 import os
 import re
-import sys
 
 import discord
 from discord import app_commands
@@ -75,6 +74,30 @@ async def _reply_targets_bot(message: discord.Message) -> bool:
     except (discord.NotFound, discord.Forbidden, discord.HTTPException):
         return False
     return bot.user is not None and original.author.id == bot.user.id
+
+
+def _split_discord_message(text: str, limit: int = 1900) -> list[str]:
+    """保守分割訊息，讓回覆留在 Discord 2000 字元限制內。"""
+    remaining = str(text).strip()
+    chunks = []
+    while len(remaining) > limit:
+        split_at = remaining.rfind("\n", 0, limit)
+        if split_at < limit // 2:
+            split_at = remaining.rfind(" ", 0, limit)
+        if split_at < limit // 2:
+            split_at = limit
+        chunk = remaining[:split_at].strip()
+        if chunk:
+            chunks.append(chunk)
+        remaining = remaining[split_at:].strip()
+    if remaining:
+        chunks.append(remaining)
+    return chunks or ["本喵暫時沒有可顯示的回覆喵。"]
+
+
+async def _send_reply(message: discord.Message, text: str):
+    for chunk in _split_discord_message(text):
+        await message.reply(chunk, mention_author=False)
 
 
 # ==================== Help 下拉選單 ====================
@@ -250,7 +273,7 @@ async def on_message(message: discord.Message):
         user_text = clean_content or message.content
         async with message.channel.typing():
             ai_reply = await ask_hybrid_ai(user_text, action_prompt)
-        await message.reply(ai_reply, mention_author=False)
+        await _send_reply(message, ai_reply)
 
     except Exception:
         logger.exception("處理 Discord 訊息失敗；guild=%s channel=%s", getattr(message.guild, "id", None), message.channel.id)
@@ -268,7 +291,7 @@ async def on_ready():
     logger.info("機器人已上線：%s (ID: %s)", bot.user, bot.user.id if bot.user else "unknown")
     logger.info("伺服器 ID 安全鎖定中：%s", OFFICIAL_GUILD_ID)
     logger.info(
-        "AI API 金鑰狀態：Groq=%s, OpenRouter=%s",
+        "免費 AI 路徑狀態：Groq Free key=%s, OpenRouter Free=%s",
         bool(os.getenv("GROQ_API_KEY", "").strip()),
         bool(os.getenv("OPENROUTER_API_KEY", "").strip()),
     )
