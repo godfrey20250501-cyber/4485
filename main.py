@@ -181,7 +181,7 @@ class HelpSelect(Select):
                 "只會記錄 @本喵或回覆本喵的訊息與本喵回覆，不會讀取頻道其他聊天。\n\n"
                 "用 `/清除記憶` 刪除自己的記憶；管理員也可清除目前頻道共享記憶。群組記憶啟用時，該頻道內大家的互動會成為共同上下文。\n\n"
                 "傳送 PNG、JPEG 或 WebP 圖片並 @本喵或回覆本喵即可分析；每次最多 2 張、每張 4 MiB。"
-                "圖片只走 OpenRouter 免費視覺路由；不可用時不會改用付費模型。"
+                "圖片只走 Gemini Free Tier 或 OpenRouter 免費視覺路由；不可用時不會改用 Groq 文字模型或其他付費模型。"
             )
         else:
             embed.title = "🛠️ 伺服器管理員限制功能"
@@ -441,8 +441,9 @@ async def on_ready():
     logger.info("伺服器 ID 安全鎖定中：%s", OFFICIAL_GUILD_ID)
     logger.info("機器人目前加入的伺服器 ID：%s", [guild.id for guild in bot.guilds])
     logger.info(
-        "免費 AI 路徑狀態：Groq Free key=%s, OpenRouter Free=%s",
+        "免費 AI 路徑狀態：Groq key=%s, Gemini key=%s, OpenRouter key=%s",
         bool(os.getenv("GROQ_API_KEY", "").strip()),
+        bool(os.getenv("GEMINI_API_KEY", "").strip()),
         bool(os.getenv("OPENROUTER_API_KEY", "").strip()),
     )
 
