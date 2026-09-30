@@ -1,6 +1,8 @@
 import logging
 import os
 import re
+import base64
+import mimetypes
 
 import discord
 from discord import app_commands
@@ -13,13 +15,18 @@ from core import (
     OFFICIAL_GUILD_ID,
     ask_hybrid_ai,
     check_and_update_dual_usage,
+    clear_conversation_memory,
     feed_cat_canned,
     get_channel_lock,
+    is_memory_enabled,
+    load_conversation_memory,
     get_quota_status,
     get_user_affection_score,
     init_usage_db,
     is_safety_valve_triggered,
     keep_alive,
+    save_conversation_turn,
+    set_memory_enabled,
     set_channel_lock,
     update_user_affection_and_get_action,
 )
@@ -30,6 +37,9 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 logger = logging.getLogger("discord_cat_bot")
+MAX_IMAGES_PER_MESSAGE = 2
+MAX_IMAGE_BYTES = 4 * 1024 * 1024
+SUPPORTED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 
 GUILD_OBJECT = discord.Object(id=OFFICIAL_GUILD_ID)
 
@@ -101,12 +111,46 @@ async def _send_reply(message: discord.Message, text: str):
         await message.reply(chunk, mention_author=False)
 
 
+async def _prepare_image_payloads(attachments):
+    candidates = []
+    for attachment in attachments:
+        mime_type = (
+            attachment.content_type
+            or mimetypes.guess_type(attachment.filename)[0]
+            or ""
+        ).split(";")[0].lower()
+        if mime_type.startswith("image/"):
+            candidates.append((attachment, mime_type))
+
+    if len(candidates) > MAX_IMAGES_PER_MESSAGE:
+        raise ValueError(f"一次最多分析 {MAX_IMAGES_PER_MESSAGE} 張圖片喵。")
+
+    image_payloads = []
+    for attachment, mime_type in candidates:
+        if mime_type not in SUPPORTED_IMAGE_TYPES:
+            raise ValueError("目前只支援 PNG、JPEG/JPG 或 WebP 圖片喵。")
+        if attachment.size > MAX_IMAGE_BYTES:
+            raise ValueError("單張圖片請小於 4 MiB，這樣免費模型比較容易處理喵。")
+        raw = await attachment.read()
+        if len(raw) > MAX_IMAGE_BYTES:
+            raise ValueError("單張圖片請小於 4 MiB，這樣免費模型比較容易處理喵。")
+        image_payloads.append(
+            {
+                "mime_type": mime_type,
+                "data": base64.b64encode(raw).decode("ascii"),
+                "filename": attachment.filename[:100],
+            }
+        )
+    return image_payloads
+
+
 # ==================== Help 下拉選單 ====================
 class HelpSelect(Select):
     def __init__(self):
         options = [
             discord.SelectOption(label="貓貓對話模式", description="了解標記與回覆對話方法", emoji="🐱", value="basic"),
             discord.SelectOption(label="雙重限額與安全閥", description="查看個人、全服額度與自動安全閥", emoji="📊", value="quota"),
+            discord.SelectOption(label="對話記憶與圖片", description="設定個人/群組記憶並傳圖提問", emoji="🧠", value="memory"),
             discord.SelectOption(label="管理員功能鎖", description="查看管理員文字頻道鎖定", emoji="🛠️", value="admin"),
         ]
         super().__init__(placeholder="請選擇你想查看的說明指南...", min_values=1, max_values=1, options=options)
@@ -129,6 +173,15 @@ class HelpSelect(Select):
                 "• **個人限制**：每人每天 40 次。\n"
                 f"• **全服限制**：每天 {GLOBAL_DAILY_LIMIT:,} 次。\n"
                 "• **安全閥**：全服剩餘額度低於或等於個人剩餘額度時，暫停好感度動作與餵食功能。"
+            )
+        elif selected == "memory":
+            embed.title = "🧠 對話記憶與圖片分析"
+            embed.description = (
+                "每位使用者的個人記憶預設開啟；用 `/個人記憶` 可關閉或重新開啟。群組共享記憶預設關閉，管理員可用 `/群組記憶` 設定目前頻道。"
+                "只會記錄 @本喵或回覆本喵的訊息與本喵回覆，不會讀取頻道其他聊天。\n\n"
+                "用 `/清除記憶` 刪除自己的記憶；管理員也可清除目前頻道共享記憶。群組記憶啟用時，該頻道內大家的互動會成為共同上下文。\n\n"
+                "傳送 PNG、JPEG 或 WebP 圖片並 @本喵或回覆本喵即可分析；每次最多 2 張、每張 4 MiB。"
+                "圖片只走 OpenRouter 免費視覺路由；不可用時不會改用付費模型。"
             )
         else:
             embed.title = "🛠️ 伺服器管理員限制功能"
@@ -156,6 +209,62 @@ async def help_command(interaction: discord.Interaction):
         color=0x5865F2,
     )
     await interaction.response.send_message(embed=embed, view=HelpView(), ephemeral=True)
+
+
+@bot.tree.command(name="個人記憶", description="開啟或關閉你在本伺服器的私人對話記憶", guild=GUILD_OBJECT)
+@app_commands.choices(狀態=[
+    app_commands.Choice(name="開啟", value="on"),
+    app_commands.Choice(name="關閉", value="off"),
+])
+async def personal_memory(interaction: discord.Interaction, 狀態: app_commands.Choice[str]):
+    enabled = 狀態.value == "on"
+    set_memory_enabled(interaction.guild_id, "personal", interaction.user.id, enabled)
+    status_text = "已開啟" if enabled else "已關閉"
+    await interaction.response.send_message(
+        f"你的個人記憶{status_text}喵。只儲存你 @本喵或回覆本喵的對話；若此頻道開啟群組記憶，會優先使用群組記憶。",
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="群組記憶", description="管理員開啟或關閉目前頻道的共享對話記憶", guild=GUILD_OBJECT)
+@app_commands.choices(狀態=[
+    app_commands.Choice(name="開啟", value="on"),
+    app_commands.Choice(name="關閉", value="off"),
+])
+@app_commands.checks.has_permissions(administrator=True)
+async def group_memory(interaction: discord.Interaction, 狀態: app_commands.Choice[str]):
+    if interaction.channel_id is None or interaction.guild_id is None:
+        await interaction.response.send_message("請在伺服器文字頻道使用此指令喵。", ephemeral=True)
+        return
+    enabled = 狀態.value == "on"
+    set_memory_enabled(interaction.guild_id, "group", interaction.channel_id, enabled)
+    status_text = "已開啟" if enabled else "已關閉"
+    await interaction.response.send_message(
+        f"本頻道共享記憶{status_text}喵。只記錄 @本喵或回覆本喵的訊息與本喵回覆；此頻道使用者都可能共享這些內容。",
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="清除記憶", description="清除自己的記憶；管理員可清除目前頻道共享記憶", guild=GUILD_OBJECT)
+@app_commands.choices(範圍=[
+    app_commands.Choice(name="我的個人記憶", value="personal"),
+    app_commands.Choice(name="目前頻道群組記憶（管理員）", value="group"),
+])
+async def clear_memory(interaction: discord.Interaction, 範圍: app_commands.Choice[str]):
+    if interaction.guild_id is None:
+        await interaction.response.send_message("請在伺服器中使用此指令喵。", ephemeral=True)
+        return
+    if 範圍.value == "personal":
+        deleted = clear_conversation_memory(interaction.guild_id, "personal", interaction.user.id)
+        reply = f"已清除你的個人記憶（刪除 {deleted} 則內容）喵。若個人記憶仍開啟，之後的對話會重新儲存。"
+    else:
+        permissions = getattr(interaction.user, "guild_permissions", None)
+        if permissions is None or not permissions.administrator:
+            await interaction.response.send_message("清除頻道共享記憶需要伺服器管理員權限喵。", ephemeral=True)
+            return
+        deleted = clear_conversation_memory(interaction.guild_id, "group", interaction.channel_id)
+        reply = f"已清除本頻道共享記憶（刪除 {deleted} 則內容）喵。若群組記憶仍開啟，之後的對話會重新儲存。"
+    await interaction.response.send_message(reply, ephemeral=True)
 
 
 @bot.tree.command(
@@ -266,7 +375,11 @@ async def on_message(message: discord.Message):
             clean_content = re.sub(rf"<@!?{bot.user.id}>", "", clean_content)
         clean_content = clean_content.strip()
 
-        if is_mentioned and not clean_content and not is_reply:
+        has_image_attachment = any(
+            ((attachment.content_type or mimetypes.guess_type(attachment.filename)[0] or "").startswith("image/"))
+            for attachment in message.attachments
+        )
+        if is_mentioned and not clean_content and not is_reply and not has_image_attachment:
             await message.reply(
                 "👀 找本喵嗎？直接 `@我` 或回覆本喵的訊息來聊天喵！可以使用 `/查看當前額度` 檢查剩餘次數！",
                 mention_author=False,
@@ -283,10 +396,33 @@ async def on_message(message: discord.Message):
         else:
             action_prompt = update_user_affection_and_get_action(user_id)
 
-        user_text = clean_content or message.content
+        try:
+            image_payloads = await _prepare_image_payloads(message.attachments)
+        except ValueError as exc:
+            await message.reply(str(exc), mention_author=False)
+            return
+
+        user_text = clean_content or ("請描述並分析我附上的圖片。" if image_payloads else message.content)
+        conversation_history = load_conversation_memory(message.guild.id, user_id, message.channel.id)
         async with message.channel.typing():
-            ai_reply = await ask_hybrid_ai(user_text, action_prompt)
+            ai_reply = await ask_hybrid_ai(
+                user_text,
+                action_prompt,
+                conversation_history=conversation_history,
+                image_payloads=image_payloads,
+            )
         await _send_reply(message, ai_reply)
+        memory_user_text = user_text
+        if image_payloads:
+            memory_user_text += " [附圖：" + ", ".join(image["filename"] for image in image_payloads) + "]"
+        save_conversation_turn(
+            message.guild.id,
+            user_id,
+            message.channel.id,
+            message.author.display_name,
+            memory_user_text,
+            ai_reply,
+        )
 
     except Exception:
         logger.exception("處理 Discord 訊息失敗；guild=%s channel=%s", getattr(message.guild, "id", None), message.channel.id)
