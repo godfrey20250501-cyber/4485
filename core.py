@@ -4,6 +4,7 @@ import logging
 import os
 import random
 import sqlite3
+from contextlib import contextmanager
 from zoneinfo import ZoneInfo
 
 import requests
@@ -51,9 +52,20 @@ def _connect():
     return conn
 
 
+@contextmanager
+def _db():
+    """提供會自動 commit/rollback 並關閉的 SQLite 連線。"""
+    conn = _connect()
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
+
+
 # ==================== SQLite 資料庫 ====================
 def init_usage_db():
-    with _connect() as conn:
+    with _db() as conn:
         conn.execute(
             """CREATE TABLE IF NOT EXISTS user_usage (
                 user_id INTEGER NOT NULL,
@@ -85,7 +97,7 @@ def init_usage_db():
 
 def get_quota_status(user_id):
     today = _today()
-    with _connect() as conn:
+    with _db() as conn:
         row = conn.execute(
             "SELECT used_count FROM global_usage WHERE log_date=?", (today,)
         ).fetchone()
@@ -148,7 +160,7 @@ def is_safety_valve_triggered(user_id):
 
 
 def update_user_affection_and_get_action(user_id):
-    with _connect() as conn:
+    with _db() as conn:
         row = conn.execute(
             "SELECT affection FROM user_stats WHERE user_id=?", (user_id,)
         ).fetchone()
@@ -217,7 +229,7 @@ def feed_cat_canned(user_id):
 
 
 def get_user_affection_score(user_id):
-    with _connect() as conn:
+    with _db() as conn:
         row = conn.execute(
             "SELECT affection FROM user_stats WHERE user_id=?", (user_id,)
         ).fetchone()
@@ -225,7 +237,7 @@ def get_user_affection_score(user_id):
 
 
 def get_channel_lock():
-    with _connect() as conn:
+    with _db() as conn:
         row = conn.execute(
             "SELECT channel_id FROM channel_lock WHERE guild_id=?",
             (OFFICIAL_GUILD_ID,),
@@ -234,7 +246,7 @@ def get_channel_lock():
 
 
 def set_channel_lock(channel_id):
-    with _connect() as conn:
+    with _db() as conn:
         conn.execute(
             """INSERT INTO channel_lock (guild_id, channel_id) VALUES (?, ?)
                ON CONFLICT(guild_id) DO UPDATE SET channel_id=excluded.channel_id""",
@@ -249,10 +261,11 @@ def _provider_pool():
     if groq_key:
         providers.append(
             {
-                "name": "Groq",
+                "name": "Groq Free Tier",
                 "url": "https://api.groq.com/openai/v1/chat/completions",
                 "key": groq_key,
-                "model": "llama-3.3-70b-versatile",
+                # 此模型列有 Groq Free Plan 的速率配額；Developer Plan 則按 token 計費。
+                "model": "openai/gpt-oss-20b",
             }
         )
 
@@ -260,14 +273,13 @@ def _provider_pool():
     if openrouter_key:
         providers.append(
             {
-                "name": "OpenRouter",
+                "name": "OpenRouter Free",
                 "url": "https://openrouter.ai/api/v1/chat/completions",
                 "key": openrouter_key,
-                "model": "openrouter/auto",
+                "model": "openrouter/free",
             }
         )
-    # GitHub Models 已退役，不再呼叫。Pollinations 目前亦要求 API key，
-    # 因此不再把舊的匿名首頁 POST 當成可用備援。
+    # 不加入 Groq Developer/其他付費模型或 OpenRouter Auto 等付費路徑。
     return providers
 
 
@@ -276,7 +288,7 @@ def _post_chat_completion(provider, messages):
         "Content-Type": "application/json",
         "Authorization": f"Bearer {provider['key']}",
     }
-    if provider["name"] == "OpenRouter":
+    if provider["name"].startswith("OpenRouter"):
         headers["HTTP-Referer"] = os.getenv("OPENROUTER_HTTP_REFERER", "https://discord.com")
         headers["X-OpenRouter-Title"] = os.getenv("OPENROUTER_APP_TITLE", "Discord Cat Bot")
 
@@ -315,8 +327,8 @@ def _post_chat_completion(provider, messages):
 async def ask_hybrid_ai(user_message, cat_action_prompt=None):
     providers = _provider_pool()
     if not providers:
-        logger.error("沒有設定任何可用的 AI API key（需要 GROQ_API_KEY 或 OPENROUTER_API_KEY）")
-        return "本喵的 AI 服務尚未設定，請通知管理員檢查 API 金鑰喵。"
+        logger.error("未設定免費 AI API 金鑰；需要 OPENROUTER_API_KEY，或確認 Groq Free Plan 後啟用")
+        return "本喵的免費 AI 服務尚未設定，請通知管理員檢查喵。"
 
     random.shuffle(providers)
     action_text = (
