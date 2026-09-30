@@ -17,7 +17,7 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 DB_FILE = os.getenv("DB_FILE", "user_usage.db")
-OFFICIAL_GUILD_ID = 1546517053719060642
+OFFICIAL_GUILD_ID = 1471762037720879107
 GLOBAL_DAILY_LIMIT = 99999
 USER_DAILY_LIMIT = 40
 TAIPEI_TZ = ZoneInfo("Asia/Taipei")
