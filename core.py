@@ -18,7 +18,12 @@ logger = logging.getLogger(__name__)
 
 DB_FILE = os.getenv("DB_FILE", "user_usage.db")
 OFFICIAL_GUILD_ID = 1471762037720879107
-GLOBAL_DAILY_LIMIT = 99999
+try:
+    # Bot 自身保護上限；帳戶供應商配額仍由各 API 控制台決定。
+    GLOBAL_DAILY_LIMIT = max(1, int(os.getenv("GLOBAL_DAILY_LIMIT", "1000")))
+except ValueError:
+    logger.warning("GLOBAL_DAILY_LIMIT 不是整數，改用預設值 1000")
+    GLOBAL_DAILY_LIMIT = 1000
 USER_DAILY_LIMIT = 40
 TAIPEI_TZ = ZoneInfo("Asia/Taipei")
 MEMORY_HISTORY_MESSAGES = 12
@@ -389,6 +394,17 @@ def _provider_pool(vision=False):
                 "key": groq_key,
                 # 此模型列有 Groq Free Plan 的速率配額；Developer Plan 則按 token 計費。
                 "model": "openai/gpt-oss-20b",
+            }
+        )
+
+    gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if gemini_key:
+        providers.append(
+            {
+                "name": "Gemini Free Tier",
+                "url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+                "key": gemini_key,
+                "model": "gemini-3.1-flash-lite",
             }
         )
 
