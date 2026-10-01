@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import re
@@ -11,20 +12,26 @@ from discord.ui import Select, View
 from dotenv import load_dotenv
 
 from core import (
+    CHANNEL_HISTORY_LIMIT,
     GLOBAL_DAILY_LIMIT,
     OFFICIAL_GUILD_ID,
     ask_hybrid_ai,
     check_and_update_dual_usage,
     clear_conversation_memory,
+    delete_channel_message,
     feed_cat_canned,
     get_channel_lock,
+    get_history_storage_backend,
     is_memory_enabled,
+    load_recent_channel_messages,
     load_conversation_memory,
     get_quota_status,
     get_user_affection_score,
     init_usage_db,
     is_safety_valve_triggered,
     keep_alive,
+    record_channel_message,
+    record_channel_messages,
     save_conversation_turn,
     set_memory_enabled,
     set_channel_lock,
@@ -40,6 +47,13 @@ logger = logging.getLogger("discord_cat_bot")
 MAX_IMAGES_PER_MESSAGE = 2
 MAX_IMAGE_BYTES = 4 * 1024 * 1024
 SUPPORTED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
+MAX_HISTORY_SCAN_MESSAGES = CHANNEL_HISTORY_LIMIT
+MAX_HISTORY_CONTEXT_MESSAGES = 15
+MAX_HISTORY_CONTEXT_CHARS = 6000
+DISCORD_MESSAGE_LINK_RE = re.compile(
+    r"https?://(?:canary\.|ptb\.)?discord(?:app)?\.com/channels/(\d+)/(\d+)/(\d+)"
+)
+HISTORY_REQUEST_WORDS = ("看一下", "看看", "回顧", "剛才", "剛剛", "前面", "之前聊", "聊天記錄", "對話記錄", "最近討論")
 
 GUILD_OBJECT = discord.Object(id=OFFICIAL_GUILD_ID)
 
@@ -144,6 +158,143 @@ async def _prepare_image_payloads(attachments):
     return image_payloads
 
 
+def _history_record_from_message(guild_id, channel, item):
+    author = getattr(item.author, "display_name", getattr(item.author, "name", "使用者"))
+    body = (getattr(item, "clean_content", "") or getattr(item, "content", "") or "").strip()
+    attachment_names = [attachment.filename[:80] for attachment in getattr(item, "attachments", [])]
+    if attachment_names:
+        body = (body + " " if body else "") + "[附件：" + ", ".join(attachment_names) + "]"
+    if not body:
+        body = "[沒有文字內容]"
+    return {
+        "guild_id": guild_id,
+        "channel_id": channel.id,
+        "message_id": item.id,
+        "author_id": item.author.id,
+        "author_name": author,
+        "content": body[:2000],
+        "created_at": getattr(item, "created_at", None).isoformat()
+        if getattr(item, "created_at", None) else None,
+    }
+
+
+def _format_history_record(channel, record):
+    body = (record.get("content") or "[沒有文字內容]").replace("@", "@\u200b")[:450]
+    channel_name = getattr(channel, "name", "頻道")
+    return f"[#{channel_name}｜{record.get('author_name', '使用者')}] {body}"
+
+
+def _format_history_message(channel, item, guild_id=None):
+    guild_id = guild_id or getattr(getattr(channel, "guild", None), "id", 0)
+    return _format_history_record(channel, _history_record_from_message(guild_id, channel, item))
+
+
+async def _collect_requested_history(message: discord.Message, clean_content: str):
+    """只在使用者明確指定對象/頻道/訊息連結時，從每頻道最近訊息緩衝提供摘錄。"""
+    guild = message.guild
+    if guild is None:
+        return None, None
+
+    link_match = DISCORD_MESSAGE_LINK_RE.search(message.content or "")
+    target_users = [
+        member
+        for member in message.mentions
+        if bot.user is None or member.id != bot.user.id
+    ]
+    target_user_ids = {member.id for member in target_users}
+    channels = []
+    specific_message = None
+
+    if link_match:
+        link_guild_id, channel_id, message_id = map(int, link_match.groups())
+        if link_guild_id != guild.id:
+            return None, "本喵只能讀取目前這個伺服器的訊息連結喵。"
+        channel = guild.get_channel(channel_id)
+        if channel is None:
+            return None, "本喵找不到連結中的頻道，或該頻道不在目前伺服器喵。"
+        channels = [channel]
+        specific_message = message_id
+    elif message.channel_mentions:
+        channels = list(message.channel_mentions[:3])
+    elif target_user_ids or any(word in clean_content for word in HISTORY_REQUEST_WORDS):
+        channels = [message.channel]
+    else:
+        return None, None
+
+    bot_member = getattr(guild, "me", None)
+    if bot_member is None and bot.user is not None:
+        bot_member = guild.get_member(bot.user.id)
+    if bot_member is None:
+        return None, "本喵暫時無法確認自己在伺服器中的權限喵。"
+
+    gathered = []
+    for channel in channels:
+        if not callable(getattr(channel, "history", None)):
+            return None, "目前只支援查閱文字頻道或討論串喵。"
+        requester_permissions = channel.permissions_for(message.author)
+        if not requester_permissions.view_channel or not requester_permissions.read_message_history:
+            return None, (
+                f"你在 #{getattr(channel, 'name', '指定頻道')} 沒有檢視頻道與讀取訊息歷史權限，"
+                "為保護其他頻道隱私，本喵不會代為讀取喵。"
+            )
+        permissions = channel.permissions_for(bot_member)
+        if not permissions.view_channel or not permissions.read_message_history:
+            return None, (
+                f"本喵在 #{getattr(channel, 'name', '指定頻道')} 缺少「檢視頻道」或「讀取訊息歷史」權限喵。"
+            )
+
+        try:
+            if specific_message is not None:
+                item = await channel.fetch_message(specific_message)
+                await asyncio.to_thread(
+                    record_channel_message,
+                    _history_record_from_message(guild.id, channel, item),
+                )
+                if not target_user_ids or item.author.id in target_user_ids:
+                    gathered.append(_format_history_message(channel, item, guild.id))
+                continue
+
+            records = await asyncio.to_thread(
+                load_recent_channel_messages,
+                guild.id,
+                channel.id,
+                MAX_HISTORY_SCAN_MESSAGES,
+            )
+            if len(records) < MAX_HISTORY_SCAN_MESSAGES:
+                backfill = []
+                async for item in channel.history(limit=MAX_HISTORY_SCAN_MESSAGES, oldest_first=False):
+                    if item.id != message.id:
+                        backfill.append(_history_record_from_message(guild.id, channel, item))
+                if backfill:
+                    await asyncio.to_thread(record_channel_messages, backfill)
+                    records = await asyncio.to_thread(
+                        load_recent_channel_messages,
+                        guild.id,
+                        channel.id,
+                        MAX_HISTORY_SCAN_MESSAGES,
+                    )
+
+            matches = [
+                record for record in records
+                if int(record["message_id"]) != message.id
+                and (not target_user_ids or int(record["author_id"]) in target_user_ids)
+            ]
+            for record in matches[-MAX_HISTORY_CONTEXT_MESSAGES:]:
+                gathered.append(_format_history_record(channel, record))
+        except discord.NotFound:
+            return None, "本喵找不到指定的訊息，可能已被刪除喵。"
+        except discord.Forbidden:
+            return None, "Discord 拒絕本喵讀取該頻道；請確認 bot 有檢視頻道與讀取訊息歷史權限喵。"
+        except discord.HTTPException:
+            logger.exception("讀取 Discord 頻道歷史失敗：guild=%s channel=%s", guild.id, channel.id)
+            return None, "Discord 暫時無法提供該頻道歷史訊息，請稍後再試喵。"
+
+    if not gathered:
+        target = f"@{target_users[0].display_name} 在" if target_users else ""
+        return f"最近 {MAX_HISTORY_SCAN_MESSAGES} 則訊息中找不到 {target}相關內容。", None
+    return "\n".join(gathered)[:MAX_HISTORY_CONTEXT_CHARS], None
+
+
 # ==================== Help 下拉選單 ====================
 class HelpSelect(Select):
     def __init__(self):
@@ -151,6 +302,7 @@ class HelpSelect(Select):
             discord.SelectOption(label="貓貓對話模式", description="了解標記與回覆對話方法", emoji="🐱", value="basic"),
             discord.SelectOption(label="雙重限額與安全閥", description="查看個人、全服額度與自動安全閥", emoji="📊", value="quota"),
             discord.SelectOption(label="對話記憶與圖片", description="設定個人/群組記憶並傳圖提問", emoji="🧠", value="memory"),
+            discord.SelectOption(label="查閱頻道訊息", description="明確指定頻道、成員或訊息連結查閱近期對話", emoji="🔎", value="history"),
             discord.SelectOption(label="管理員功能鎖", description="查看管理員文字頻道鎖定", emoji="🛠️", value="admin"),
         ]
         super().__init__(placeholder="請選擇你想查看的說明指南...", min_values=1, max_values=1, options=options)
@@ -172,16 +324,25 @@ class HelpSelect(Select):
             embed.description = (
                 "• **個人限制**：每人每天 40 次。\n"
                 f"• **全服限制**：每天 {GLOBAL_DAILY_LIMIT:,} 次。\n"
-                "• **安全閥**：全服剩餘額度低於或等於個人剩餘額度時，暫停好感度動作與餵食功能。"
+                "• **罐罐獎勵**：只恢復餵食者自己的個人額度，不會增加或恢復全服額度。\n"
+                "• **上限**：全服預設 1,200 次/日，程式最多允許設定至 1,500 次/日。\n"
+                "• **安全閥**：全服剩餘額度低於或等於個人剩餘額度時，暫停好感度動作。"
             )
         elif selected == "memory":
             embed.title = "🧠 對話記憶與圖片分析"
             embed.description = (
                 "每位使用者的個人記憶預設開啟；用 `/個人記憶` 可關閉或重新開啟。群組共享記憶預設關閉，管理員可用 `/群組記憶` 設定目前頻道。"
-                "只會記錄 @本喵或回覆本喵的訊息與本喵回覆，不會讀取頻道其他聊天。\n\n"
+                "個人/群組對話記憶只保存 @本喵或回覆本喵的互動。另有最近對話緩衝：每個文字頻道最近 100 則真人訊息會自動保存，超過時淘汰最舊訊息；不會自動送給 AI。\n\n"
                 "用 `/清除記憶` 刪除自己的記憶；管理員也可清除目前頻道共享記憶。群組記憶啟用時，該頻道內大家的互動會成為共同上下文。\n\n"
                 "傳送 PNG、JPEG 或 WebP 圖片並 @本喵或回覆本喵即可分析；每次最多 2 張、每張 4 MiB。"
                 "圖片只走 Gemini Free Tier 或 OpenRouter 免費視覺路由；不可用時不會改用 Groq 文字模型或其他付費模型。"
+            )
+        elif selected == "history":
+            embed.title = "🔎 最近訊息保存與按需查閱"
+            embed.description = (
+                f"本喵會在目標伺服器每個文字頻道保存最近 {MAX_HISTORY_SCAN_MESSAGES} 則真人訊息；新訊息到達時加入緩衝並淘汰最舊訊息。設定了 MongoDB 時會跨 Render 重啟保存。\n\n"
+                "@本喵時指定 `#頻道`、@成員，或貼上 Discord 訊息連結，就能要求本喵查閱；模型最多取得 15 則相關摘錄。超過最近 100 則的舊訊息不會保留。\n\n"
+                "你與 bot 都必須有該頻道的「檢視頻道」及「讀取訊息歷史」權限。保存的原文只在你明確要求查閱時傳給 AI 服務商，不會每則訊息都送給 AI。"
             )
         else:
             embed.title = "🛠️ 伺服器管理員限制功能"
@@ -293,7 +454,7 @@ async def check_quota(interaction: discord.Interaction):
     valve_triggered = is_safety_valve_triggered(interaction.user.id)
 
     valve_status = (
-        "🔴 已觸發（罐罐與好感度動作暫停）"
+        "🔴 已觸發（好感度動作暫停）"
         if valve_triggered
         else "🟢 正常運作"
     )
@@ -313,7 +474,7 @@ async def check_quota(interaction: discord.Interaction):
 
 @bot.tree.command(
     name="餵食",
-    description="餵食貓貓罐罐，提升好感度並補充全服額度",
+    description="餵食貓貓罐罐，提升好感度並恢復自己的個人額度",
     guild=GUILD_OBJECT,
 )
 async def feed_cat(interaction: discord.Interaction):
@@ -355,6 +516,22 @@ async def on_message(message: discord.Message):
             )
             return
 
+        if callable(getattr(message.channel, "history", None)) and (
+            (message.content or "").strip() or message.attachments
+        ):
+            try:
+                await asyncio.to_thread(
+                    record_channel_message,
+                    _history_record_from_message(message.guild.id, message.channel, message),
+                )
+            except Exception:
+                # 儲存服務暫時故障不應讓機器人漏掉一般聊天或停止回覆。
+                logger.exception(
+                    "寫入最近頻道訊息失敗：guild=%s channel=%s",
+                    message.guild.id,
+                    message.channel.id,
+                )
+
         is_mentioned = bot.user is not None and bot.user in message.mentions
         is_reply = await _reply_targets_bot(message)
         if not is_mentioned and not is_reply:
@@ -386,6 +563,11 @@ async def on_message(message: discord.Message):
             )
             return
 
+        history_context, history_error = await _collect_requested_history(message, clean_content)
+        if history_error:
+            await message.reply(history_error, mention_author=False)
+            return
+
         allowed, _, _ = check_and_update_dual_usage(user_id)
         if not allowed:
             await message.reply("MEOW", mention_author=False)
@@ -410,6 +592,7 @@ async def on_message(message: discord.Message):
                 action_prompt,
                 conversation_history=conversation_history,
                 image_payloads=image_payloads,
+                reference_context=history_context,
             )
         await _send_reply(message, ai_reply)
         memory_user_text = user_text
@@ -436,10 +619,52 @@ async def on_message(message: discord.Message):
 
 
 @bot.event
+async def on_message_edit(before: discord.Message, after: discord.Message):
+    if after.author.bot or after.guild is None or after.guild.id != OFFICIAL_GUILD_ID:
+        return
+    try:
+        if (after.content or "").strip() or after.attachments:
+            await asyncio.to_thread(
+                record_channel_message,
+                _history_record_from_message(after.guild.id, after.channel, after),
+            )
+        else:
+            await asyncio.to_thread(
+                delete_channel_message,
+                after.guild.id,
+                after.channel.id,
+                after.id,
+            )
+    except Exception:
+        logger.exception("更新編輯後的訊息緩衝失敗：guild=%s channel=%s", after.guild.id, after.channel.id)
+
+
+@bot.event
+async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent):
+    if payload.guild_id != OFFICIAL_GUILD_ID:
+        return
+    try:
+        await asyncio.to_thread(
+            delete_channel_message,
+            payload.guild_id,
+            payload.channel_id,
+            payload.message_id,
+        )
+    except Exception:
+        logger.exception("刪除訊息緩衝失敗：guild=%s channel=%s", payload.guild_id, payload.channel_id)
+
+
+@bot.event
 async def on_ready():
     logger.info("機器人已上線：%s (ID: %s)", bot.user, bot.user.id if bot.user else "unknown")
     logger.info("伺服器 ID 安全鎖定中：%s", OFFICIAL_GUILD_ID)
     logger.info("機器人目前加入的伺服器 ID：%s", [guild.id for guild in bot.guilds])
+    history_backend = await asyncio.to_thread(get_history_storage_backend)
+    logger.info(
+        "每頻道最近訊息緩衝：最多 %s 則；儲存後端：%s",
+        MAX_HISTORY_SCAN_MESSAGES,
+        history_backend,
+    )
     logger.info(
         "免費 AI 路徑狀態：Groq key=%s, Gemini key=%s, OpenRouter key=%s",
         bool(os.getenv("GROQ_API_KEY", "").strip()),
