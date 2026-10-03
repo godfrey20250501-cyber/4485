@@ -1100,4 +1100,4 @@ if __name__ == "__main__":
 
     init_usage_db()
     keep_alive()
-    bot.run(DISCORD_TOKEN)
+    bot.run("DISCORD_TOKEN")
