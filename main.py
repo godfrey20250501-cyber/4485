@@ -18,10 +18,12 @@ from core import (
     ask_hybrid_ai,
     check_and_update_dual_usage,
     clear_conversation_memory,
+    create_github_error_issue,
     delete_channel_message,
     feed_cat_canned,
     get_channel_lock,
     get_history_storage_backend,
+    github_error_logging_enabled,
     is_memory_enabled,
     load_recent_channel_messages,
     load_conversation_memory,
@@ -82,6 +84,23 @@ class AIChatBot(commands.Bot):
 
 
 bot = AIChatBot()
+
+
+def _schedule_github_error_report(command_name, error, interaction_acknowledged=None):
+    """背景建立診斷 Issue，不阻擋 Discord 對使用者的錯誤回覆。"""
+    if not github_error_logging_enabled():
+        return
+    try:
+        asyncio.create_task(
+            asyncio.to_thread(
+                create_github_error_issue,
+                command_name,
+                error,
+                interaction_acknowledged,
+            )
+        )
+    except RuntimeError:
+        logger.exception("無法排程 GitHub 診斷 Issue")
 
 
 async def _reply_targets_bot(message: discord.Message) -> bool:
@@ -378,12 +397,15 @@ async def help_command(interaction: discord.Interaction):
     app_commands.Choice(name="關閉", value="off"),
 ])
 async def personal_memory(interaction: discord.Interaction, 狀態: app_commands.Choice[str]):
+    if interaction.guild_id is None:
+        await interaction.response.send_message("請在伺服器中使用此指令喵。", ephemeral=True)
+        return
+    await interaction.response.defer(ephemeral=True, thinking=True)
     enabled = 狀態.value == "on"
-    set_memory_enabled(interaction.guild_id, "personal", interaction.user.id, enabled)
+    await asyncio.to_thread(set_memory_enabled, interaction.guild_id, "personal", interaction.user.id, enabled)
     status_text = "已開啟" if enabled else "已關閉"
-    await interaction.response.send_message(
-        f"你的個人記憶{status_text}喵。只儲存你 @本喵或回覆本喵的對話；若此頻道開啟群組記憶，會優先使用群組記憶。",
-        ephemeral=True,
+    await interaction.edit_original_response(
+        content=f"你的個人記憶{status_text}喵。只儲存你 @本喵或回覆本喵的對話；若此頻道開啟群組記憶，會優先使用群組記憶。",
     )
 
 
@@ -397,12 +419,12 @@ async def group_memory(interaction: discord.Interaction, 狀態: app_commands.Ch
     if interaction.channel_id is None or interaction.guild_id is None:
         await interaction.response.send_message("請在伺服器文字頻道使用此指令喵。", ephemeral=True)
         return
+    await interaction.response.defer(ephemeral=True, thinking=True)
     enabled = 狀態.value == "on"
-    set_memory_enabled(interaction.guild_id, "group", interaction.channel_id, enabled)
+    await asyncio.to_thread(set_memory_enabled, interaction.guild_id, "group", interaction.channel_id, enabled)
     status_text = "已開啟" if enabled else "已關閉"
-    await interaction.response.send_message(
-        f"本頻道共享記憶{status_text}喵。只記錄 @本喵或回覆本喵的訊息與本喵回覆；此頻道使用者都可能共享這些內容。",
-        ephemeral=True,
+    await interaction.edit_original_response(
+        content=f"本頻道共享記憶{status_text}喵。只記錄 @本喵或回覆本喵的訊息與本喵回覆；此頻道使用者都可能共享這些內容。",
     )
 
 
@@ -415,17 +437,24 @@ async def clear_memory(interaction: discord.Interaction, 範圍: app_commands.Ch
     if interaction.guild_id is None:
         await interaction.response.send_message("請在伺服器中使用此指令喵。", ephemeral=True)
         return
-    if 範圍.value == "personal":
-        deleted = clear_conversation_memory(interaction.guild_id, "personal", interaction.user.id)
-        reply = f"已清除你的個人記憶（刪除 {deleted} 則內容）喵。若個人記憶仍開啟，之後的對話會重新儲存。"
-    else:
+    if 範圍.value == "group":
         permissions = getattr(interaction.user, "guild_permissions", None)
         if permissions is None or not permissions.administrator:
             await interaction.response.send_message("清除頻道共享記憶需要伺服器管理員權限喵。", ephemeral=True)
             return
-        deleted = clear_conversation_memory(interaction.guild_id, "group", interaction.channel_id)
+
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    if 範圍.value == "personal":
+        deleted = await asyncio.to_thread(
+            clear_conversation_memory, interaction.guild_id, "personal", interaction.user.id
+        )
+        reply = f"已清除你的個人記憶（刪除 {deleted} 則內容）喵。若個人記憶仍開啟，之後的對話會重新儲存。"
+    else:
+        deleted = await asyncio.to_thread(
+            clear_conversation_memory, interaction.guild_id, "group", interaction.channel_id
+        )
         reply = f"已清除本頻道共享記憶（刪除 {deleted} 則內容）喵。若群組記憶仍開啟，之後的對話會重新儲存。"
-    await interaction.response.send_message(reply, ephemeral=True)
+    await interaction.edit_original_response(content=reply)
 
 
 @bot.tree.command(
@@ -436,11 +465,9 @@ async def clear_memory(interaction: discord.Interaction, 範圍: app_commands.Ch
 @app_commands.describe(頻道="選擇允許貓貓說話的文字頻道")
 @app_commands.checks.has_permissions(administrator=True)
 async def set_channel(interaction: discord.Interaction, 頻道: discord.TextChannel):
-    set_channel_lock(頻道.id)
-    await interaction.response.send_message(
-        f"設定成功喵！本喵現在只能在 {頻道.mention} 說話了喵！",
-        ephemeral=True,
-    )
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    await asyncio.to_thread(set_channel_lock, 頻道.id)
+    await interaction.edit_original_response(content=f"設定成功喵！本喵現在只能在 {頻道.mention} 說話了喵！")
 
 
 @bot.tree.command(
@@ -449,9 +476,13 @@ async def set_channel(interaction: discord.Interaction, 頻道: discord.TextChan
     guild=GUILD_OBJECT,
 )
 async def check_quota(interaction: discord.Interaction):
-    global_remaining, user_remaining, _, _ = get_quota_status(interaction.user.id)
-    affection = get_user_affection_score(interaction.user.id)
-    valve_triggered = is_safety_valve_triggered(interaction.user.id)
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    quota_data, affection = await asyncio.gather(
+        asyncio.to_thread(get_quota_status, interaction.user.id),
+        asyncio.to_thread(get_user_affection_score, interaction.user.id),
+    )
+    global_remaining, user_remaining, _, _ = quota_data
+    valve_triggered = global_remaining <= user_remaining
 
     valve_status = (
         "🔴 已觸發（好感度動作暫停）"
@@ -469,7 +500,7 @@ async def check_quota(interaction: discord.Interaction):
     )
     embed.add_field(name="🔒 安全閥", value=valve_status, inline=False)
     embed.add_field(name="🐾 個人好感度", value=f"`{affection}` 點（{affection_status}）", inline=True)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.edit_original_response(embed=embed)
 
 
 @bot.tree.command(
@@ -478,21 +509,35 @@ async def check_quota(interaction: discord.Interaction):
     guild=GUILD_OBJECT,
 )
 async def feed_cat(interaction: discord.Interaction):
-    success, reply_text = feed_cat_canned(interaction.user.id)
-    await interaction.response.send_message(reply_text, ephemeral=not success)
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    _, reply_text = await asyncio.to_thread(feed_cat_canned, interaction.user.id)
+    await interaction.edit_original_response(content=reply_text)
 
 
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    command_name = interaction.command.qualified_name if interaction.command else "unknown"
     if isinstance(error, app_commands.MissingPermissions):
         message = "這個指令只有伺服器管理員可以使用喵。"
     else:
-        logger.error("斜線指令錯誤", exc_info=(type(error), error, error.__traceback__))
+        acknowledged = interaction.response.is_done()
+        logger.error(
+            "斜線指令錯誤：command=/%s acknowledged=%s exception=%s",
+            command_name,
+            acknowledged,
+            type(getattr(error, "original", error)).__name__,
+            exc_info=(type(error), error, error.__traceback__),
+        )
+        _schedule_github_error_report(
+            command_name,
+            getattr(error, "original", error),
+            acknowledged,
+        )
         message = "指令執行時發生錯誤，請通知管理員查看 Render log 喵。"
 
     try:
         if interaction.response.is_done():
-            await interaction.followup.send(message, ephemeral=True)
+            await interaction.edit_original_response(content=message, embed=None)
         else:
             await interaction.response.send_message(message, ephemeral=True)
     except discord.HTTPException:
@@ -607,8 +652,9 @@ async def on_message(message: discord.Message):
             ai_reply,
         )
 
-    except Exception:
+    except Exception as exc:
         logger.exception("處理 Discord 訊息失敗；guild=%s channel=%s", getattr(message.guild, "id", None), message.channel.id)
+        _schedule_github_error_report("message_handler", exc)
         try:
             await message.reply("本喵剛剛遇到內部錯誤，請稍後再試或通知管理員查看 Render log 喵。", mention_author=False)
         except discord.HTTPException:
@@ -660,6 +706,7 @@ async def on_ready():
     logger.info("伺服器 ID 安全鎖定中：%s", OFFICIAL_GUILD_ID)
     logger.info("機器人目前加入的伺服器 ID：%s", [guild.id for guild in bot.guilds])
     history_backend = await asyncio.to_thread(get_history_storage_backend)
+    logger.info("GitHub 自動錯誤記錄已配置：%s", github_error_logging_enabled())
     logger.info(
         "每頻道最近訊息緩衝：最多 %s 則；儲存後端：%s",
         MAX_HISTORY_SCAN_MESSAGES,
