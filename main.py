@@ -30,6 +30,7 @@ from core import (
     create_github_error_issue,
     delete_channel_message,
     feed_cat_canned,
+    generate_code_with_manus,
     get_channel_lock,
     get_history_storage_backend,
     github_error_logging_enabled,
@@ -40,6 +41,7 @@ from core import (
     get_quota_status,
     get_user_affection_score,
     generate_hf_image_bytes,
+    get_hf_image_quota_status,
     init_usage_db,
     is_safety_valve_triggered,
     keep_alive,
@@ -255,6 +257,23 @@ def _split_discord_message(text: str, limit: int = 1900) -> list[str]:
     return chunks or ["本喵暫時沒有可顯示的回覆喵。"]
 
 
+def _split_code_response(text: str, limit: int = 1800) -> list[str]:
+    """以 1800 字為目標分段，優先在換行處切割且不丟失任何內容。"""
+    remaining = str(text or "").strip()
+    chunks = []
+    while len(remaining) > limit:
+        split_at = remaining.rfind("\n", 0, limit + 1)
+        if split_at <= 0:
+            split_at = limit
+        chunk = remaining[:split_at].rstrip()
+        if chunk:
+            chunks.append(chunk)
+        remaining = remaining[split_at:].lstrip("\n")
+    if remaining:
+        chunks.append(remaining)
+    return chunks or ["本喵沒有取得可顯示的程式碼回覆喵。"]
+
+
 async def _send_reply(message: discord.Message, text: str):
     for chunk in _split_discord_message(text):
         await message.reply(chunk, mention_author=False)
@@ -439,6 +458,7 @@ class HelpSelect(Select):
             discord.SelectOption(label="對話記憶與圖片", description="設定個人/群組記憶並傳圖提問", emoji="🧠", value="memory"),
             discord.SelectOption(label="查閱頻道訊息", description="明確指定頻道、成員或訊息連結查閱近期對話", emoji="🔎", value="history"),
             discord.SelectOption(label="生成圖片", description="使用每月有限的免費額度生成圖片", emoji="🎨", value="genimage"),
+            discord.SelectOption(label="代碼 AI", description="使用 Manus AI 產生完整程式碼與套件清單", emoji="💻", value="codeai"),
             discord.SelectOption(label="管理員功能鎖", description="查看管理員文字頻道鎖定", emoji="🛠️", value="admin"),
         ]
         super().__init__(placeholder="請選擇你想查看的說明指南...", min_values=1, max_values=1, options=options)
@@ -483,12 +503,20 @@ class HelpSelect(Select):
         elif selected == "genimage":
             embed.title = "🎨 有限免費額度圖片生成"
             embed.description = (
-                f"使用 `/生成圖片 提示詞` 生成一張 {HF_IMAGE_WIDTH}×{HF_IMAGE_HEIGHT} 圖片。"
-                f"全伺服器每月最多 {HF_IMAGE_MONTHLY_LIMIT} 次、每日最多 {HF_IMAGE_DAILY_HARD_LIMIT} 次；"
+                f"使用 `/生成圖片 提示詞` 生成一張 {HF_IMAGE_WIDTH}×{HF_IMAGE_HEIGHT} 圖片；"
+                "也可以使用 `/個人化生成圖片`，或 `@本喵 生圖：描述`。"
+                f"全伺服器每月總共最多 {HF_IMAGE_MONTHLY_LIMIT} 張（不是每位使用者各 {HF_IMAGE_MONTHLY_LIMIT} 張），每日最多 {HF_IMAGE_DAILY_HARD_LIMIT} 張；"
                 f"按目前 fal.ai 價格估算，每張約 US${HF_IMAGE_ESTIMATED_COST_USD:.3f}，月度 Bot 上限約 US${HF_IMAGE_MONTHLY_LIMIT * HF_IMAGE_ESTIMATED_COST_USD:.2f}。\n\n"
                 "只經 Hugging Face routed `fal-ai` provider 呼叫 FLUX.1-schnell，不自動換供應商或重試；額度預留保存在 MongoDB，資料庫不可用時會停止生圖。"
                 "Hugging Face 免費帳戶目前提供每月 US$0.10 credits（官方可能調整）；需在 Hugging Face 帳戶接受模型條款並使用具 Inference Providers 權限的 `HF_TOKEN`。"
-                "重要：HF 會先用免費 credit，若免費額度耗盡而帳戶有已購買 credits，HF 可能扣用該餘額；API 無法由程式強制只扣免費額度。請用沒有已購買 credits、也不供其他程式共用的專用帳戶。免費額度耗盡且無付費餘額時請等下月重置。機器人不保存提示詞或圖片。"
+                "重要：HF 會先用免費 credit，若免費額度耗盡而帳戶有已購買 credits，HF 可能扣用該餘額；API 無法由程式強制只扣免費額度。請用沒有已購買 credits、也不供其他程式共用的專用帳戶。免費額度耗盡且無付費餘額時請等下月重置。機器人不保存提示詞或圖片。使用 `/生圖額度` 可查詢 Bot 本月與今日用量。"
+            )
+        elif selected == "codeai":
+            embed.title = "💻 Manus 代碼 AI"
+            embed.description = (
+                "使用 `/代碼ai 需求` 請 Manus AI 產生程式碼。\n\n"
+                "回覆會依照 Discord 2000 字限制，以每段約 1800 字分段傳送，優先在換行處切割，不會刪除或截斷程式碼。\n\n"
+                "AI 會列出需要安裝的套件、版本、環境變數與執行方式。此功能只產生程式碼，不會自動執行、部署或修改 GitHub。需要 Render 設定 `MANUS_API_KEY`。"
             )
         else:
             embed.title = "🛠️ 伺服器管理員限制功能"
@@ -658,6 +686,110 @@ async def generate_image(interaction: discord.Interaction, 提示詞: str):
 
 
 @bot.tree.command(
+    name="個人化生成圖片",
+    description="依照你的個人對話記憶生成一張圖片",
+    guild=GUILD_OBJECT,
+)
+@app_commands.describe(提示詞="描述你想生成的圖片；也會參考你已開啟的個人記憶，最多 500 字")
+async def personalized_generate_image(interaction: discord.Interaction, 提示詞: str = ""):
+    prompt = (提示詞 or "").strip()
+    if len(prompt) > 500:
+        await interaction.response.send_message("圖片描述最多 500 字喵。", ephemeral=True)
+        return
+    await interaction.response.defer(thinking=True)
+    result = await _generate_personalized_image(interaction.guild_id, interaction.user.id, prompt)
+    if result.get("status") != "ok":
+        await interaction.edit_original_response(content=_image_generation_status_message(result))
+        return
+    upload = discord.File(io.BytesIO(result["image_bytes"]), filename=result["filename"])
+    context_text = "已參考你的個人記憶" if result.get("used_personal_context") else "未使用個人記憶"
+    await interaction.edit_original_response(
+        content=(
+            f"圖片完成喵！{context_text}。全伺服器本月已使用 "
+            f"{result['used_month']}/{HF_IMAGE_MONTHLY_LIMIT} 張，今日 "
+            f"{result['used_today']}/{HF_IMAGE_DAILY_HARD_LIMIT} 張。"
+        ),
+        attachments=[upload],
+    )
+
+
+@bot.tree.command(
+    name="生圖額度",
+    description="查看全伺服器本月與今日圖片生成用量",
+    guild=GUILD_OBJECT,
+)
+async def image_quota(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    quota = await asyncio.to_thread(get_hf_image_quota_status)
+    if quota.get("status") == "disabled":
+        await interaction.edit_original_response(content="管理員已暫停生圖功能喵。")
+        return
+    if quota.get("status") != "ok":
+        await interaction.edit_original_response(
+            content="目前無法確認生圖額度資料庫；為避免超出全伺服器上限，本次不會呼叫模型喵。"
+        )
+        return
+    used_month = quota["used_month"]
+    used_today = quota["used_today"]
+    await interaction.edit_original_response(
+        content=(
+            "🎨 **全伺服器生圖額度**\n"
+            f"本月：`{used_month} / {quota['monthly_limit']}` 張（全伺服器合計）\n"
+            f"今日：`{used_today} / {quota['daily_limit']}` 張\n"
+            "每月額度於 UTC 月份切換時重新計算；Hugging Face 帳戶 credit 另行計算。"
+        )
+    )
+
+
+@bot.tree.command(
+    name="代碼ai",
+    description="使用 Manus AI 產生完整程式碼、套件清單與執行方式",
+    guild=GUILD_OBJECT,
+)
+@app_commands.describe(需求="請描述要寫的程式、使用語言、功能與輸入輸出需求，最多 4000 字")
+async def code_ai(interaction: discord.Interaction, 需求: str):
+    prompt = (需求 or "").strip()
+    if not prompt:
+        await interaction.response.send_message("請輸入要撰寫的程式需求喵。", ephemeral=True)
+        return
+    if len(prompt) > 4000:
+        await interaction.response.send_message("程式需求最多 4000 字喵。", ephemeral=True)
+        return
+    if not os.getenv("MANUS_API_KEY", "").strip():
+        await interaction.response.send_message(
+            "管理員尚未設定 MANUS_API_KEY，代碼 AI 目前未啟用喵。",
+            ephemeral=True,
+        )
+        return
+
+    await interaction.response.defer(thinking=True)
+    try:
+        history = await asyncio.to_thread(
+            load_conversation_memory,
+            interaction.guild_id,
+            interaction.user.id,
+            interaction.channel_id,
+        )
+        result = await asyncio.to_thread(generate_code_with_manus, prompt, history)
+        chunks = _split_code_response(result, limit=1800)
+        await interaction.edit_original_response(
+            content=f"💻 Manus 代碼 AI 回覆（共 {len(chunks)} 段，第 1/{len(chunks)} 段）\n\n{chunks[0]}"
+        )
+        for index, chunk in enumerate(chunks[1:], start=2):
+            await interaction.followup.send(
+                f"💻 Manus 代碼 AI 回覆（第 {index}/{len(chunks)} 段）\n\n{chunk}"
+            )
+    except Exception as exc:
+        logger.error("Manus 代碼 AI 呼叫失敗：exception=%s", type(exc).__name__)
+        await interaction.edit_original_response(
+            content=(
+                "Manus 代碼 AI 暫時無法取得回覆喵。請確認 MANUS_API_KEY、Manus API 額度與 Render log；"
+                "本次不會自動重試。"
+            )
+        )
+
+
+@bot.tree.command(
     name="設定",
     description="【管理員專用】設定貓貓只能在哪個頻道說話",
     guild=GUILD_OBJECT,
@@ -745,6 +877,27 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 
 
 # ==================== @提及與直接回覆 ====================
+async def _reply_personalized_image_message(message: discord.Message, prompt: str):
+    """回覆自然語言生圖請求；使用獨立的全伺服器生圖額度，不扣聊天額度。"""
+    async with message.channel.typing():
+        result = await _generate_personalized_image(message.guild.id, message.author.id, prompt)
+    if result.get("status") != "ok":
+        await message.reply(_image_generation_status_message(result), mention_author=False)
+        return
+
+    upload = discord.File(io.BytesIO(result["image_bytes"]), filename=result["filename"])
+    context_text = "已參考你的個人記憶" if result.get("used_personal_context") else "未使用個人記憶"
+    await message.reply(
+        (
+            f"圖片完成喵！{context_text}。全伺服器本月已使用 "
+            f"{result['used_month']}/{HF_IMAGE_MONTHLY_LIMIT} 張，今日 "
+            f"{result['used_today']}/{HF_IMAGE_DAILY_HARD_LIMIT} 張。"
+        ),
+        file=upload,
+        mention_author=False,
+    )
+
+
 @bot.event
 async def on_message(message: discord.Message):
     if message.author.bot:
@@ -796,6 +949,11 @@ async def on_message(message: discord.Message):
         if bot.user is not None:
             clean_content = re.sub(rf"<@!?{bot.user.id}>", "", clean_content)
         clean_content = clean_content.strip()
+
+        image_prompt = _extract_image_generation_request(clean_content)
+        if image_prompt is not None:
+            await _reply_personalized_image_message(message, image_prompt)
+            return
 
         has_image_attachment = any(
             ((attachment.content_type or mimetypes.guess_type(attachment.filename)[0] or "").startswith("image/"))
@@ -919,6 +1077,10 @@ async def on_ready():
         bool(os.getenv("OPENROUTER_API_KEY", "").strip()),
     )
     logger.info(
+        "Manus 代碼 AI 狀態：MANUS_API_KEY=%s",
+        bool(os.getenv("MANUS_API_KEY", "").strip()),
+    )
+    logger.info(
         "有限額度生圖：HF_TOKEN=%s provider=%s model=%s resolution=%sx%s monthly=%s/%s daily=%s；額度儲存需要 MongoDB",
         bool(os.getenv("HF_TOKEN", "").strip()),
         HF_IMAGE_PROVIDER,
@@ -938,4 +1100,4 @@ if __name__ == "__main__":
 
     init_usage_db()
     keep_alive()
-    bot.run(DISCORD_token)
+    bot.run(token)
