@@ -9,6 +9,7 @@ import sqlite3
 import time
 import traceback
 from contextlib import contextmanager
+from io import BytesIO
 from threading import Lock
 from zoneinfo import ZoneInfo
 from urllib.parse import urlparse
@@ -19,9 +20,12 @@ from flask import Flask
 from threading import Thread
 
 try:
-    from pymongo import MongoClient
+    from pymongo import MongoClient, ReturnDocument
+    from pymongo.errors import DuplicateKeyError
 except ImportError:
     MongoClient = None
+    ReturnDocument = None
+    DuplicateKeyError = None
 
 load_dotenv()
 
@@ -42,8 +46,26 @@ MEMORY_HISTORY_MESSAGES = 12
 MEMORY_MESSAGE_MAX_CHARS = 1200
 REFERENCE_CONTEXT_MAX_CHARS = 6000
 CHANNEL_HISTORY_LIMIT = 100
+HF_IMAGE_MODEL = "black-forest-labs/FLUX.1-schnell"
+HF_IMAGE_PROVIDER = "fal-ai"
+HF_IMAGE_WIDTH = 512
+HF_IMAGE_HEIGHT = 512
+HF_IMAGE_PROMPT_MAX_CHARS = 1000
+HF_IMAGE_ESTIMATED_COST_USD = 0.003
+HF_IMAGE_MONTHLY_HARD_LIMIT = 20
+HF_IMAGE_DAILY_HARD_LIMIT = 3
+try:
+    # 可在 Render 下調，不能高於保守硬上限；設 0 可停用生圖。
+    HF_IMAGE_MONTHLY_LIMIT = max(
+        0,
+        min(HF_IMAGE_MONTHLY_HARD_LIMIT, int(os.getenv("HF_IMAGE_MONTHLY_LIMIT", "20"))),
+    )
+except ValueError:
+    logger.warning("HF_IMAGE_MONTHLY_LIMIT 不是整數，改用預設值 20")
+    HF_IMAGE_MONTHLY_LIMIT = HF_IMAGE_MONTHLY_HARD_LIMIT
 _MONGO_CLIENT = None
 _MONGO_HISTORY_COLLECTION = None
+_MONGO_IMAGE_USAGE_COLLECTION = None
 _MONGO_DISABLED_UNTIL = 0.0
 _MONGO_LOCK = Lock()
 _GITHUB_LOG_LOCK = Lock()
@@ -283,6 +305,107 @@ def get_history_storage_backend():
     if MONGO_URI and MongoClient is not None:
         return "MongoDB" if _get_mongo_history_collection() is not None else "SQLite 備援（MongoDB 未連線）"
     return "SQLite（Render 暫存檔案系統）"
+
+
+def _get_mongo_image_usage_collection():
+    """月額度必須落在持久 MongoDB；不使用 Render 暫存 SQLite 作配額備援。"""
+    global _MONGO_IMAGE_USAGE_COLLECTION
+    if _MONGO_IMAGE_USAGE_COLLECTION is not None:
+        return _MONGO_IMAGE_USAGE_COLLECTION
+    if _get_mongo_history_collection() is None or _MONGO_CLIENT is None:
+        return None
+
+    database_name = urlparse(MONGO_URI).path.lstrip("/").split("/", 1)[0]
+    database = _MONGO_CLIENT[database_name or "discord_cat_bot"]
+    _MONGO_IMAGE_USAGE_COLLECTION = database["image_generation_monthly_usage"]
+    return _MONGO_IMAGE_USAGE_COLLECTION
+
+
+def reserve_hf_image_generation():
+    """以 MongoDB 原子預留一個月額度；失敗或額滿時拒絕呼叫 API。"""
+    month_now = datetime.datetime.now(datetime.timezone.utc)
+    month_key = month_now.strftime("%Y-%m")
+    day_key = month_now.strftime("%Y-%m-%d")
+    if HF_IMAGE_MONTHLY_LIMIT <= 0:
+        return False, "disabled", 0, 0
+
+    collection = _get_mongo_image_usage_collection()
+    if collection is None or ReturnDocument is None or DuplicateKeyError is None:
+        return False, "storage_unavailable", 0, 0
+
+    daily_field = f"days.{day_key}"
+    try:
+        try:
+            collection.insert_one({"_id": month_key, "used": 0, "days": {}})
+        except DuplicateKeyError:
+            pass
+
+        doc = collection.find_one_and_update(
+            {
+                "_id": month_key,
+                "used": {"$lt": HF_IMAGE_MONTHLY_LIMIT},
+                "$or": [
+                    {daily_field: {"$lt": HF_IMAGE_DAILY_HARD_LIMIT}},
+                    {daily_field: {"$exists": False}},
+                ],
+            },
+            {"$inc": {"used": 1, daily_field: 1}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if doc is not None:
+            used_month = int(doc.get("used", 0))
+            used_today = int((doc.get("days") or {}).get(day_key, 0))
+            return True, "reserved", used_month, used_today
+
+        existing = collection.find_one({"_id": month_key}) or {}
+        used_month = int(existing.get("used", 0))
+        used_today = int((existing.get("days") or {}).get(day_key, 0))
+        if used_month >= HF_IMAGE_MONTHLY_LIMIT:
+            return False, "monthly_limit", used_month, used_today
+        if used_today >= HF_IMAGE_DAILY_HARD_LIMIT:
+            return False, "daily_limit", used_month, used_today
+        return False, "storage_unavailable", used_month, used_today
+    except Exception as exc:
+        # 不記錄例外文字、token、提示詞或 Discord 使用者 ID。
+        logger.error("HF 生圖額度預留失敗：exception=%s", type(exc).__name__)
+        return False, "storage_unavailable", 0, 0
+
+
+def generate_hf_image_bytes(prompt):
+    """只經 HF routed fal-ai provider 呼叫 FLUX.1-schnell，不自動切換或重試。"""
+    token = os.getenv("HF_TOKEN", "").strip()
+    if not token:
+        raise RuntimeError("HF_TOKEN_NOT_CONFIGURED")
+
+    from huggingface_hub import InferenceClient
+
+    client = InferenceClient(
+        provider=HF_IMAGE_PROVIDER,
+        api_key=token,
+        timeout=120,
+    )
+    image = client.text_to_image(
+        prompt=str(prompt)[:HF_IMAGE_PROMPT_MAX_CHARS],
+        model=HF_IMAGE_MODEL,
+        width=HF_IMAGE_WIDTH,
+        height=HF_IMAGE_HEIGHT,
+        num_inference_steps=4,
+    )
+    if image is None or not callable(getattr(image, "save", None)):
+        raise RuntimeError("HF_IMAGE_RESPONSE_INVALID")
+
+    output = BytesIO()
+    image.save(output, format="PNG", optimize=True)
+    image_bytes = output.getvalue()
+    filename = "generated.png"
+    if len(image_bytes) > 8 * 1024 * 1024:
+        output = BytesIO()
+        image.save(output, format="JPEG", quality=88, optimize=True)
+        image_bytes = output.getvalue()
+        filename = "generated.jpg"
+    if len(image_bytes) > 8 * 1024 * 1024:
+        raise RuntimeError("HF_IMAGE_TOO_LARGE")
+    return image_bytes, filename
 
 
 def _record_channel_messages_sqlite(records):
@@ -625,6 +748,22 @@ def load_conversation_memory(guild_id, user_id, channel_id):
             (guild_id, scope, scope_id, MEMORY_HISTORY_MESSAGES),
         ).fetchall()
     return [{"role": role, "content": content} for role, content in reversed(rows)]
+
+
+def load_personal_image_context(guild_id, user_id, limit=4):
+    """只讀該使用者明確開啟的私人記憶，不讀頻道緩衝或其他人的群組內容。"""
+    if not is_memory_enabled(guild_id, "personal", user_id):
+        return []
+    limit = min(6, max(1, int(limit)))
+    with _db() as conn:
+        rows = conn.execute(
+            """SELECT content FROM chat_memory
+               WHERE guild_id=? AND scope='personal' AND scope_id=?
+                 AND author_id=? AND role='user'
+               ORDER BY id DESC LIMIT ?""",
+            (guild_id, user_id, user_id, limit),
+        ).fetchall()
+    return [str(row[0])[:300] for row in reversed(rows) if row and row[0]]
 
 
 def save_conversation_turn(guild_id, user_id, channel_id, display_name, user_text, assistant_text):
