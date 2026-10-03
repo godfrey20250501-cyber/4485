@@ -78,6 +78,40 @@ _GITHUB_LOG_LAST_SENT = {}
 _GITHUB_LOG_COOLDOWN_SECONDS = 6 * 60 * 60
 
 
+def _strengthen_image_prompt(prompt):
+    """將簡短中文需求補成明確的主體描述，減少 FLUX 自行套用山水預設風格。"""
+    original = str(prompt or "").strip()[:HF_IMAGE_PROMPT_MAX_CHARS]
+    if not original:
+        return original
+
+    keyword_hints = {
+        "科技飛船": "a futuristic high-tech spaceship, clearly visible as the main subject",
+        "太空船": "a futuristic spaceship, clearly visible as the main subject",
+        "宇宙飛船": "a futuristic spacecraft, clearly visible as the main subject",
+        "飛船": "a futuristic spacecraft, clearly visible as the main subject",
+        "太空": "outer space with a spacecraft as the main subject",
+        "機器人": "a detailed robot as the main subject",
+        "賽博朋克": "cyberpunk neon technology aesthetic",
+        "賽博龐克": "cyberpunk neon technology aesthetic",
+        "山水": "traditional landscape painting",
+    }
+    hints = [value for key, value in keyword_hints.items() if key in original]
+    hint_text = ", ".join(dict.fromkeys(hints))
+    if hint_text:
+        return (
+            f"Create an image whose primary subject is: {hint_text}. "
+            f"The user's exact request is: {original}. "
+            "Make the requested subject unmistakable, centered, detailed, and dominant. "
+            "Do not replace the requested subject with a landscape, mountain, or unrelated scene."
+        )[:HF_IMAGE_PROMPT_MAX_CHARS]
+
+    return (
+        "Create an image that follows the user's exact request as the dominant subject. "
+        f"User request: {original}. "
+        "Do not add an unrelated landscape or replace the requested subject."
+    )[:HF_IMAGE_PROMPT_MAX_CHARS]
+
+
 def github_error_logging_enabled():
     repo = os.getenv("GITHUB_LOG_REPOSITORY", "").strip()
     token = os.getenv("GITHUB_LOG_TOKEN", "").strip()
@@ -536,8 +570,9 @@ def generate_hf_image_bytes(prompt):
         api_key=token,
         timeout=120,
     )
+    strengthened_prompt = _strengthen_image_prompt(prompt)
     image = client.text_to_image(
-        prompt=str(prompt)[:HF_IMAGE_PROMPT_MAX_CHARS],
+        prompt=strengthened_prompt[:HF_IMAGE_PROMPT_MAX_CHARS],
         model=HF_IMAGE_MODEL,
         width=HF_IMAGE_WIDTH,
         height=HF_IMAGE_HEIGHT,
