@@ -25,6 +25,8 @@ from core import (
     HF_IMAGE_PROMPT_MAX_CHARS,
     HF_IMAGE_WIDTH,
     OPENROUTER_IMAGE_MODEL,
+    OPENAI_IMAGE_FALLBACK,
+    OPENAI_IMAGE_MODEL,
     OFFICIAL_GUILD_ID,
     ask_hybrid_ai,
     check_and_update_dual_usage,
@@ -170,7 +172,7 @@ async def _generate_personalized_image(guild_id, user_id, user_prompt):
             reserve_hf_image_generation
         )
     except Exception as exc:
-        logger.error("HF 生圖額度檢查失敗：exception=%s", type(exc).__name__)
+        logger.error("圖片額度檢查失敗：exception=%s", type(exc).__name__)
         return {"status": "storage_unavailable"}
     if not reserved:
         return {
@@ -185,9 +187,9 @@ async def _generate_personalized_image(guild_id, user_id, user_prompt):
         response = getattr(exc, "response", None)
         status_code = getattr(response, "status_code", None)
         logger.error(
-            "HF 生圖失敗：provider=%s model=%s status=%s exception=%s",
-            HF_IMAGE_PROVIDER,
-            HF_IMAGE_MODEL,
+            "圖片生成失敗：route=%s model=%s status=%s exception=%s",
+            IMAGE_PROVIDER,
+            OPENROUTER_IMAGE_MODEL if IMAGE_PROVIDER == "openrouter" else HF_IMAGE_MODEL,
             status_code,
             type(exc).__name__,
         )
@@ -511,7 +513,7 @@ class HelpSelect(Select):
                 f"全伺服器每月總共最多 {HF_IMAGE_MONTHLY_LIMIT} 張（不是每位使用者各 {HF_IMAGE_MONTHLY_LIMIT} 張），每日最多 {HF_IMAGE_DAILY_HARD_LIMIT} 張；"
                 f"目前圖片路由：`{IMAGE_PROVIDER}`，模型：`{OPENROUTER_IMAGE_MODEL if IMAGE_PROVIDER == 'openrouter' else HF_IMAGE_MODEL}`。\n\n"
                 "目前預設使用 OpenRouter 的 `inclusionai/ming-image-0.1-design`，模型端點目前標示輸出價格為 US$0，但免費狀態、供應商限流與政策可能調整；每次請以 API 回傳的 usage.cost 為準。"
-                "額度預留保存在 MongoDB，資料庫不可用時會停止生圖；不自動切換供應商或重試。Hugging Face 仍可透過 Render 設定 `IMAGE_PROVIDER=huggingface` 作為手動備援。"
+                f"額度預留保存在 MongoDB，資料庫不可用時會停止生圖；OpenAI 備援：`{'開啟' if OPENAI_IMAGE_FALLBACK else '關閉'}`（模型 `{OPENAI_IMAGE_MODEL}`，可能收費）。不自動重試 OpenRouter；Hugging Face 仍可透過 Render 設定 `IMAGE_PROVIDER=huggingface` 作為手動備援。"
                 "機器人不保存提示詞或圖片。使用 `/生圖額度` 可查詢 Bot 本月與今日用量。"
             )
         elif selected == "codeai":
@@ -1082,15 +1084,19 @@ async def on_ready():
         bool(os.getenv("MANUS_API_KEY", "").strip()),
     )
     logger.info(
-        "有限額度生圖：route=%s openrouter_key=%s hf_key=%s model=%s resolution=%sx%s monthly=%s/%s daily=%s；額度儲存需要 MongoDB",
+        "有限額度生圖：route=%s openrouter_key=%s openrouter_key_2=%s openai_fallback=%s openai_key=%s openai_key_2=%s hf_key=%s model=%s resolution=%sx%s monthly=%s/%s daily=%s；額度儲存需要 MongoDB",
         IMAGE_PROVIDER,
         bool(os.getenv("OPENROUTER_API_KEY", "").strip()),
+        bool(os.getenv("OPENROUTER_API_KEY_2", "").strip()),
+        OPENAI_IMAGE_FALLBACK,
+        bool(os.getenv("OPENAI_API_KEY", "").strip()),
+        bool(os.getenv("OPENAI_API_KEY_2", "").strip()),
         bool(os.getenv("HF_TOKEN", "").strip()),
         OPENROUTER_IMAGE_MODEL if IMAGE_PROVIDER == "openrouter" else HF_IMAGE_MODEL,
         HF_IMAGE_WIDTH,
         HF_IMAGE_HEIGHT,
         HF_IMAGE_MONTHLY_LIMIT,
-        20,
+        40,
         HF_IMAGE_DAILY_HARD_LIMIT,
     )
 
