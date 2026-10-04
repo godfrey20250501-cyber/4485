@@ -74,6 +74,16 @@ OPENAI_IMAGE_FALLBACK = os.getenv("OPENAI_IMAGE_FALLBACK", "false").strip().lowe
 }
 HF_IMAGE_MODEL = "black-forest-labs/FLUX.1-schnell"
 HF_IMAGE_PROVIDER = "fal-ai"
+
+
+def get_openai_image_fallback():
+    return bool(OPENAI_IMAGE_FALLBACK)
+
+
+def set_openai_image_fallback(enabled):
+    global OPENAI_IMAGE_FALLBACK
+    OPENAI_IMAGE_FALLBACK = bool(enabled)
+    return OPENAI_IMAGE_FALLBACK
 HF_IMAGE_WIDTH = 512
 HF_IMAGE_HEIGHT = 512
 HF_IMAGE_PROMPT_MAX_CHARS = 1000
@@ -567,6 +577,20 @@ def get_hf_image_quota_status():
             "monthly_limit": HF_IMAGE_MONTHLY_LIMIT,
             "daily_limit": HF_IMAGE_DAILY_HARD_LIMIT,
         }
+
+
+def reset_hf_image_quota():
+    """重置本月全伺服器圖片用量；只由已授權 Admin 面板呼叫。"""
+    month_key = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m")
+    collection = _get_mongo_image_usage_collection()
+    if collection is None:
+        return {"status": "storage_unavailable", "month": month_key}
+    collection.update_one(
+        {"_id": month_key},
+        {"$set": {"used": 0, "days": {}}},
+        upsert=True,
+    )
+    return {"status": "ok", "month": month_key, "used_month": 0, "used_today": 0}
 
 
 def _finalize_generated_image(image_bytes, media_type="image/png"):
