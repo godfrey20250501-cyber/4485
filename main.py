@@ -97,6 +97,7 @@ UPDATE_LOG_TEXT = (
     "• `/管理員`：設定監控身分組、監控頻道、豁免身分組與監控開關。\n"
     "• 身分組監控：只記錄／通知，不自動 Ban；通知附上該使用者最近 10 則已保存對話。\n"
     "• 對話額度：可由 Admin 重置指定使用者今日聊天計數。\n"
+    "• 語音辨識：`/語音辨識` 上傳音訊轉文字；每人每日 5 分鐘、全服每日 30 分鐘、單檔 25 MB。\n"
     "• 圖片額度：維持全伺服器共用的每日／每月保護。"
 )
 MAX_IMAGES_PER_MESSAGE = 2
@@ -952,7 +953,7 @@ class HelpSelect(Select):
             embed.description = (
                 "先在 Render 設定 `ADMIN_CODE`，再使用 `/admin code:你的Code` 啟用本次程序的管理員工作階段。\n\n"
                 "啟用後可使用 `/admin` 按鈕面板：全伺服器 Admin 開關、OpenAI 備援開關、系統狀態、Log、額度、分開重置對話記憶／聊天計數／全服圖片額度、清除舊斜線指令暫存、重新同步與查看更新日誌。\n\n"
-                "身分組監控請使用 `/管理員`；該指令只顯示監控設定，也支援 `/管理員 BAN:123321` 快速設定監控身分組。所有管理功能都需要先輸入 Admin Code。"
+                "身分組監控請使用 `/管理員`；該指令只顯示監控設定，也支援 `/管理員 ban:123321` 快速設定監控身分組。所有管理功能都需要先輸入 Admin Code。"
             )
         else:
             embed.title = "🛠️ 伺服器管理員限制功能"
@@ -1054,7 +1055,7 @@ async def admin_menu(
     description="管理身分組監控、通知頻道與豁免設定（僅 Admin Code）",
     guild=GUILD_OBJECT,
 )
-@app_commands.describe(功能="選擇監控管理功能", BAN="快速設定要監控的身分組 ID，例如 123321")
+@app_commands.describe(功能="選擇監控管理功能", ban="快速設定要監控的身分組 ID，例如 123321")
 @app_commands.choices(功能=[
     app_commands.Choice(name="查看監控狀態", value="status"),
     app_commands.Choice(name="設定監控身分組", value="role"),
@@ -1066,7 +1067,7 @@ async def admin_menu(
 async def administrator_menu(
     interaction: discord.Interaction,
     功能: app_commands.Choice[str] | None = None,
-    BAN: str = "",
+    ban: str = "",
 ):
     global _ADMIN_MONITORED_ROLE_ID, _ADMIN_ROLE_MONITORING
     if not _ADMIN_PANEL_ENABLED:
@@ -1075,10 +1076,10 @@ async def administrator_menu(
     if not _is_admin_user(interaction.user.id):
         await interaction.response.send_message("請先使用 `/admin code:你的Code` 啟用管理員菜單。", ephemeral=True)
         return
-    if BAN.strip():
-        role_id = _parse_role_id(BAN)
+    if ban.strip():
+        role_id = _parse_role_id(ban)
         if not role_id:
-            await interaction.response.send_message("BAN 欄位請輸入身分組 ID，例如 `123321`，或輸入 `@身分組`。", ephemeral=True)
+            await interaction.response.send_message("ban 欄位請輸入身分組 ID，例如 `123321`，或輸入 `@身分組`。", ephemeral=True)
             return
         _ADMIN_MONITORED_ROLE_ID = role_id
         _remember_admin_log("ROLE_MONITOR_SET", f"role_id={role_id} by={interaction.user.id}")
