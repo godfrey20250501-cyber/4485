@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import datetime
 import hashlib
 import logging
@@ -51,6 +52,12 @@ MEMORY_HISTORY_MESSAGES = 12
 MEMORY_MESSAGE_MAX_CHARS = 1200
 REFERENCE_CONTEXT_MAX_CHARS = 6000
 CHANNEL_HISTORY_LIMIT = 100
+IMAGE_PROVIDER = os.getenv("IMAGE_PROVIDER", "openrouter").strip().lower()
+OPENROUTER_IMAGE_BASE = os.getenv("OPENROUTER_IMAGE_BASE", "https://openrouter.ai/api/v1").strip().rstrip("/")
+OPENROUTER_IMAGE_MODEL = os.getenv(
+    "OPENROUTER_IMAGE_MODEL",
+    "inclusionai/ming-image-0.1-design",
+).strip()
 HF_IMAGE_MODEL = "black-forest-labs/FLUX.1-schnell"
 HF_IMAGE_PROVIDER = "fal-ai"
 HF_IMAGE_WIDTH = 512
@@ -548,8 +555,66 @@ def get_hf_image_quota_status():
         }
 
 
+def _finalize_generated_image(image_bytes, media_type="image/png"):
+    if not image_bytes:
+        raise RuntimeError("IMAGE_RESPONSE_EMPTY")
+    filename = "generated.png" if "png" in media_type else "generated.jpg"
+    if len(image_bytes) > 8 * 1024 * 1024:
+        raise RuntimeError("IMAGE_TOO_LARGE")
+    return image_bytes, filename
+
+
+def image_provider_key_configured():
+    if IMAGE_PROVIDER == "openrouter":
+        return bool(os.getenv("OPENROUTER_API_KEY", "").strip())
+    return bool(os.getenv("HF_TOKEN", "").strip())
+
+
+def generate_openrouter_image_bytes(prompt):
+    """使用 OpenRouter Image API；不自動切換模型或重試，避免重複消耗額度。"""
+    token = os.getenv("OPENROUTER_API_KEY", "").strip()
+    if not token:
+        raise RuntimeError("OPENROUTER_API_KEY_NOT_CONFIGURED")
+
+    strengthened_prompt = _strengthen_image_prompt(prompt)
+    response = requests.post(
+        f"{OPENROUTER_IMAGE_BASE}/images",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": OPENROUTER_IMAGE_MODEL,
+            "prompt": strengthened_prompt[:HF_IMAGE_PROMPT_MAX_CHARS],
+            "n": 1,
+            "output_format": "png",
+            "size": f"{HF_IMAGE_WIDTH}x{HF_IMAGE_HEIGHT}",
+        },
+        timeout=(10, 180),
+    )
+    if not response.ok:
+        raise RuntimeError(f"OPENROUTER_IMAGE_HTTP_{response.status_code}")
+    data = response.json()
+    images = data.get("data") or []
+    if not images or not images[0].get("b64_json"):
+        raise RuntimeError("OPENROUTER_IMAGE_RESPONSE_INVALID")
+    encoded = images[0]["b64_json"]
+    if encoded.startswith("data:") and "," in encoded:
+        encoded = encoded.split(",", 1)[1]
+    try:
+        image_bytes = base64.b64decode(encoded, validate=True)
+    except (ValueError, TypeError) as exc:
+        raise RuntimeError("OPENROUTER_IMAGE_BASE64_INVALID") from exc
+    return _finalize_generated_image(image_bytes, images[0].get("media_type", "image/png"))
+
+
 def generate_hf_image_bytes(prompt):
-    """只經 HF routed fal-ai provider 呼叫 FLUX.1-schnell，不自動切換或重試。"""
+    """依 IMAGE_PROVIDER 路由圖片；預設 OpenRouter，HF 保留為手動備援。"""
+    if IMAGE_PROVIDER == "openrouter":
+        return generate_openrouter_image_bytes(prompt)
+    if IMAGE_PROVIDER not in {"huggingface", "hf"}:
+        raise RuntimeError("IMAGE_PROVIDER_UNSUPPORTED")
+
     token = os.getenv("HF_TOKEN", "").strip()
     if not token:
         raise RuntimeError("HF_TOKEN_NOT_CONFIGURED")
@@ -584,7 +649,7 @@ def generate_hf_image_bytes(prompt):
         filename = "generated.jpg"
     if len(image_bytes) > 8 * 1024 * 1024:
         raise RuntimeError("HF_IMAGE_TOO_LARGE")
-    return image_bytes, filename
+    return _finalize_generated_image(image_bytes, "image/png" if filename.endswith(".png") else "image/jpeg")
 
 
 def _record_channel_messages_sqlite(records):
