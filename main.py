@@ -61,6 +61,7 @@ from core import (
     record_channel_message,
     record_channel_messages,
     reserve_hf_image_generation,
+    refund_hf_image_generation,
     reserve_audio_seconds,
     refund_audio_seconds,
     reset_hf_image_quota,
@@ -127,12 +128,13 @@ class AIChatBot(commands.Bot):
 
     async def setup_hook(self):
         try:
-            # 啟動時清除官方伺服器舊指令，再同步目前程式版本；若失敗則保留 Discord
-            # 既有遠端指令，避免因暫時 API 錯誤讓整個指令清單消失。
             synced_names = await _force_refresh_guild_commands()
             logger.info("伺服器指令暫存清理／同步完成：%s", synced_names)
         except Exception:
-            logger.exception("斜線指令同步失敗")
+            logger.exception(
+                "斜線指令同步失敗；目前 Render 執行版本可能仍顯示 Discord 舊指令，"
+                "請查看上方 phase 與 Discord HTTP 錯誤"
+            )
 
 
 bot = AIChatBot()
@@ -140,9 +142,11 @@ _COMMAND_SYNC_LOCK = asyncio.Lock()
 
 
 async def _force_refresh_guild_commands():
-    """安全同步目前程式指令，不先清空遠端伺服器指令。"""
+    """同步官方伺服器新指令，並獨立清理同一 App 的全域舊指令。"""
     async with _COMMAND_SYNC_LOCK:
         phase = "guild_sync"
+        synced_names = []
+        guild_error = None
         try:
             logger.info("斜線指令同步階段 1/2：開始同步官方伺服器 guild_id=%s", OFFICIAL_GUILD_ID)
             synced = await bot.tree.sync(guild=GUILD_OBJECT)
@@ -152,20 +156,25 @@ async def _force_refresh_guild_commands():
                 len(synced_names),
                 synced_names,
             )
+        except Exception:
+            guild_error = True
+            logger.exception("斜線指令同步失敗：phase=%s guild_id=%s", phase, OFFICIAL_GUILD_ID)
 
-            phase = "global_cleanup"
+        phase = "global_cleanup"
+        try:
             logger.info("斜線指令同步階段 2/2：開始清理同一 App 的全域舊指令")
             # 只清掉同一 App 的全域舊指令；不碰官方伺服器目前已同步的指令。
             bot.tree.clear_commands(guild=None)
             removed_global = await bot.tree.sync()
-            logger.info(
-                "斜線指令同步階段 2/2：成功 global_count=%s",
-                len(removed_global),
-            )
-            return synced_names
+            logger.info("斜線指令同步階段 2/2：成功 global_count=%s", len(removed_global))
         except Exception:
-            logger.exception("斜線指令同步失敗：phase=%s guild_id=%s", phase, OFFICIAL_GUILD_ID)
-            raise
+            logger.exception("全域舊斜線指令清理失敗：phase=%s", phase)
+            if guild_error:
+                raise
+
+        if guild_error:
+            raise RuntimeError("GUILD_COMMAND_SYNC_FAILED")
+        return synced_names
 
 
 def _admin_code_configured():
@@ -201,7 +210,7 @@ def _admin_status_text():
     return (
         "管理員模式已啟用（只對目前程序工作階段有效）。\n"
         f"全伺服器 Admin 面板：`{'開啟' if _ADMIN_PANEL_ENABLED else '關閉'}`\n"
-        f"圖片路由：`{IMAGE_PROVIDER}` / `{OPENROUTER_IMAGE_MODEL}`\n"
+        f"圖片路由：`{IMAGE_PROVIDER}` / `{OPENAI_IMAGE_MODEL if IMAGE_PROVIDER == 'openai' else OPENROUTER_IMAGE_MODEL if IMAGE_PROVIDER == 'openrouter' else HF_IMAGE_MODEL}`\n"
         f"OpenAI 備援：`{'開啟' if get_openai_image_fallback() else '關閉'}`\n"
         f"OpenRouter Key 1/2：`{bool(os.getenv('OPENROUTER_API_KEY', '').strip())}` / `{bool(os.getenv('OPENROUTER_API_KEY_2', '').strip())}`\n"
         f"OpenAI Key 1/2：`{bool(os.getenv('OPENAI_API_KEY', '').strip())}` / `{bool(os.getenv('OPENAI_API_KEY_2', '').strip())}`\n"
@@ -598,11 +607,15 @@ async def _generate_personalized_image(guild_id, user_id, user_prompt):
     except Exception as exc:
         response = getattr(exc, "response", None)
         status_code = getattr(response, "status_code", None)
+        if status_code is None:
+            status_match = re.search(r"HTTP_(\d{3})", str(exc))
+            status_code = int(status_match.group(1)) if status_match else None
+        await asyncio.to_thread(refund_hf_image_generation)
         _remember_admin_log("IMAGE_ERROR", f"route={IMAGE_PROVIDER} type={type(exc).__name__} detail={str(exc)[:120]}")
         logger.error(
             "圖片生成失敗：route=%s model=%s status=%s exception=%s detail=%s",
             IMAGE_PROVIDER,
-            OPENROUTER_IMAGE_MODEL if IMAGE_PROVIDER == "openrouter" else HF_IMAGE_MODEL,
+            OPENAI_IMAGE_MODEL if IMAGE_PROVIDER == "openai" else OPENROUTER_IMAGE_MODEL if IMAGE_PROVIDER == "openrouter" else HF_IMAGE_MODEL,
             status_code,
             type(exc).__name__,
             str(exc)[:160].replace("\n", " "),
@@ -972,9 +985,9 @@ class HelpSelect(Select):
                 f"使用 `/生成圖片 提示詞` 生成一張 {HF_IMAGE_WIDTH}×{HF_IMAGE_HEIGHT} 圖片；"
                 "也可以在 `@本喵 生圖：描述` 的對話中自動參考個人記憶。"
                 f"全伺服器每月總共最多 {HF_IMAGE_MONTHLY_LIMIT} 張（不是每位使用者各 {HF_IMAGE_MONTHLY_LIMIT} 張），每日最多 {HF_IMAGE_DAILY_HARD_LIMIT} 張；"
-                f"目前圖片路由：`{IMAGE_PROVIDER}`，模型：`{OPENROUTER_IMAGE_MODEL if IMAGE_PROVIDER == 'openrouter' else HF_IMAGE_MODEL}`。\n\n"
+                f"目前圖片路由：`{IMAGE_PROVIDER}`，模型：`{OPENAI_IMAGE_MODEL if IMAGE_PROVIDER == 'openai' else OPENROUTER_IMAGE_MODEL if IMAGE_PROVIDER == 'openrouter' else HF_IMAGE_MODEL}`。\n\n"
                 "目前預設使用 OpenRouter 的 `inclusionai/ming-image-0.1-design`，模型端點目前標示輸出價格為 US$0，但免費狀態、供應商限流與政策可能調整；每次請以 API 回傳的 usage.cost 為準。"
-                f"額度預留保存在 MongoDB，資料庫不可用時會停止生圖；OpenAI 備援：`{'開啟' if get_openai_image_fallback() else '關閉'}`（模型 `{OPENAI_IMAGE_MODEL}`，可能收費）。不自動重試 OpenRouter；Hugging Face 仍可透過 Render 設定 `IMAGE_PROVIDER=huggingface` 作為手動備援。"
+                f"額度預留保存在 MongoDB，資料庫不可用時會停止生圖；目前 OpenAI 路由模型為 `{OPENAI_IMAGE_MODEL}`（可能收費）。若切換回 OpenRouter，才會使用 OpenAI 備援開關；Hugging Face 仍可透過 Render 設定 `IMAGE_PROVIDER=huggingface` 作為手動備援。"
                 "機器人不保存生成圖片。使用 `/生圖額度` 可查詢 Bot 本月與今日用量。"
             )
         elif selected == "codeai":
@@ -1282,25 +1295,31 @@ async def generate_image(interaction: discord.Interaction, 提示詞: str):
         logger.info(
             "圖片生成成功：route=%s model=%s month_used=%s/%s",
             IMAGE_PROVIDER,
-            OPENROUTER_IMAGE_MODEL if IMAGE_PROVIDER == "openrouter" else HF_IMAGE_MODEL,
+            OPENAI_IMAGE_MODEL if IMAGE_PROVIDER == "openai" else OPENROUTER_IMAGE_MODEL if IMAGE_PROVIDER == "openrouter" else HF_IMAGE_MODEL,
             used_month,
             HF_IMAGE_MONTHLY_LIMIT,
         )
     except Exception as exc:
         response = getattr(exc, "response", None)
         status_code = getattr(response, "status_code", None)
+        if status_code is None:
+            status_match = re.search(r"HTTP_(\d{3})", str(exc))
+            status_code = int(status_match.group(1)) if status_match else None
+        await asyncio.to_thread(refund_hf_image_generation)
         _remember_admin_log("IMAGE_ERROR", f"route={IMAGE_PROVIDER} type={type(exc).__name__} detail={str(exc)[:120]}")
         logger.error(
             "圖片生成失敗：route=%s model=%s status=%s exception=%s detail=%s",
             IMAGE_PROVIDER,
-            OPENROUTER_IMAGE_MODEL if IMAGE_PROVIDER == "openrouter" else HF_IMAGE_MODEL,
+            OPENAI_IMAGE_MODEL if IMAGE_PROVIDER == "openai" else OPENROUTER_IMAGE_MODEL if IMAGE_PROVIDER == "openrouter" else HF_IMAGE_MODEL,
             status_code,
             type(exc).__name__,
             str(exc)[:160].replace("\n", " "),
         )
-        if status_code in (401, 403):
+        if status_code == 402:
+            message = "OpenRouter 回傳 402：目前 API 帳戶／Key 沒有可用圖片額度。模型雖可能標示免費，仍受 OpenRouter 帳戶圖片路由限制；本次圖片額度已回補，未自動重試。"
+        elif status_code in (401, 403):
             message = "圖片供應商權限不足；請管理員確認目前路由的 API Key 與模型存取條件喵。"
-        elif status_code in (402, 429):
+        elif status_code == 429:
             message = "圖片供應商額度不足或服務限流；本喵不會重試或切換供應商，請稍後再查額度喵。"
         else:
             message = "圖片生成失敗；為避免重複消耗免費額度，本次不會自動重試。請管理員查看 Render log 喵。"
@@ -1759,7 +1778,7 @@ async def on_ready():
         bool(os.getenv("OPENAI_API_KEY", "").strip()),
         bool(os.getenv("OPENAI_API_KEY_2", "").strip()),
         bool(os.getenv("HF_TOKEN", "").strip()),
-        OPENROUTER_IMAGE_MODEL if IMAGE_PROVIDER == "openrouter" else HF_IMAGE_MODEL,
+        OPENAI_IMAGE_MODEL if IMAGE_PROVIDER == "openai" else OPENROUTER_IMAGE_MODEL if IMAGE_PROVIDER == "openrouter" else HF_IMAGE_MODEL,
         HF_IMAGE_WIDTH,
         HF_IMAGE_HEIGHT,
         HF_IMAGE_MONTHLY_LIMIT,
