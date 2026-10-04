@@ -107,21 +107,31 @@ class AIChatBot(commands.Bot):
 
     async def setup_hook(self):
         try:
-            # 先確保新伺服器指令成功註冊，再移除舊全域指令；若 guild sync
-            # 失敗，舊指令仍保留，不會因啟動失敗而讓整個指令清單消失。
-            synced_guild = await self.tree.sync(guild=GUILD_OBJECT)
-            logger.info("伺服器指令同步完成：%s", [command.name for command in synced_guild])
-
-            # 所有目前指令皆為 guild-scoped；在 guild sync 成功後，清除同一個
-            # Discord Application 過去留下的全域指令，不影響其他 App。
-            self.tree.clear_commands(guild=None)
-            removed_global = await self.tree.sync()
-            logger.info("全域舊指令清除／同步完成，目前全域指令數：%s", len(removed_global))
+            # 啟動時清除官方伺服器舊指令，再同步目前程式版本；若失敗則保留 Discord
+            # 既有遠端指令，避免因暫時 API 錯誤讓整個指令清單消失。
+            synced_names = await _force_refresh_guild_commands()
+            logger.info("伺服器指令暫存清理／同步完成：%s", synced_names)
         except Exception:
             logger.exception("斜線指令同步失敗")
 
 
 bot = AIChatBot()
+_COMMAND_SYNC_LOCK = asyncio.Lock()
+
+
+async def _force_refresh_guild_commands():
+    """短暫清除官方伺服器遠端指令，再把目前程式指令重新同步。"""
+    async with _COMMAND_SYNC_LOCK:
+        current_commands = list(bot.tree.get_commands(guild=GUILD_OBJECT))
+        bot.tree.clear_commands(guild=GUILD_OBJECT)
+        await bot.tree.sync(guild=GUILD_OBJECT)
+        for command in current_commands:
+            bot.tree.add_command(command, guild=GUILD_OBJECT, override=True)
+        synced = await bot.tree.sync(guild=GUILD_OBJECT)
+        # 順便清掉同一 App 遺留的全域指令，避免 Discord 顯示重複或舊版本。
+        bot.tree.clear_commands(guild=None)
+        await bot.tree.sync()
+        return [command.name for command in synced]
 
 
 def _admin_code_configured():
@@ -283,6 +293,27 @@ class AdminPanelView(View):
     @discord.ui.button(label="設定豁免身分組", style=discord.ButtonStyle.secondary)
     async def exempt_button(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_modal(AdminExemptRoleModal())
+
+    @discord.ui.button(label="清除指令暫存／重新同步", style=discord.ButtonStyle.success)
+    async def refresh_commands_button(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            synced_names = await _force_refresh_guild_commands()
+            _remember_admin_log("COMMANDS_REFRESHED", f"count={len(synced_names)} by={interaction.user.id}")
+            await interaction.edit_original_response(
+                content=(
+                    f"已清除官方伺服器的舊斜線指令並重新同步，共 {len(synced_names)} 個指令。\n"
+                    "如果 Discord 選單仍未更新，請關閉並重新開啟 Discord，或重新進入伺服器；這是 Discord 客戶端快取，不是 Bot 額度問題。"
+                ),
+                view=self,
+            )
+        except Exception as exc:
+            _remember_admin_log("COMMANDS_REFRESH_ERROR", f"type={type(exc).__name__}")
+            logger.exception("管理員要求重新同步斜線指令失敗")
+            await interaction.edit_original_response(
+                content="重新同步失敗，請查看 Render log；目前既有指令不會被永久刪除。",
+                view=self,
+            )
 
 
 def _schedule_github_error_report(command_name, error, interaction_acknowledged=None):
@@ -706,7 +737,7 @@ class HelpSelect(Select):
             embed.title = "🛠️ 管理員 Code、診斷與未來功能"
             embed.description = (
                 "先在 Render 設定 `ADMIN_CODE`，再使用 `/admin code:你的Code` 啟用本次程序的管理員工作階段。\n\n"
-                "啟用後可使用 `/admin` 按鈕面板：系統狀態、Log、額度、重置指定使用者對話／今日聊天額度、設定監控身分組、設定豁免身分組。`/log` 也只允許已啟用者使用。\n\n"
+                "啟用後可使用 `/admin` 按鈕面板：系統狀態、Log、額度、重置指定使用者對話／今日聊天額度、設定監控身分組、設定豁免身分組，以及清除舊斜線指令暫存並重新同步。`/log` 也只允許已啟用者使用。\n\n"
                 "自動 Ban 角色功能目前安全停用；身分組只會記錄／通知，不會自動封禁。圖片額度目前是全伺服器共用，不能誤當成指定使用者額度重置。"
             )
         else:
