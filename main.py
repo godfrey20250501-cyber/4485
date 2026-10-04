@@ -29,7 +29,6 @@ from core import (
     HF_IMAGE_PROMPT_MAX_CHARS,
     HF_IMAGE_WIDTH,
     OPENROUTER_IMAGE_MODEL,
-    OPENAI_IMAGE_FALLBACK,
     OPENAI_IMAGE_MODEL,
     OFFICIAL_GUILD_ID,
     ask_hybrid_ai,
@@ -57,7 +56,10 @@ from core import (
     record_channel_message,
     record_channel_messages,
     reserve_hf_image_generation,
+    reset_hf_image_quota,
     reset_user_chat_quota,
+    get_openai_image_fallback,
+    set_openai_image_fallback,
     save_conversation_turn,
     set_memory_enabled,
     set_channel_lock,
@@ -177,12 +179,23 @@ def _admin_status_text():
         "管理員模式已啟用（只對目前程序工作階段有效）。\n"
         f"全伺服器 Admin 面板：`{'開啟' if _ADMIN_PANEL_ENABLED else '關閉'}`\n"
         f"圖片路由：`{IMAGE_PROVIDER}` / `{OPENROUTER_IMAGE_MODEL}`\n"
-        f"OpenAI 備援：`{'開啟' if OPENAI_IMAGE_FALLBACK else '關閉'}`\n"
+        f"OpenAI 備援：`{'開啟' if get_openai_image_fallback() else '關閉'}`\n"
         f"OpenRouter Key 1/2：`{bool(os.getenv('OPENROUTER_API_KEY', '').strip())}` / `{bool(os.getenv('OPENROUTER_API_KEY_2', '').strip())}`\n"
         f"OpenAI Key 1/2：`{bool(os.getenv('OPENAI_API_KEY', '').strip())}` / `{bool(os.getenv('OPENAI_API_KEY_2', '').strip())}`\n"
         f"監控身分組：`{_ADMIN_MONITORED_ROLE_ID or '未設定'}`；監控中：`{_ADMIN_ROLE_MONITORING}`\n"
         f"豁免身分組：`{', '.join(sorted(_ADMIN_EXEMPT_ROLE_IDS)) or '未設定'}`\n"
         f"自動 Ban：`停用（目前只記錄／通知）`；監控頻道：`{ADMIN_LOG_CHANNEL_ID or '未設定'}`"
+    )
+
+
+def _monitor_status_text():
+    return (
+        "身分組監控狀態\n"
+        f"監控身分組：`{_ADMIN_MONITORED_ROLE_ID or '未設定'}`\n"
+        f"監控通知頻道：`{ADMIN_LOG_CHANNEL_ID or '未設定'}`\n"
+        f"豁免身分組：`{', '.join(sorted(_ADMIN_EXEMPT_ROLE_IDS)) or '未設定'}`\n"
+        f"監控開關：`{'開啟' if _ADMIN_ROLE_MONITORING else '關閉'}`\n"
+        "處置模式：`只記錄／通知，不自動 Ban`"
     )
 
 
@@ -349,6 +362,54 @@ class AdminResetChatQuotaModal(Modal, title="重置指定使用者對話數量")
         )
 
 
+class AdminResetMemoryModal(Modal, title="重置指定使用者對話記憶"):
+    user_id = TextInput(
+        label="使用者 ID",
+        placeholder="輸入 Discord 使用者 ID",
+        required=True,
+        max_length=25,
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            target_id = int(self.user_id.value.strip())
+        except ValueError:
+            await interaction.response.send_message("使用者 ID 必須是純數字。", ephemeral=True)
+            return
+        if target_id <= 0:
+            await interaction.response.send_message("使用者 ID 無效。", ephemeral=True)
+            return
+        cleared = await asyncio.to_thread(clear_conversation_memory, interaction.guild_id, "personal", target_id)
+        _remember_admin_log("MEMORY_RESET", f"target={target_id} by={interaction.user.id}")
+        await interaction.response.send_message(
+            f"已清除使用者 `{target_id}` 的個人對話記憶（{cleared} 筆）；聊天與圖片額度沒有變更。",
+            ephemeral=True,
+        )
+
+
+class AdminResetImageQuotaModal(Modal, title="重置全伺服器圖片額度"):
+    confirm = TextInput(
+        label="請輸入 RESET_IMAGE 確認",
+        placeholder="RESET_IMAGE",
+        required=True,
+        max_length=30,
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if self.confirm.value.strip() != "RESET_IMAGE":
+            await interaction.response.send_message("確認文字不正確，圖片額度沒有變更。", ephemeral=True)
+            return
+        result = await asyncio.to_thread(reset_hf_image_quota)
+        _remember_admin_log("IMAGE_QUOTA_RESET", f"status={result.get('status')} by={interaction.user.id}")
+        if result.get("status") != "ok":
+            await interaction.response.send_message("圖片額度資料庫目前無法使用，沒有執行重置。", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            f"已重置本月全伺服器圖片額度：`{result.get('month')}`，目前使用量為 0。",
+            ephemeral=True,
+        )
+
+
 class AdminPanelView(View):
     def __init__(self):
         super().__init__(timeout=300)
@@ -383,6 +444,36 @@ class AdminPanelView(View):
     @discord.ui.button(label="查看更新日誌", style=discord.ButtonStyle.secondary)
     async def update_log_button(self, interaction: discord.Interaction, button: Button):
         await interaction.response.edit_message(content=UPDATE_LOG_TEXT, view=self)
+
+    @discord.ui.button(label="開啟／關閉 Admin", style=discord.ButtonStyle.primary)
+    async def admin_toggle_button(self, interaction: discord.Interaction, button: Button):
+        global _ADMIN_PANEL_ENABLED
+        _ADMIN_PANEL_ENABLED = not _ADMIN_PANEL_ENABLED
+        _remember_admin_log("ADMIN_PANEL_TOGGLE", f"enabled={_ADMIN_PANEL_ENABLED} by={interaction.user.id}")
+        await interaction.response.edit_message(
+            content=f"已將全伺服器 Admin 面板設為：`{'開啟' if _ADMIN_PANEL_ENABLED else '關閉'}`。",
+            view=self,
+        )
+
+    @discord.ui.button(label="開啟／關閉 OpenAI 備援", style=discord.ButtonStyle.secondary)
+    async def openai_fallback_button(self, interaction: discord.Interaction, button: Button):
+        enabled = set_openai_image_fallback(not get_openai_image_fallback())
+        _remember_admin_log("OPENAI_FALLBACK_TOGGLE", f"enabled={enabled} by={interaction.user.id}")
+        await interaction.response.edit_message(
+            content=(
+                f"OpenAI 圖片備援目前：`{'開啟' if enabled else '關閉'}`。\n"
+                "開啟後 OpenRouter 生圖失敗時可能產生 OpenAI API 費用；關閉時不會呼叫 OpenAI。"
+            ),
+            view=self,
+        )
+
+    @discord.ui.button(label="重置對話記憶", style=discord.ButtonStyle.danger)
+    async def reset_memory_button(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.send_modal(AdminResetMemoryModal())
+
+    @discord.ui.button(label="重置全服圖片額度", style=discord.ButtonStyle.danger)
+    async def reset_image_button(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.send_modal(AdminResetImageQuotaModal())
 
     @discord.ui.button(label="清除指令暫存／重新同步", style=discord.ButtonStyle.success)
     async def refresh_commands_button(self, interaction: discord.Interaction, button: Button):
@@ -813,7 +904,7 @@ class HelpSelect(Select):
                 f"全伺服器每月總共最多 {HF_IMAGE_MONTHLY_LIMIT} 張（不是每位使用者各 {HF_IMAGE_MONTHLY_LIMIT} 張），每日最多 {HF_IMAGE_DAILY_HARD_LIMIT} 張；"
                 f"目前圖片路由：`{IMAGE_PROVIDER}`，模型：`{OPENROUTER_IMAGE_MODEL if IMAGE_PROVIDER == 'openrouter' else HF_IMAGE_MODEL}`。\n\n"
                 "目前預設使用 OpenRouter 的 `inclusionai/ming-image-0.1-design`，模型端點目前標示輸出價格為 US$0，但免費狀態、供應商限流與政策可能調整；每次請以 API 回傳的 usage.cost 為準。"
-                f"額度預留保存在 MongoDB，資料庫不可用時會停止生圖；OpenAI 備援：`{'開啟' if OPENAI_IMAGE_FALLBACK else '關閉'}`（模型 `{OPENAI_IMAGE_MODEL}`，可能收費）。不自動重試 OpenRouter；Hugging Face 仍可透過 Render 設定 `IMAGE_PROVIDER=huggingface` 作為手動備援。"
+                f"額度預留保存在 MongoDB，資料庫不可用時會停止生圖；OpenAI 備援：`{'開啟' if get_openai_image_fallback() else '關閉'}`（模型 `{OPENAI_IMAGE_MODEL}`，可能收費）。不自動重試 OpenRouter；Hugging Face 仍可透過 Render 設定 `IMAGE_PROVIDER=huggingface` 作為手動備援。"
                 "機器人不保存生成圖片。使用 `/生圖額度` 可查詢 Bot 本月與今日用量。"
             )
         elif selected == "codeai":
@@ -827,8 +918,8 @@ class HelpSelect(Select):
             embed.title = "🛠️ 管理員 Code、診斷與未來功能"
             embed.description = (
                 "先在 Render 設定 `ADMIN_CODE`，再使用 `/admin code:你的Code` 啟用本次程序的管理員工作階段。\n\n"
-                "啟用後可使用 `/admin` 按鈕面板：系統狀態、Log、額度、重置指定使用者對話／今日聊天額度、只重置對話數量、清除舊斜線指令暫存、重新同步與查看更新日誌。`/admin` 的開啟／關閉是全伺服器共用。\n\n"
-                "身分組監控請使用 `/管理員` 設定監控身分組、監控通知頻道、豁免身分組與監控開關；目前只記錄／通知，不會自動封禁。圖片額度目前是全伺服器共用，不能誤當成指定使用者額度重置。"
+                "啟用後可使用 `/admin` 按鈕面板：全伺服器 Admin 開關、OpenAI 備援開關、系統狀態、Log、額度、分開重置對話記憶／聊天計數／全服圖片額度、清除舊斜線指令暫存、重新同步與查看更新日誌。\n\n"
+                "身分組監控請使用 `/管理員`；該指令只顯示監控設定，也支援 `/管理員 BAN:123321` 快速設定監控身分組。所有管理功能都需要先輸入 Admin Code。"
             )
         else:
             embed.title = "🛠️ 伺服器管理員限制功能"
@@ -927,10 +1018,10 @@ async def admin_menu(
 
 @bot.tree.command(
     name="管理員",
-    description="管理身分組監控、通知頻道與豁免設定（需 Admin Code）",
+    description="管理身分組監控、通知頻道與豁免設定（僅 Admin Code）",
     guild=GUILD_OBJECT,
 )
-@app_commands.describe(功能="選擇監控管理功能")
+@app_commands.describe(功能="選擇監控管理功能", BAN="快速設定要監控的身分組 ID，例如 123321")
 @app_commands.choices(功能=[
     app_commands.Choice(name="查看監控狀態", value="status"),
     app_commands.Choice(name="設定監控身分組", value="role"),
@@ -939,12 +1030,32 @@ async def admin_menu(
     app_commands.Choice(name="開啟身分組監控", value="enable"),
     app_commands.Choice(name="關閉身分組監控", value="disable"),
 ])
-async def administrator_menu(interaction: discord.Interaction, 功能: app_commands.Choice[str]):
+async def administrator_menu(
+    interaction: discord.Interaction,
+    功能: app_commands.Choice[str] | None = None,
+    BAN: str = "",
+):
+    global _ADMIN_MONITORED_ROLE_ID, _ADMIN_ROLE_MONITORING
     if not _ADMIN_PANEL_ENABLED:
         await interaction.response.send_message("全伺服器 Admin 面板目前已關閉，請先用 `/admin` 重新開啟。", ephemeral=True)
         return
     if not _is_admin_user(interaction.user.id):
         await interaction.response.send_message("請先使用 `/admin code:你的Code` 啟用管理員菜單。", ephemeral=True)
+        return
+    if BAN.strip():
+        role_id = _parse_role_id(BAN)
+        if not role_id:
+            await interaction.response.send_message("BAN 欄位請輸入身分組 ID，例如 `123321`，或輸入 `@身分組`。", ephemeral=True)
+            return
+        _ADMIN_MONITORED_ROLE_ID = role_id
+        _remember_admin_log("ROLE_MONITOR_SET", f"role_id={role_id} by={interaction.user.id}")
+        await interaction.response.send_message(
+            f"已設定監控身分組為 `{role_id}`；目前監控仍為 `{'開啟' if _ADMIN_ROLE_MONITORING else '關閉'}`，不會自動 Ban。",
+            ephemeral=True,
+        )
+        return
+    if 功能 is None:
+        await interaction.response.send_message(_monitor_status_text(), ephemeral=True)
         return
     if 功能.value == "role":
         await interaction.response.send_modal(AdminRoleModal())
@@ -955,7 +1066,6 @@ async def administrator_menu(interaction: discord.Interaction, 功能: app_comma
     if 功能.value == "exempt":
         await interaction.response.send_modal(AdminExemptRoleModal())
         return
-    global _ADMIN_ROLE_MONITORING
     if 功能.value == "enable":
         if not _ADMIN_MONITORED_ROLE_ID or not ADMIN_LOG_CHANNEL_ID:
             await interaction.response.send_message("請先設定監控身分組與監控通知頻道，才能開啟監控。", ephemeral=True)
@@ -969,7 +1079,7 @@ async def administrator_menu(interaction: discord.Interaction, 功能: app_comma
         _remember_admin_log("ROLE_MONITOR_CLOSE", f"by={interaction.user.id}")
         await interaction.response.send_message("已關閉身分組監控。", ephemeral=True)
         return
-    await interaction.response.send_message(_admin_status_text(), ephemeral=True)
+    await interaction.response.send_message(_monitor_status_text(), ephemeral=True)
 
 
 @bot.tree.command(
@@ -1545,7 +1655,7 @@ async def on_ready():
         IMAGE_PROVIDER,
         bool(os.getenv("OPENROUTER_API_KEY", "").strip()),
         bool(os.getenv("OPENROUTER_API_KEY_2", "").strip()),
-        OPENAI_IMAGE_FALLBACK,
+        get_openai_image_fallback(),
         bool(os.getenv("OPENAI_API_KEY", "").strip()),
         bool(os.getenv("OPENAI_API_KEY_2", "").strip()),
         bool(os.getenv("HF_TOKEN", "").strip()),
