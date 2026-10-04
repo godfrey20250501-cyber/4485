@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import io
 import logging
+import math
 import os
 import re
 import base64
@@ -18,6 +19,9 @@ from dotenv import load_dotenv
 
 from core import (
     CHANNEL_HISTORY_LIMIT,
+    AUDIO_MAX_FILE_BYTES,
+    AUDIO_GLOBAL_DAILY_SECONDS,
+    AUDIO_USER_DAILY_SECONDS,
     GLOBAL_DAILY_LIMIT,
     IMAGE_PROVIDER,
     HF_IMAGE_DAILY_HARD_LIMIT,
@@ -45,6 +49,7 @@ from core import (
     load_recent_channel_messages,
     load_conversation_memory,
     load_personal_image_context,
+    inspect_audio_duration,
     get_quota_status,
     get_user_affection_score,
     generate_hf_image_bytes,
@@ -56,11 +61,14 @@ from core import (
     record_channel_message,
     record_channel_messages,
     reserve_hf_image_generation,
+    reserve_audio_seconds,
+    refund_audio_seconds,
     reset_hf_image_quota,
     reset_user_chat_quota,
     get_openai_image_fallback,
     set_openai_image_fallback,
     save_conversation_turn,
+    transcribe_audio_bytes,
     set_memory_enabled,
     set_channel_lock,
     update_user_affection_and_get_action,
@@ -133,11 +141,30 @@ _COMMAND_SYNC_LOCK = asyncio.Lock()
 async def _force_refresh_guild_commands():
     """安全同步目前程式指令，不先清空遠端伺服器指令。"""
     async with _COMMAND_SYNC_LOCK:
-        synced = await bot.tree.sync(guild=GUILD_OBJECT)
-        # 只清掉同一 App 的全域舊指令；不碰官方伺服器目前已同步的指令。
-        bot.tree.clear_commands(guild=None)
-        await bot.tree.sync()
-        return [command.name for command in synced]
+        phase = "guild_sync"
+        try:
+            logger.info("斜線指令同步階段 1/2：開始同步官方伺服器 guild_id=%s", OFFICIAL_GUILD_ID)
+            synced = await bot.tree.sync(guild=GUILD_OBJECT)
+            synced_names = [command.name for command in synced]
+            logger.info(
+                "斜線指令同步階段 1/2：成功 count=%s commands=%s",
+                len(synced_names),
+                synced_names,
+            )
+
+            phase = "global_cleanup"
+            logger.info("斜線指令同步階段 2/2：開始清理同一 App 的全域舊指令")
+            # 只清掉同一 App 的全域舊指令；不碰官方伺服器目前已同步的指令。
+            bot.tree.clear_commands(guild=None)
+            removed_global = await bot.tree.sync()
+            logger.info(
+                "斜線指令同步階段 2/2：成功 global_count=%s",
+                len(removed_global),
+            )
+            return synced_names
+        except Exception:
+            logger.exception("斜線指令同步失敗：phase=%s guild_id=%s", phase, OFFICIAL_GUILD_ID)
+            raise
 
 
 def _admin_code_configured():
@@ -848,6 +875,7 @@ class HelpSelect(Select):
             discord.SelectOption(label="雙重限額與安全閥", description="查看個人、全服額度與自動安全閥", emoji="📊", value="quota"),
             discord.SelectOption(label="對話記憶與圖片", description="設定個人/群組記憶並傳圖提問", emoji="🧠", value="memory"),
             discord.SelectOption(label="查閱頻道訊息", description="明確指定頻道、成員或訊息連結查閱近期對話", emoji="🔎", value="history"),
+            discord.SelectOption(label="語音辨識", description="上傳語音檔轉成文字與每日額度", emoji="🎙️", value="voice"),
             discord.SelectOption(label="生成圖片", description="使用每月有限的免費額度生成圖片", emoji="🎨", value="genimage"),
             discord.SelectOption(label="代碼 AI", description="使用 Manus AI 產生完整程式碼與套件清單", emoji="💻", value="codeai"),
             discord.SelectOption(label="管理員功能與診斷", description="/admin Code、/log 與自動 Ban 安全狀態", emoji="🛠️", value="admin"),
@@ -890,6 +918,16 @@ class HelpSelect(Select):
                 f"本喵會在目標伺服器每個文字頻道保存最近 {MAX_HISTORY_SCAN_MESSAGES} 則真人訊息；新訊息到達時加入緩衝並淘汰最舊訊息。設定了 MongoDB 時會跨 Render 重啟保存。\n\n"
                 "@本喵時指定 `#頻道`、@成員，或貼上 Discord 訊息連結，就能要求本喵查閱；模型最多取得 15 則相關摘錄。超過最近 100 則的舊訊息不會保留。\n\n"
                 "你與 bot 都必須有該頻道的「檢視頻道」及「讀取訊息歷史」權限。保存的原文只在你明確要求查閱時傳給 AI 服務商，不會每則訊息都送給 AI。"
+            )
+        elif selected == "voice":
+            embed.title = "🎙️ 上傳語音辨識"
+            embed.description = (
+                "使用 `/語音辨識` 並上傳 mp3、wav、m4a、ogg、opus、webm、flac 或 mp4 語音檔，Bot 會使用 Groq Whisper 轉成文字。\n\n"
+                "• 每位使用者每日最多 5 分鐘。\n"
+                "• 全伺服器每日最多 30 分鐘。\n"
+                "• 單檔最多 25 MB。\n"
+                "• 無法讀取長度或轉錄失敗時不會消耗額度；轉錄中途失敗會回補預留秒數。\n"
+                "• 目前只做上傳檔案辨識，不會加入 Discord 語音頻道。"
             )
         elif selected == "genimage":
             embed.title = "🎨 有限免費額度圖片生成"
@@ -1155,6 +1193,74 @@ async def clear_memory(interaction: discord.Interaction, 範圍: app_commands.Ch
         )
         reply = f"已清除本頻道共享記憶（刪除 {deleted} 則內容）喵。若群組記憶仍開啟，之後的對話會重新儲存。"
     await interaction.edit_original_response(content=reply)
+
+
+@bot.tree.command(
+    name="語音辨識",
+    description="上傳語音檔轉成文字（每人每日 5 分鐘、全服每日 30 分鐘）",
+    guild=GUILD_OBJECT,
+)
+@app_commands.describe(語音檔="上傳 mp3、wav、m4a、ogg、webm 或 mp4 語音檔")
+async def transcribe_voice(interaction: discord.Interaction, 語音檔: discord.Attachment):
+    if interaction.guild_id is None:
+        await interaction.response.send_message("請在伺服器中使用此指令喵。", ephemeral=True)
+        return
+    filename = str(語音檔.filename or "audio").strip()
+    allowed_extensions = {".mp3", ".wav", ".m4a", ".mp4", ".ogg", ".opus", ".webm", ".flac"}
+    extension = os.path.splitext(filename.lower())[1]
+    if extension not in allowed_extensions:
+        await interaction.response.send_message(
+            "不支援這個檔案格式；請上傳 mp3、wav、m4a、ogg、opus、webm、flac 或 mp4。",
+            ephemeral=True,
+        )
+        return
+    if int(getattr(語音檔, "size", 0) or 0) > AUDIO_MAX_FILE_BYTES:
+        await interaction.response.send_message("語音檔不能超過 25 MB。", ephemeral=True)
+        return
+
+    await interaction.response.defer(thinking=True)
+    try:
+        audio_bytes = await 語音檔.read()
+        if len(audio_bytes) > AUDIO_MAX_FILE_BYTES:
+            await interaction.edit_original_response(content="語音檔不能超過 25 MB。")
+            return
+        duration = await asyncio.to_thread(inspect_audio_duration, audio_bytes, filename)
+        reserved_seconds = max(1, math.ceil(duration))
+    except ValueError:
+        await interaction.edit_original_response(content="無法讀取語音長度；請改用常見的 mp3、wav、m4a 或 ogg 格式。")
+        return
+    except Exception as exc:
+        _remember_admin_log("AUDIO_READ_ERROR", f"type={type(exc).__name__}")
+        logger.exception("語音檔讀取失敗：type=%s", type(exc).__name__)
+        await interaction.edit_original_response(content="語音檔讀取失敗，請稍後再試。")
+        return
+
+    reserved, status, user_used, global_used = await asyncio.to_thread(
+        reserve_audio_seconds, interaction.user.id, reserved_seconds
+    )
+    if not reserved:
+        if status == "user_daily_limit":
+            message = f"你今天的語音額度已不足；每位使用者每日最多 5 分鐘，目前已使用約 {user_used // 60} 分鐘。"
+        else:
+            message = f"本伺服器今天的語音額度已不足；全服每日最多 30 分鐘，目前已使用約 {global_used // 60} 分鐘。"
+        await interaction.edit_original_response(content=message)
+        return
+
+    try:
+        transcript = await asyncio.to_thread(transcribe_audio_bytes, audio_bytes, filename)
+        await interaction.edit_original_response(
+            content=(
+                f"語音辨識完成（約 {reserved_seconds // 60} 分 {reserved_seconds % 60} 秒）。\n"
+                f"本次使用後：你今日約 {user_used // 60} 分鐘、全服約 {global_used // 60} 分鐘。\n\n"
+                f"**辨識文字**\n{transcript[:3500]}"
+            )
+        )
+        logger.info("語音辨識成功：user=%s seconds=%s model=%s", interaction.user.id, reserved_seconds, os.getenv("GROQ_AUDIO_MODEL", "whisper-large-v3-turbo"))
+    except Exception as exc:
+        await asyncio.to_thread(refund_audio_seconds, interaction.user.id, reserved_seconds)
+        _remember_admin_log("AUDIO_TRANSCRIBE_ERROR", f"type={type(exc).__name__}")
+        logger.exception("語音辨識失敗：type=%s，已回補秒數=%s", type(exc).__name__, reserved_seconds)
+        await interaction.edit_original_response(content="語音辨識失敗，已回補本次預留的語音額度；請稍後再試。")
 
 
 @bot.tree.command(
