@@ -52,7 +52,7 @@ MEMORY_HISTORY_MESSAGES = 12
 MEMORY_MESSAGE_MAX_CHARS = 1200
 REFERENCE_CONTEXT_MAX_CHARS = 6000
 CHANNEL_HISTORY_LIMIT = 100
-IMAGE_PROVIDER = os.getenv("IMAGE_PROVIDER", "openai").strip().lower()
+IMAGE_PROVIDER = os.getenv("IMAGE_PROVIDER", "auto").strip().lower()
 OPENROUTER_IMAGE_BASE = os.getenv("OPENROUTER_IMAGE_BASE", "https://openrouter.ai/api/v1").strip().rstrip("/")
 _OPENROUTER_DEFAULT_IMAGE_MODEL = "inclusionai/ming-image-0.1-design"
 _OPENROUTER_CONFIGURED_IMAGE_MODEL = os.getenv("OPENROUTER_IMAGE_MODEL", "").strip()
@@ -722,7 +722,12 @@ def _finalize_generated_image(image_bytes, media_type="image/png"):
 
 
 def image_provider_key_configured():
-    if IMAGE_PROVIDER == "openai":
+    if IMAGE_PROVIDER in {"auto", "openai"}:
+        if IMAGE_PROVIDER == "auto" and (
+            os.getenv("OPENROUTER_API_KEY", "").strip()
+            or os.getenv("OPENROUTER_API_KEY_2", "").strip()
+        ):
+            return True
         return bool(
             os.getenv("OPENAI_API_KEY", "").strip()
             or os.getenv("OPENAI_API_KEY_2", "").strip()
@@ -730,6 +735,17 @@ def image_provider_key_configured():
     if IMAGE_PROVIDER == "openrouter":
         return bool(os.getenv("OPENROUTER_API_KEY", "").strip())
     return bool(os.getenv("HF_TOKEN", "").strip())
+
+
+def get_image_model_label():
+    """供狀態與日誌顯示目前圖片路由，不暴露任何 API Key。"""
+    if IMAGE_PROVIDER == "auto":
+        return f"auto (OpenAI:{OPENAI_IMAGE_MODEL} -> OpenRouter:{OPENROUTER_IMAGE_MODEL})"
+    if IMAGE_PROVIDER == "openai":
+        return OPENAI_IMAGE_MODEL
+    if IMAGE_PROVIDER == "openrouter":
+        return OPENROUTER_IMAGE_MODEL
+    return HF_IMAGE_MODEL
 
 
 def generate_openrouter_image_bytes(prompt):
@@ -829,7 +845,23 @@ def generate_openai_image_bytes(prompt):
 
 
 def generate_hf_image_bytes(prompt):
-    """依 IMAGE_PROVIDER 路由圖片；預設 OpenAI，OpenRouter/HF 保留為可切換路由。"""
+    """依 IMAGE_PROVIDER 路由圖片；auto 會依序嘗試 OpenAI、OpenRouter。"""
+    if IMAGE_PROVIDER == "auto":
+        providers = []
+        if os.getenv("OPENAI_API_KEY", "").strip() or os.getenv("OPENAI_API_KEY_2", "").strip():
+            providers.append(("openai", generate_openai_image_bytes))
+        if os.getenv("OPENROUTER_API_KEY", "").strip() or os.getenv("OPENROUTER_API_KEY_2", "").strip():
+            providers.append(("openrouter", generate_openrouter_image_bytes))
+        if not providers:
+            raise RuntimeError("IMAGE_API_KEY_NOT_CONFIGURED")
+        errors = []
+        for provider_name, provider_call in providers:
+            try:
+                return provider_call(prompt)
+            except Exception as exc:
+                errors.append(f"{provider_name}:{type(exc).__name__}:{str(exc)[:80]}")
+                logger.warning("自動圖片路由 %s 失敗，嘗試下一個路由：%s", provider_name, str(exc)[:120])
+        raise RuntimeError("IMAGE_AUTO_ALL_PROVIDERS_FAILED|" + "|".join(errors))
     if IMAGE_PROVIDER == "openai":
         return generate_openai_image_bytes(prompt)
     if IMAGE_PROVIDER == "openrouter":
