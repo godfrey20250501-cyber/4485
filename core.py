@@ -54,10 +54,19 @@ REFERENCE_CONTEXT_MAX_CHARS = 6000
 CHANNEL_HISTORY_LIMIT = 100
 IMAGE_PROVIDER = os.getenv("IMAGE_PROVIDER", "openrouter").strip().lower()
 OPENROUTER_IMAGE_BASE = os.getenv("OPENROUTER_IMAGE_BASE", "https://openrouter.ai/api/v1").strip().rstrip("/")
-OPENROUTER_IMAGE_MODEL = os.getenv(
-    "OPENROUTER_IMAGE_MODEL",
-    "inclusionai/ming-image-0.1-design",
-).strip()
+_OPENROUTER_DEFAULT_IMAGE_MODEL = "inclusionai/ming-image-0.1-design"
+_OPENROUTER_CONFIGURED_IMAGE_MODEL = os.getenv("OPENROUTER_IMAGE_MODEL", "").strip()
+if _OPENROUTER_CONFIGURED_IMAGE_MODEL and re.fullmatch(
+    r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", _OPENROUTER_CONFIGURED_IMAGE_MODEL
+):
+    OPENROUTER_IMAGE_MODEL = _OPENROUTER_CONFIGURED_IMAGE_MODEL
+else:
+    OPENROUTER_IMAGE_MODEL = _OPENROUTER_DEFAULT_IMAGE_MODEL
+    if _OPENROUTER_CONFIGURED_IMAGE_MODEL:
+        logger.warning(
+            "OPENROUTER_IMAGE_MODEL 格式無效，已改用預設模型：%s",
+            _OPENROUTER_DEFAULT_IMAGE_MODEL,
+        )
 OPENAI_IMAGE_BASE = os.getenv("OPENAI_IMAGE_BASE", "https://api.openai.com/v1").strip().rstrip("/")
 OPENAI_IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-1").strip()
 OPENAI_IMAGE_FALLBACK = os.getenv("OPENAI_IMAGE_FALLBACK", "false").strip().lower() in {
