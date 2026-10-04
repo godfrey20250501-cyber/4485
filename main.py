@@ -80,6 +80,15 @@ ADMIN_LOG_CHANNEL_ID = os.getenv("ADMIN_LOG_CHANNEL_ID", "").strip()
 _ADMIN_MONITORED_ROLE_ID = AUTO_BAN_ROLE_ID or None
 _ADMIN_EXEMPT_ROLE_IDS = set()
 _ADMIN_ROLE_MONITORING = bool(_ADMIN_MONITORED_ROLE_ID)
+_ADMIN_PANEL_ENABLED = True
+UPDATE_LOG_TEXT = (
+    "版本更新日誌\n"
+    "• Admin 面板：全伺服器開啟／關閉、系統狀態、Log、額度與指令重新同步。\n"
+    "• `/管理員`：設定監控身分組、監控頻道、豁免身分組與監控開關。\n"
+    "• 身分組監控：只記錄／通知，不自動 Ban；通知附上該使用者最近 10 則已保存對話。\n"
+    "• 對話額度：可由 Admin 重置指定使用者今日聊天計數。\n"
+    "• 圖片額度：維持全伺服器共用的每日／每月保護。"
+)
 MAX_IMAGES_PER_MESSAGE = 2
 MAX_IMAGE_BYTES = 4 * 1024 * 1024
 SUPPORTED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
@@ -166,13 +175,14 @@ def _admin_log_text(limit=20):
 def _admin_status_text():
     return (
         "管理員模式已啟用（只對目前程序工作階段有效）。\n"
+        f"全伺服器 Admin 面板：`{'開啟' if _ADMIN_PANEL_ENABLED else '關閉'}`\n"
         f"圖片路由：`{IMAGE_PROVIDER}` / `{OPENROUTER_IMAGE_MODEL}`\n"
         f"OpenAI 備援：`{'開啟' if OPENAI_IMAGE_FALLBACK else '關閉'}`\n"
         f"OpenRouter Key 1/2：`{bool(os.getenv('OPENROUTER_API_KEY', '').strip())}` / `{bool(os.getenv('OPENROUTER_API_KEY_2', '').strip())}`\n"
         f"OpenAI Key 1/2：`{bool(os.getenv('OPENAI_API_KEY', '').strip())}` / `{bool(os.getenv('OPENAI_API_KEY_2', '').strip())}`\n"
         f"監控身分組：`{_ADMIN_MONITORED_ROLE_ID or '未設定'}`；監控中：`{_ADMIN_ROLE_MONITORING}`\n"
         f"豁免身分組：`{', '.join(sorted(_ADMIN_EXEMPT_ROLE_IDS)) or '未設定'}`\n"
-        f"自動 Ban：`停用（目前只記錄／通知）`；通知頻道：`{ADMIN_LOG_CHANNEL_ID or '未設定'}`"
+        f"自動 Ban：`停用（目前只記錄／通知）`；監控頻道：`{ADMIN_LOG_CHANNEL_ID or '未設定'}`"
     )
 
 
@@ -227,6 +237,60 @@ class AdminExemptRoleModal(Modal, title="設定豁免身分組"):
         )
 
 
+class AdminMonitorChannelModal(Modal, title="設定監控通知頻道"):
+    channel = TextInput(
+        label="頻道（輸入 #頻道 或 Channel ID）",
+        placeholder="例如：#監控紀錄 或 123456789012345678",
+        required=True,
+        max_length=100,
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        global ADMIN_LOG_CHANNEL_ID
+        match = re.search(r"(?:<#)?(\d{5,25})>?", self.channel.value.strip())
+        if not match:
+            await interaction.response.send_message("無法辨識頻道，請輸入 `#頻道` 或數字 Channel ID。", ephemeral=True)
+            return
+        channel_id = match.group(1)
+        channel = interaction.guild.get_channel(int(channel_id)) if interaction.guild else None
+        if channel is None or not hasattr(channel, "send"):
+            await interaction.response.send_message("找不到這個伺服器文字頻道，請確認 ID 與 Bot 權限。", ephemeral=True)
+            return
+        ADMIN_LOG_CHANNEL_ID = channel_id
+        _remember_admin_log("MONITOR_CHANNEL_SET", f"channel_id={channel_id} by={interaction.user.id}")
+        await interaction.response.send_message(
+            f"已設定監控通知頻道為 <#{channel_id}>。Bot 需要該頻道的檢視與發送訊息權限。",
+            ephemeral=True,
+        )
+
+
+async def _recent_user_conversations(guild, user_id, limit=10):
+    """從各文字頻道的最近緩衝中整理指定使用者的最新訊息。"""
+    records = []
+    channels = [channel for channel in guild.text_channels if callable(getattr(channel, "history", None))]
+    for channel in channels:
+        try:
+            channel_records = await asyncio.to_thread(
+                load_recent_channel_messages,
+                guild.id,
+                channel.id,
+                MAX_HISTORY_SCAN_MESSAGES,
+            )
+        except Exception:
+            logger.exception("讀取監控使用者對話緩衝失敗：guild=%s channel=%s", guild.id, channel.id)
+            continue
+        for record in channel_records:
+            if int(record.get("author_id", 0)) == int(user_id):
+                records.append(record)
+    records.sort(key=lambda item: str(item.get("created_at", "")))
+    lines = []
+    for record in records[-limit:]:
+        content = str(record.get("content", "")).replace("\n", " ").strip()
+        if content:
+            lines.append(f"#{record.get('channel_id', 'unknown')}：{content[:300]}")
+    return lines
+
+
 class AdminResetUserModal(Modal, title="重置指定使用者對話與聊天額度"):
     user_id = TextInput(
         label="使用者 ID",
@@ -259,6 +323,32 @@ class AdminResetUserModal(Modal, title="重置指定使用者對話與聊天額�
         )
 
 
+class AdminResetChatQuotaModal(Modal, title="重置指定使用者對話數量"):
+    user_id = TextInput(
+        label="使用者 ID",
+        placeholder="輸入 Discord 使用者 ID（不是 @提及）",
+        required=True,
+        max_length=25,
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            target_id = int(self.user_id.value.strip())
+        except ValueError:
+            await interaction.response.send_message("使用者 ID 必須是純數字。", ephemeral=True)
+            return
+        if target_id <= 0:
+            await interaction.response.send_message("使用者 ID 無效。", ephemeral=True)
+            return
+        reset_chat = await asyncio.to_thread(reset_user_chat_quota, target_id)
+        _remember_admin_log("CHAT_QUOTA_RESET", f"target={target_id} by={interaction.user.id}")
+        await interaction.response.send_message(
+            f"已重置使用者 `{target_id}` 的今日對話數量（刪除 {reset_chat} 筆計數）。\n"
+            "對話記憶、全服聊天額度與全服圖片額度都沒有變更。",
+            ephemeral=True,
+        )
+
+
 class AdminPanelView(View):
     def __init__(self):
         super().__init__(timeout=300)
@@ -286,13 +376,13 @@ class AdminPanelView(View):
     async def reset_button(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_modal(AdminResetUserModal())
 
-    @discord.ui.button(label="設定監控身分組", style=discord.ButtonStyle.secondary)
-    async def role_button(self, interaction: discord.Interaction, button: Button):
-        await interaction.response.send_modal(AdminRoleModal())
+    @discord.ui.button(label="重置對話數量", style=discord.ButtonStyle.danger)
+    async def reset_chat_quota_button(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.send_modal(AdminResetChatQuotaModal())
 
-    @discord.ui.button(label="設定豁免身分組", style=discord.ButtonStyle.secondary)
-    async def exempt_button(self, interaction: discord.Interaction, button: Button):
-        await interaction.response.send_modal(AdminExemptRoleModal())
+    @discord.ui.button(label="查看更新日誌", style=discord.ButtonStyle.secondary)
+    async def update_log_button(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.edit_message(content=UPDATE_LOG_TEXT, view=self)
 
     @discord.ui.button(label="清除指令暫存／重新同步", style=discord.ButtonStyle.success)
     async def refresh_commands_button(self, interaction: discord.Interaction, button: Button):
@@ -737,8 +827,8 @@ class HelpSelect(Select):
             embed.title = "🛠️ 管理員 Code、診斷與未來功能"
             embed.description = (
                 "先在 Render 設定 `ADMIN_CODE`，再使用 `/admin code:你的Code` 啟用本次程序的管理員工作階段。\n\n"
-                "啟用後可使用 `/admin` 按鈕面板：系統狀態、Log、額度、重置指定使用者對話／今日聊天額度、設定監控身分組、設定豁免身分組，以及清除舊斜線指令暫存並重新同步。`/log` 也只允許已啟用者使用。\n\n"
-                "自動 Ban 角色功能目前安全停用；身分組只會記錄／通知，不會自動封禁。圖片額度目前是全伺服器共用，不能誤當成指定使用者額度重置。"
+                "啟用後可使用 `/admin` 按鈕面板：系統狀態、Log、額度、重置指定使用者對話／今日聊天額度、只重置對話數量、清除舊斜線指令暫存、重新同步與查看更新日誌。`/admin` 的開啟／關閉是全伺服器共用。\n\n"
+                "身分組監控請使用 `/管理員` 設定監控身分組、監控通知頻道、豁免身分組與監控開關；目前只記錄／通知，不會自動封禁。圖片額度目前是全伺服器共用，不能誤當成指定使用者額度重置。"
             )
         else:
             embed.title = "🛠️ 伺服器管理員限制功能"
@@ -773,22 +863,48 @@ async def help_command(interaction: discord.Interaction):
     description="輸入管理員 Code 啟用測試與診斷菜單",
     guild=GUILD_OBJECT,
 )
-@app_commands.describe(code="Render 的 ADMIN_CODE；只會以雜湊比對，不會儲存原始 Code", 功能="啟用後選擇要查看的管理功能")
+@app_commands.describe(code="Render 的 ADMIN_CODE；只會以雜湊比對，不會儲存原始 Code", 功能="啟用後選擇要查看的管理功能", 模式="全伺服器 Admin 面板開啟或關閉")
 @app_commands.choices(功能=[
     app_commands.Choice(name="狀態檢查", value="status"),
     app_commands.Choice(name="AI／圖片額度檢查", value="quota"),
     app_commands.Choice(name="自動 Ban 設定檢視（目前停用）", value="role_ban"),
 ])
+@app_commands.choices(模式=[
+    app_commands.Choice(name="查看／使用面板", value="view"),
+    app_commands.Choice(name="全伺服器開啟", value="open"),
+    app_commands.Choice(name="全伺服器關閉", value="close"),
+])
 async def admin_menu(
     interaction: discord.Interaction,
     code: str = "",
     功能: app_commands.Choice[str] | None = None,
+    模式: app_commands.Choice[str] | None = None,
 ):
     if code.strip():
         if not _activate_admin(interaction.user.id, code):
             _remember_admin_log("ADMIN_DENIED", f"user={interaction.user.id}")
             await interaction.response.send_message("管理員 Code 不正確，或 Render 尚未設定 ADMIN_CODE。", ephemeral=True)
             return
+    mode = 模式.value if 模式 else "view"
+    global _ADMIN_PANEL_ENABLED
+    if mode == "open":
+        if not code.strip() and not _is_admin_user(interaction.user.id):
+            await interaction.response.send_message("開啟全伺服器 Admin 面板需要輸入 ADMIN_CODE。", ephemeral=True)
+            return
+        _ADMIN_PANEL_ENABLED = True
+        _remember_admin_log("ADMIN_PANEL_OPEN", f"by={interaction.user.id}")
+    elif mode == "close":
+        if not code.strip() and not _is_admin_user(interaction.user.id):
+            await interaction.response.send_message("關閉全伺服器 Admin 面板需要輸入 ADMIN_CODE。", ephemeral=True)
+            return
+        _ADMIN_PANEL_ENABLED = False
+        _remember_admin_log("ADMIN_PANEL_CLOSE", f"by={interaction.user.id}")
+        await interaction.response.send_message("已關閉全伺服器 Admin 面板；只有重新輸入正確 Code 才能開啟。", ephemeral=True)
+        return
+
+    if not _ADMIN_PANEL_ENABLED:
+        await interaction.response.send_message("全伺服器 Admin 面板目前已關閉；請使用 `/admin code:你的Code 模式:全伺服器開啟`。", ephemeral=True)
+        return
     if not _is_admin_user(interaction.user.id):
         await interaction.response.send_message("請先使用 `/admin code:你的Code` 啟用管理員菜單。", ephemeral=True)
         return
@@ -807,6 +923,53 @@ async def admin_menu(
         )
     _remember_admin_log("ADMIN_MENU", 功能.value if 功能 else "status")
     await interaction.response.send_message(detail, view=AdminPanelView(), ephemeral=True)
+
+
+@bot.tree.command(
+    name="管理員",
+    description="管理身分組監控、通知頻道與豁免設定（需 Admin Code）",
+    guild=GUILD_OBJECT,
+)
+@app_commands.describe(功能="選擇監控管理功能")
+@app_commands.choices(功能=[
+    app_commands.Choice(name="查看監控狀態", value="status"),
+    app_commands.Choice(name="設定監控身分組", value="role"),
+    app_commands.Choice(name="設定監控通知頻道", value="channel"),
+    app_commands.Choice(name="設定豁免身分組", value="exempt"),
+    app_commands.Choice(name="開啟身分組監控", value="enable"),
+    app_commands.Choice(name="關閉身分組監控", value="disable"),
+])
+async def administrator_menu(interaction: discord.Interaction, 功能: app_commands.Choice[str]):
+    if not _ADMIN_PANEL_ENABLED:
+        await interaction.response.send_message("全伺服器 Admin 面板目前已關閉，請先用 `/admin` 重新開啟。", ephemeral=True)
+        return
+    if not _is_admin_user(interaction.user.id):
+        await interaction.response.send_message("請先使用 `/admin code:你的Code` 啟用管理員菜單。", ephemeral=True)
+        return
+    if 功能.value == "role":
+        await interaction.response.send_modal(AdminRoleModal())
+        return
+    if 功能.value == "channel":
+        await interaction.response.send_modal(AdminMonitorChannelModal())
+        return
+    if 功能.value == "exempt":
+        await interaction.response.send_modal(AdminExemptRoleModal())
+        return
+    global _ADMIN_ROLE_MONITORING
+    if 功能.value == "enable":
+        if not _ADMIN_MONITORED_ROLE_ID or not ADMIN_LOG_CHANNEL_ID:
+            await interaction.response.send_message("請先設定監控身分組與監控通知頻道，才能開啟監控。", ephemeral=True)
+            return
+        _ADMIN_ROLE_MONITORING = True
+        _remember_admin_log("ROLE_MONITOR_OPEN", f"by={interaction.user.id}")
+        await interaction.response.send_message("已開啟身分組監控；符合條件時會通知監控頻道並附最近 10 則已保存對話。", ephemeral=True)
+        return
+    if 功能.value == "disable":
+        _ADMIN_ROLE_MONITORING = False
+        _remember_admin_log("ROLE_MONITOR_CLOSE", f"by={interaction.user.id}")
+        await interaction.response.send_message("已關閉身分組監控。", ephemeral=True)
+        return
+    await interaction.response.send_message(_admin_status_text(), ephemeral=True)
 
 
 @bot.tree.command(
@@ -1312,7 +1475,12 @@ async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent):
 @bot.event
 async def on_member_update(before: discord.Member, after: discord.Member):
     """監控指定身分組；目前只記錄／通知，絕不自動 Ban。"""
-    if after.guild.id != OFFICIAL_GUILD_ID or not _ADMIN_ROLE_MONITORING or not _ADMIN_MONITORED_ROLE_ID:
+    if (
+        after.guild.id != OFFICIAL_GUILD_ID
+        or not _ADMIN_ROLE_MONITORING
+        or not _ADMIN_MONITORED_ROLE_ID
+        or not ADMIN_LOG_CHANNEL_ID
+    ):
         return
     before_ids = {str(role.id) for role in before.roles}
     after_ids = {str(role.id) for role in after.roles}
@@ -1330,15 +1498,18 @@ async def on_member_update(before: discord.Member, after: discord.Member):
         _ADMIN_MONITORED_ROLE_ID,
         reason,
     )
-    if ADMIN_LOG_CHANNEL_ID:
-        try:
-            channel = bot.get_channel(int(ADMIN_LOG_CHANNEL_ID))
-            if channel is not None:
-                await channel.send(
-                    f"身分組監控通知：成員 <@{after.id}> 被加入 `<@&{_ADMIN_MONITORED_ROLE_ID}>`；處置：只記錄／通知（原因：{reason}）。"
-                )
-        except (ValueError, discord.HTTPException, discord.Forbidden):
-            logger.exception("身分組監控通知頻道發送失敗")
+    try:
+        channel = bot.get_channel(int(ADMIN_LOG_CHANNEL_ID))
+        if channel is None:
+            return
+        recent_lines = await _recent_user_conversations(after.guild, after.id, 10)
+        recent_text = "\n".join(recent_lines) if recent_lines else "（目前沒有找到已保存的對話）"
+        await channel.send(
+            f"身分組監控通知：成員 <@{after.id}> 被加入 `<@&{_ADMIN_MONITORED_ROLE_ID}>`。\n"
+            f"處置：只記錄／通知（原因：{reason}）。\n最近 10 則已保存對話：\n```text\n{recent_text[:1700]}\n```"
+        )
+    except (ValueError, discord.HTTPException, discord.Forbidden):
+        logger.exception("身分組監控通知頻道發送失敗")
 
 
 @bot.event
