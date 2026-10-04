@@ -1,10 +1,14 @@
 import asyncio
+from datetime import datetime
+import hashlib
+import hmac
 import io
 import logging
 import os
 import re
 import base64
 import mimetypes
+from collections import deque
 
 import discord
 from discord import app_commands
@@ -65,6 +69,12 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 logger = logging.getLogger("discord_cat_bot")
+_ADMIN_CODE = os.getenv("ADMIN_CODE", "").strip()
+_ADMIN_CODE_HASH = hashlib.sha256(_ADMIN_CODE.encode("utf-8")).hexdigest() if _ADMIN_CODE else ""
+_ADMIN_USERS = set()
+_RECENT_ADMIN_LOGS = deque(maxlen=100)
+AUTO_BAN_ENABLED = os.getenv("AUTO_BAN_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+AUTO_BAN_ROLE_ID = os.getenv("AUTO_BAN_ROLE_ID", "").strip()
 MAX_IMAGES_PER_MESSAGE = 2
 MAX_IMAGE_BYTES = 4 * 1024 * 1024
 SUPPORTED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
@@ -106,6 +116,35 @@ class AIChatBot(commands.Bot):
 
 
 bot = AIChatBot()
+
+
+def _admin_code_configured():
+    return bool(_ADMIN_CODE_HASH)
+
+
+def _activate_admin(user_id, code):
+    supplied_hash = hashlib.sha256(str(code or "").strip().encode("utf-8")).hexdigest()
+    if not _ADMIN_CODE_HASH or not hmac.compare_digest(supplied_hash, _ADMIN_CODE_HASH):
+        return False
+    _ADMIN_USERS.add(int(user_id))
+    return True
+
+
+def _is_admin_user(user_id):
+    return int(user_id) in _ADMIN_USERS
+
+
+def _remember_admin_log(event, detail=""):
+    safe_event = str(event).replace("\n", " ")[:100]
+    safe_detail = str(detail).replace("\n", " ")[:240]
+    entry = f"{datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S')} | {safe_event} | {safe_detail}"
+    _RECENT_ADMIN_LOGS.append(entry)
+
+
+def _admin_log_text(limit=20):
+    if not _RECENT_ADMIN_LOGS:
+        return "目前沒有本次程序啟動後的錯誤記錄。"
+    return "\n".join(list(_RECENT_ADMIN_LOGS)[-max(1, min(30, int(limit))):])
 
 
 def _schedule_github_error_report(command_name, error, interaction_acknowledged=None):
@@ -186,6 +225,7 @@ async def _generate_personalized_image(guild_id, user_id, user_prompt):
     except Exception as exc:
         response = getattr(exc, "response", None)
         status_code = getattr(response, "status_code", None)
+        _remember_admin_log("IMAGE_ERROR", f"route={IMAGE_PROVIDER} type={type(exc).__name__} detail={str(exc)[:120]}")
         logger.error(
             "圖片生成失敗：route=%s model=%s status=%s exception=%s detail=%s",
             IMAGE_PROVIDER,
@@ -465,7 +505,7 @@ class HelpSelect(Select):
             discord.SelectOption(label="查閱頻道訊息", description="明確指定頻道、成員或訊息連結查閱近期對話", emoji="🔎", value="history"),
             discord.SelectOption(label="生成圖片", description="使用每月有限的免費額度生成圖片", emoji="🎨", value="genimage"),
             discord.SelectOption(label="代碼 AI", description="使用 Manus AI 產生完整程式碼與套件清單", emoji="💻", value="codeai"),
-            discord.SelectOption(label="管理員功能鎖", description="查看管理員文字頻道鎖定", emoji="🛠️", value="admin"),
+            discord.SelectOption(label="管理員功能與診斷", description="/admin Code、/log 與自動 Ban 安全狀態", emoji="🛠️", value="admin"),
         ]
         super().__init__(placeholder="請選擇你想查看的說明指南...", min_values=1, max_values=1, options=options)
 
@@ -497,7 +537,7 @@ class HelpSelect(Select):
                 "個人/群組對話記憶只保存 @本喵或回覆本喵的互動。另有最近對話緩衝：每個文字頻道最近 100 則真人訊息會自動保存，超過時淘汰最舊訊息；不會自動送給 AI。\n\n"
                 "用 `/清除記憶` 刪除自己的記憶；管理員也可清除目前頻道共享記憶。群組記憶啟用時，該頻道內大家的互動會成為共同上下文。\n\n"
                 "傳送 PNG、JPEG 或 WebP 圖片並 @本喵或回覆本喵即可分析；每次最多 2 張、每張 4 MiB。"
-                "附圖分析只走既有的免費文字/視覺路由；不可用時不會回退付費模型。生圖是另一項功能，使用 `/生成圖片`，目前走 OpenRouter 圖片 API。"
+                "附圖分析只走既有的免費文字/視覺路由；不可用時不會回退付費模型。個人化 AI 不再使用獨立指令，而是在 @本喵／回覆本喵的對話中讀取已開啟的個人記憶，依需求使用一個聊天模型路由；生圖則使用 `/生成圖片`。"
             )
         elif selected == "history":
             embed.title = "🔎 最近訊息保存與按需查閱"
@@ -510,12 +550,12 @@ class HelpSelect(Select):
             embed.title = "🎨 有限免費額度圖片生成"
             embed.description = (
                 f"使用 `/生成圖片 提示詞` 生成一張 {HF_IMAGE_WIDTH}×{HF_IMAGE_HEIGHT} 圖片；"
-                "也可以使用 `/個人化生成圖片`，或 `@本喵 生圖：描述`。"
+                "也可以在 `@本喵 生圖：描述` 的對話中自動參考個人記憶。"
                 f"全伺服器每月總共最多 {HF_IMAGE_MONTHLY_LIMIT} 張（不是每位使用者各 {HF_IMAGE_MONTHLY_LIMIT} 張），每日最多 {HF_IMAGE_DAILY_HARD_LIMIT} 張；"
                 f"目前圖片路由：`{IMAGE_PROVIDER}`，模型：`{OPENROUTER_IMAGE_MODEL if IMAGE_PROVIDER == 'openrouter' else HF_IMAGE_MODEL}`。\n\n"
                 "目前預設使用 OpenRouter 的 `inclusionai/ming-image-0.1-design`，模型端點目前標示輸出價格為 US$0，但免費狀態、供應商限流與政策可能調整；每次請以 API 回傳的 usage.cost 為準。"
                 f"額度預留保存在 MongoDB，資料庫不可用時會停止生圖；OpenAI 備援：`{'開啟' if OPENAI_IMAGE_FALLBACK else '關閉'}`（模型 `{OPENAI_IMAGE_MODEL}`，可能收費）。不自動重試 OpenRouter；Hugging Face 仍可透過 Render 設定 `IMAGE_PROVIDER=huggingface` 作為手動備援。"
-                "機器人不保存提示詞或圖片。使用 `/生圖額度` 可查詢 Bot 本月與今日用量。"
+                "機器人不保存生成圖片。使用 `/生圖額度` 可查詢 Bot 本月與今日用量。"
             )
         elif selected == "codeai":
             embed.title = "💻 Manus 代碼 AI"
@@ -523,6 +563,13 @@ class HelpSelect(Select):
                 "使用 `/代碼ai 需求` 請 Manus AI 產生程式碼。\n\n"
                 "回覆會依照 Discord 2000 字限制，以每段約 1800 字分段傳送，優先在換行處切割，不會刪除或截斷程式碼。\n\n"
                 "AI 會列出需要安裝的套件、版本、環境變數與執行方式。此功能只產生程式碼，不會自動執行、部署或修改 GitHub。需要 Render 設定 `MANUS_API_KEY`。"
+            )
+        elif selected == "admin":
+            embed.title = "🛠️ 管理員 Code、診斷與未來功能"
+            embed.description = (
+                "先在 Render 設定 `ADMIN_CODE`，再使用 `/admin code:你的Code` 啟用本次程序的管理員工作階段。\n\n"
+                "啟用後可使用 `/admin` 查看路由、AI／圖片額度與金鑰是否存在（只顯示 True/False，不顯示金鑰），以及使用 `/log` 查看本次啟動後的最近錯誤摘要。\n\n"
+                "自動 Ban 角色功能目前安全停用，只顯示 `AUTO_BAN_ENABLED` 與 `AUTO_BAN_ROLE_ID` 設定，不會自動封禁任何人；正式啟用前必須確認角色、豁免名單與 Bot 權限。"
             )
         else:
             embed.title = "🛠️ 伺服器管理員限制功能"
@@ -550,6 +597,68 @@ async def help_command(interaction: discord.Interaction):
         color=0x5865F2,
     )
     await interaction.response.send_message(embed=embed, view=HelpView(), ephemeral=True)
+
+
+@bot.tree.command(
+    name="admin",
+    description="輸入管理員 Code 啟用測試與診斷菜單",
+    guild=GUILD_OBJECT,
+)
+@app_commands.describe(code="Render 的 ADMIN_CODE；只會以雜湊比對，不會儲存原始 Code", 功能="啟用後選擇要查看的管理功能")
+@app_commands.choices(功能=[
+    app_commands.Choice(name="狀態檢查", value="status"),
+    app_commands.Choice(name="AI／圖片額度檢查", value="quota"),
+    app_commands.Choice(name="自動 Ban 設定檢視（目前停用）", value="role_ban"),
+])
+async def admin_menu(
+    interaction: discord.Interaction,
+    code: str = "",
+    功能: app_commands.Choice[str] | None = None,
+):
+    if code.strip():
+        if not _activate_admin(interaction.user.id, code):
+            _remember_admin_log("ADMIN_DENIED", f"user={interaction.user.id}")
+            await interaction.response.send_message("管理員 Code 不正確，或 Render 尚未設定 ADMIN_CODE。", ephemeral=True)
+            return
+    if not _is_admin_user(interaction.user.id):
+        await interaction.response.send_message("請先使用 `/admin code:你的Code` 啟用管理員菜單。", ephemeral=True)
+        return
+
+    if 功能 is None or 功能.value == "status":
+        detail = (
+            "管理員模式已啟用（只對目前程序工作階段有效）。\n"
+            f"圖片路由：`{IMAGE_PROVIDER}` / `{OPENROUTER_IMAGE_MODEL}`\n"
+            f"OpenAI 備援：`{'開啟' if OPENAI_IMAGE_FALLBACK else '關閉'}`\n"
+            f"OpenRouter Key 1/2：`{bool(os.getenv('OPENROUTER_API_KEY', '').strip())}` / `{bool(os.getenv('OPENROUTER_API_KEY_2', '').strip())}`\n"
+            f"OpenAI Key 1/2：`{bool(os.getenv('OPENAI_API_KEY', '').strip())}` / `{bool(os.getenv('OPENAI_API_KEY_2', '').strip())}`\n"
+            f"自動 Ban：`{'開啟' if AUTO_BAN_ENABLED else '停用'}`；角色 ID：`{AUTO_BAN_ROLE_ID or '未設定'}`"
+        )
+    elif 功能.value == "quota":
+        quota = await asyncio.to_thread(get_hf_image_quota_status)
+        detail = f"圖片額度資料：`{quota}`\n聊天額度：請使用 `/查看當前額度` 查看。"
+    else:
+        detail = (
+            "自動 Ban 目前是安全停用狀態，只顯示設定，不會執行封禁。\n"
+            f"AUTO_BAN_ENABLED={AUTO_BAN_ENABLED}\n"
+            f"AUTO_BAN_ROLE_ID={AUTO_BAN_ROLE_ID or '未設定'}\n"
+            "若要真正啟用，之後仍需確認角色 ID、觸發條件、豁免名單與 Bot 的 Ban Members 權限。"
+        )
+    _remember_admin_log("ADMIN_MENU", 功能.value if 功能 else "status")
+    await interaction.response.send_message(detail, ephemeral=True)
+
+
+@bot.tree.command(
+    name="log",
+    description="查看本次啟動後的最近錯誤（僅 Code 管理員）",
+    guild=GUILD_OBJECT,
+)
+async def admin_log(interaction: discord.Interaction):
+    if not _is_admin_user(interaction.user.id):
+        await interaction.response.send_message("只有先輸入正確管理員 Code 的使用者才能查看 /log。", ephemeral=True)
+        return
+    _remember_admin_log("ADMIN_LOG_VIEW", f"user={interaction.user.id}")
+    text = _admin_log_text()
+    await interaction.response.send_message(f"最近錯誤／診斷記錄：\n```text\n{text[:1800]}\n```", ephemeral=True)
 
 
 @bot.tree.command(name="個人記憶", description="開啟或關閉你在本伺服器的私人對話記憶", guild=GUILD_OBJECT)
@@ -675,6 +784,7 @@ async def generate_image(interaction: discord.Interaction, 提示詞: str):
     except Exception as exc:
         response = getattr(exc, "response", None)
         status_code = getattr(response, "status_code", None)
+        _remember_admin_log("IMAGE_ERROR", f"route={IMAGE_PROVIDER} type={type(exc).__name__} detail={str(exc)[:120]}")
         logger.error(
             "圖片生成失敗：route=%s model=%s status=%s exception=%s detail=%s",
             IMAGE_PROVIDER,
@@ -690,34 +800,6 @@ async def generate_image(interaction: discord.Interaction, 提示詞: str):
         else:
             message = "圖片生成失敗；為避免重複消耗免費額度，本次不會自動重試。請管理員查看 Render log 喵。"
         await interaction.edit_original_response(content=message)
-
-
-@bot.tree.command(
-    name="個人化生成圖片",
-    description="依照你的個人對話記憶生成一張圖片",
-    guild=GUILD_OBJECT,
-)
-@app_commands.describe(提示詞="描述你想生成的圖片；也會參考你已開啟的個人記憶，最多 500 字")
-async def personalized_generate_image(interaction: discord.Interaction, 提示詞: str = ""):
-    prompt = (提示詞 or "").strip()
-    if len(prompt) > 500:
-        await interaction.response.send_message("圖片描述最多 500 字喵。", ephemeral=True)
-        return
-    await interaction.response.defer(thinking=True)
-    result = await _generate_personalized_image(interaction.guild_id, interaction.user.id, prompt)
-    if result.get("status") != "ok":
-        await interaction.edit_original_response(content=_image_generation_status_message(result))
-        return
-    upload = discord.File(io.BytesIO(result["image_bytes"]), filename=result["filename"])
-    context_text = "已參考你的個人記憶" if result.get("used_personal_context") else "未使用個人記憶"
-    await interaction.edit_original_response(
-        content=(
-            f"圖片完成喵！{context_text}。全伺服器本月已使用 "
-            f"{result['used_month']}/{HF_IMAGE_MONTHLY_LIMIT} 張，今日 "
-            f"{result['used_today']}/{HF_IMAGE_DAILY_HARD_LIMIT} 張。"
-        ),
-        attachments=[upload],
-    )
 
 
 @bot.tree.command(
@@ -858,6 +940,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         message = "這個指令只有伺服器管理員可以使用喵。"
     else:
         acknowledged = interaction.response.is_done()
+        _remember_admin_log("COMMAND_ERROR", f"command=/{command_name} type={type(getattr(error, 'original', error)).__name__}")
         logger.error(
             "斜線指令錯誤：command=/%s acknowledged=%s exception=%s",
             command_name,
@@ -1016,6 +1099,7 @@ async def on_message(message: discord.Message):
         )
 
     except Exception as exc:
+        _remember_admin_log("MESSAGE_ERROR", f"type={type(exc).__name__} detail={str(exc)[:120]}")
         logger.exception("處理 Discord 訊息失敗；guild=%s channel=%s", getattr(message.guild, "id", None), message.channel.id)
         _schedule_github_error_report("message_handler", exc)
         try:
@@ -1070,6 +1154,12 @@ async def on_ready():
     logger.info("機器人目前加入的伺服器 ID：%s", [guild.id for guild in bot.guilds])
     history_backend = await asyncio.to_thread(get_history_storage_backend)
     logger.info("GitHub 自動錯誤記錄已配置：%s", github_error_logging_enabled())
+    logger.info(
+        "管理員功能：ADMIN_CODE=%s auto_ban=%s role_id=%s",
+        _admin_code_configured(),
+        AUTO_BAN_ENABLED,
+        AUTO_BAN_ROLE_ID or "unset",
+    )
     logger.info(
         "每頻道最近訊息緩衝：最多 %s 則；儲存後端：%s",
         MAX_HISTORY_SCAN_MESSAGES,
