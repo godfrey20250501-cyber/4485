@@ -58,22 +58,27 @@ OPENROUTER_IMAGE_MODEL = os.getenv(
     "OPENROUTER_IMAGE_MODEL",
     "inclusionai/ming-image-0.1-design",
 ).strip()
+OPENAI_IMAGE_BASE = os.getenv("OPENAI_IMAGE_BASE", "https://api.openai.com/v1").strip().rstrip("/")
+OPENAI_IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-1").strip()
+OPENAI_IMAGE_FALLBACK = os.getenv("OPENAI_IMAGE_FALLBACK", "false").strip().lower() in {
+    "1", "true", "yes", "on",
+}
 HF_IMAGE_MODEL = "black-forest-labs/FLUX.1-schnell"
 HF_IMAGE_PROVIDER = "fal-ai"
 HF_IMAGE_WIDTH = 512
 HF_IMAGE_HEIGHT = 512
 HF_IMAGE_PROMPT_MAX_CHARS = 1000
 HF_IMAGE_ESTIMATED_COST_USD = 0.003
-HF_IMAGE_MONTHLY_HARD_LIMIT = 20
-HF_IMAGE_DAILY_HARD_LIMIT = 3
+HF_IMAGE_MONTHLY_HARD_LIMIT = 40
+HF_IMAGE_DAILY_HARD_LIMIT = 4
 try:
     # 可在 Render 下調，不能高於保守硬上限；設 0 可停用生圖。
     HF_IMAGE_MONTHLY_LIMIT = max(
         0,
-        min(HF_IMAGE_MONTHLY_HARD_LIMIT, int(os.getenv("HF_IMAGE_MONTHLY_LIMIT", "20"))),
+        min(HF_IMAGE_MONTHLY_HARD_LIMIT, int(os.getenv("HF_IMAGE_MONTHLY_LIMIT", "40"))),
     )
 except ValueError:
-    logger.warning("HF_IMAGE_MONTHLY_LIMIT 不是整數，改用預設值 20")
+    logger.warning("HF_IMAGE_MONTHLY_LIMIT 不是整數，改用預設值 40")
     HF_IMAGE_MONTHLY_LIMIT = HF_IMAGE_MONTHLY_HARD_LIMIT
 _MONGO_CLIENT = None
 _MONGO_HISTORY_COLLECTION = None
@@ -571,33 +576,46 @@ def image_provider_key_configured():
 
 
 def generate_openrouter_image_bytes(prompt):
-    """使用 OpenRouter Image API；不自動切換模型或重試，避免重複消耗額度。"""
-    token = os.getenv("OPENROUTER_API_KEY", "").strip()
-    if not token:
+    """使用 OpenRouter Image API；第二組 Key 僅處理認證/路由失敗，不繞過額度或限流。"""
+    tokens = []
+    for env_name in ("OPENROUTER_API_KEY", "OPENROUTER_API_KEY_2"):
+        token = os.getenv(env_name, "").strip()
+        if token and token not in tokens:
+            tokens.append(token)
+    if not tokens:
         raise RuntimeError("OPENROUTER_API_KEY_NOT_CONFIGURED")
 
     strengthened_prompt = _strengthen_image_prompt(prompt)
-    response = requests.post(
-        f"{OPENROUTER_IMAGE_BASE}/images",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": OPENROUTER_IMAGE_MODEL,
-            "prompt": strengthened_prompt[:HF_IMAGE_PROMPT_MAX_CHARS],
-            "n": 1,
-            "output_format": "png",
-            "size": f"{HF_IMAGE_WIDTH}x{HF_IMAGE_HEIGHT}",
-        },
-        timeout=(10, 180),
-    )
-    if not response.ok:
-        raise RuntimeError(f"OPENROUTER_IMAGE_HTTP_{response.status_code}")
-    data = response.json()
-    images = data.get("data") or []
-    if not images or not images[0].get("b64_json"):
-        raise RuntimeError("OPENROUTER_IMAGE_RESPONSE_INVALID")
+    last_error = None
+    for index, token in enumerate(tokens):
+        response = requests.post(
+            f"{OPENROUTER_IMAGE_BASE}/images",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": OPENROUTER_IMAGE_MODEL,
+                "prompt": strengthened_prompt[:HF_IMAGE_PROMPT_MAX_CHARS],
+                "n": 1,
+                "output_format": "png",
+                "size": f"{HF_IMAGE_WIDTH}x{HF_IMAGE_HEIGHT}",
+            },
+            timeout=(10, 180),
+        )
+        if response.ok:
+            data = response.json()
+            images = data.get("data") or []
+            if not images or not images[0].get("b64_json"):
+                raise RuntimeError("OPENROUTER_IMAGE_RESPONSE_INVALID")
+            break
+        last_error = f"OPENROUTER_IMAGE_HTTP_{response.status_code}"
+        # 402/429 代表額度或限流，不用第二組 Key 繞過平台限制。
+        if response.status_code not in (401, 403, 404) or index == len(tokens) - 1:
+            raise RuntimeError(last_error)
+    else:
+        raise RuntimeError(last_error or "OPENROUTER_IMAGE_REQUEST_FAILED")
+
     encoded = images[0]["b64_json"]
     if encoded.startswith("data:") and "," in encoded:
         encoded = encoded.split(",", 1)[1]
@@ -608,10 +626,64 @@ def generate_openrouter_image_bytes(prompt):
     return _finalize_generated_image(image_bytes, images[0].get("media_type", "image/png"))
 
 
+def generate_openai_image_bytes(prompt):
+    """使用 OpenAI Images API；第二組 Key 僅作認證失敗備援，模型通常需付費。"""
+    tokens = []
+    for env_name in ("OPENAI_API_KEY", "OPENAI_API_KEY_2"):
+        token = os.getenv(env_name, "").strip()
+        if token and token not in tokens:
+            tokens.append(token)
+    if not tokens:
+        raise RuntimeError("OPENAI_API_KEY_NOT_CONFIGURED")
+
+    strengthened_prompt = _strengthen_image_prompt(prompt)
+    last_error = None
+    for index, token in enumerate(tokens):
+        response = requests.post(
+            f"{OPENAI_IMAGE_BASE}/images/generations",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": OPENAI_IMAGE_MODEL,
+                "prompt": strengthened_prompt[:HF_IMAGE_PROMPT_MAX_CHARS],
+                "n": 1,
+                "size": "1024x1024",
+                "output_format": "png",
+            },
+            timeout=(10, 180),
+        )
+        if response.ok:
+            data = response.json()
+            images = data.get("data") or []
+            if not images or not images[0].get("b64_json"):
+                raise RuntimeError("OPENAI_IMAGE_RESPONSE_INVALID")
+            encoded = images[0]["b64_json"]
+            try:
+                image_bytes = base64.b64decode(encoded, validate=True)
+            except (ValueError, TypeError) as exc:
+                raise RuntimeError("OPENAI_IMAGE_BASE64_INVALID") from exc
+            return _finalize_generated_image(image_bytes, "image/png")
+        last_error = f"OPENAI_IMAGE_HTTP_{response.status_code}"
+        if response.status_code not in (401, 403) or index == len(tokens) - 1:
+            raise RuntimeError(last_error)
+    raise RuntimeError(last_error or "OPENAI_IMAGE_REQUEST_FAILED")
+
+
 def generate_hf_image_bytes(prompt):
     """依 IMAGE_PROVIDER 路由圖片；預設 OpenRouter，HF 保留為手動備援。"""
     if IMAGE_PROVIDER == "openrouter":
-        return generate_openrouter_image_bytes(prompt)
+        try:
+            return generate_openrouter_image_bytes(prompt)
+        except RuntimeError:
+            if OPENAI_IMAGE_FALLBACK and (
+                os.getenv("OPENAI_API_KEY", "").strip()
+                or os.getenv("OPENAI_API_KEY_2", "").strip()
+            ):
+                logger.warning("OpenRouter 圖片失敗，啟用 OpenAI 圖片備援；可能產生 OpenAI API 費用")
+                return generate_openai_image_bytes(prompt)
+            raise
     if IMAGE_PROVIDER not in {"huggingface", "hf"}:
         raise RuntimeError("IMAGE_PROVIDER_UNSUPPORTED")
 
