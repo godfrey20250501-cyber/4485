@@ -187,11 +187,12 @@ async def _generate_personalized_image(guild_id, user_id, user_prompt):
         response = getattr(exc, "response", None)
         status_code = getattr(response, "status_code", None)
         logger.error(
-            "圖片生成失敗：route=%s model=%s status=%s exception=%s",
+            "圖片生成失敗：route=%s model=%s status=%s exception=%s detail=%s",
             IMAGE_PROVIDER,
             OPENROUTER_IMAGE_MODEL if IMAGE_PROVIDER == "openrouter" else HF_IMAGE_MODEL,
             status_code,
             type(exc).__name__,
+            str(exc)[:160].replace("\n", " "),
         )
         return {"status": "provider_error", "http_status": status_code}
 
@@ -675,11 +676,12 @@ async def generate_image(interaction: discord.Interaction, 提示詞: str):
         response = getattr(exc, "response", None)
         status_code = getattr(response, "status_code", None)
         logger.error(
-            "圖片生成失敗：route=%s model=%s status=%s exception=%s",
+            "圖片生成失敗：route=%s model=%s status=%s exception=%s detail=%s",
             IMAGE_PROVIDER,
             OPENROUTER_IMAGE_MODEL if IMAGE_PROVIDER == "openrouter" else HF_IMAGE_MODEL,
             status_code,
             type(exc).__name__,
+            str(exc)[:160].replace("\n", " "),
         )
         if status_code in (401, 403):
             message = "圖片供應商權限不足；請管理員確認目前路由的 API Key 與模型存取條件喵。"
