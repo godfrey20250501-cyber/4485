@@ -6,3 +6,4 @@ audioop-lts==0.2.2; python_version >= "3.13"
 pymongo[srv]>=4.9,<5
 huggingface-hub==2.1.1
 Pillow>=10,<13
+mutagen>=1.47,<2
