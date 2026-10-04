@@ -90,6 +90,9 @@ HF_IMAGE_PROMPT_MAX_CHARS = 1000
 HF_IMAGE_ESTIMATED_COST_USD = 0.003
 HF_IMAGE_MONTHLY_HARD_LIMIT = 40
 HF_IMAGE_DAILY_HARD_LIMIT = 4
+AUDIO_USER_DAILY_SECONDS = 5 * 60
+AUDIO_GLOBAL_DAILY_SECONDS = 30 * 60
+AUDIO_MAX_FILE_BYTES = 25 * 1024 * 1024
 try:
     # 可在 Render 下調，不能高於保守硬上限；設 0 可停用生圖。
     HF_IMAGE_MONTHLY_LIMIT = max(
@@ -424,6 +427,99 @@ def init_usage_db():
             """CREATE INDEX IF NOT EXISTS idx_channel_recent_messages
                ON channel_recent_messages (guild_id, channel_id, message_id DESC)"""
         )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS audio_user_usage (
+                user_id INTEGER NOT NULL,
+                log_date TEXT NOT NULL,
+                used_seconds INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (user_id, log_date)
+            )"""
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS audio_global_usage (
+                log_date TEXT PRIMARY KEY,
+                used_seconds INTEGER NOT NULL DEFAULT 0
+            )"""
+        )
+
+
+def inspect_audio_duration(audio_bytes, filename):
+    """讀取音訊秒數；無法辨識時拋出 ValueError，不會消耗額度。"""
+    try:
+        from mutagen import File as MutagenFile
+        audio = MutagenFile(BytesIO(audio_bytes))
+        duration = float(getattr(getattr(audio, "info", None), "length", 0) or 0)
+    except Exception as exc:
+        raise ValueError("AUDIO_DURATION_UNREADABLE") from exc
+    if duration <= 0:
+        raise ValueError("AUDIO_DURATION_UNREADABLE")
+    return duration
+
+
+def reserve_audio_seconds(user_id, seconds):
+    """原子預留使用者／全服每日語音秒數。"""
+    seconds = max(1, int(seconds))
+    log_date = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+    with _db() as conn:
+        user_row = conn.execute(
+            "SELECT used_seconds FROM audio_user_usage WHERE user_id=? AND log_date=?",
+            (int(user_id), log_date),
+        ).fetchone()
+        global_row = conn.execute(
+            "SELECT used_seconds FROM audio_global_usage WHERE log_date=?",
+            (log_date,),
+        ).fetchone()
+        user_used = int(user_row[0]) if user_row else 0
+        global_used = int(global_row[0]) if global_row else 0
+        if user_used + seconds > AUDIO_USER_DAILY_SECONDS:
+            return False, "user_daily_limit", user_used, global_used
+        if global_used + seconds > AUDIO_GLOBAL_DAILY_SECONDS:
+            return False, "global_daily_limit", user_used, global_used
+        conn.execute(
+            "INSERT INTO audio_user_usage(user_id, log_date, used_seconds) VALUES (?, ?, ?) "
+            "ON CONFLICT(user_id, log_date) DO UPDATE SET used_seconds=used_seconds+excluded.used_seconds",
+            (int(user_id), log_date, seconds),
+        )
+        conn.execute(
+            "INSERT INTO audio_global_usage(log_date, used_seconds) VALUES (?, ?) "
+            "ON CONFLICT(log_date) DO UPDATE SET used_seconds=used_seconds+excluded.used_seconds",
+            (log_date, seconds),
+        )
+    return True, "reserved", user_used + seconds, global_used + seconds
+
+
+def refund_audio_seconds(user_id, seconds):
+    """語音轉錄失敗時回補剛才預留的秒數。"""
+    seconds = max(1, int(seconds))
+    log_date = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+    with _db() as conn:
+        conn.execute(
+            "UPDATE audio_user_usage SET used_seconds=MAX(0, used_seconds-?) WHERE user_id=? AND log_date=?",
+            (seconds, int(user_id), log_date),
+        )
+        conn.execute(
+            "UPDATE audio_global_usage SET used_seconds=MAX(0, used_seconds-?) WHERE log_date=?",
+            (seconds, log_date),
+        )
+
+
+def transcribe_audio_bytes(audio_bytes, filename, language="zh"):
+    """使用 Groq Whisper 相容端點轉錄上傳音訊。"""
+    api_key = os.getenv("GROQ_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("GROQ_API_KEY_MISSING")
+    response = requests.post(
+        "https://api.groq.com/openai/v1/audio/transcriptions",
+        headers={"Authorization": f"Bearer {api_key}"},
+        files={"file": (filename, audio_bytes)},
+        data={"model": os.getenv("GROQ_AUDIO_MODEL", "whisper-large-v3-turbo"), "language": language},
+        timeout=120,
+    )
+    response.raise_for_status()
+    text = str(response.json().get("text", "")).strip()
+    if not text:
+        raise RuntimeError("AUDIO_TRANSCRIPT_EMPTY")
+    return text
 
 
 def _get_mongo_history_collection():
