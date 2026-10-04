@@ -52,7 +52,7 @@ MEMORY_HISTORY_MESSAGES = 12
 MEMORY_MESSAGE_MAX_CHARS = 1200
 REFERENCE_CONTEXT_MAX_CHARS = 6000
 CHANNEL_HISTORY_LIMIT = 100
-IMAGE_PROVIDER = os.getenv("IMAGE_PROVIDER", "openrouter").strip().lower()
+IMAGE_PROVIDER = os.getenv("IMAGE_PROVIDER", "openai").strip().lower()
 OPENROUTER_IMAGE_BASE = os.getenv("OPENROUTER_IMAGE_BASE", "https://openrouter.ai/api/v1").strip().rstrip("/")
 _OPENROUTER_DEFAULT_IMAGE_MODEL = "inclusionai/ming-image-0.1-design"
 _OPENROUTER_CONFIGURED_IMAGE_MODEL = os.getenv("OPENROUTER_IMAGE_MODEL", "").strip()
@@ -630,6 +630,29 @@ def reserve_hf_image_generation():
         return False, "storage_unavailable", 0, 0
 
 
+def refund_hf_image_generation():
+    """供應商未成功產圖時，回補先前預留的一張全服圖片額度。"""
+    month_key = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m")
+    day_key = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+    collection = _get_mongo_image_usage_collection()
+    if collection is None:
+        return False
+    daily_field = f"days.{day_key}"
+    try:
+        collection.update_one(
+            {
+                "_id": month_key,
+                "used": {"$gt": 0},
+                daily_field: {"$gt": 0},
+            },
+            {"$inc": {"used": -1, daily_field: -1}},
+        )
+        return True
+    except Exception as exc:
+        logger.error("圖片額度回補失敗：exception=%s", type(exc).__name__)
+        return False
+
+
 def get_hf_image_quota_status():
     """讀取目前月份的全伺服器生圖用量，不會預留或消耗額度。"""
     month_key = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m")
@@ -699,6 +722,11 @@ def _finalize_generated_image(image_bytes, media_type="image/png"):
 
 
 def image_provider_key_configured():
+    if IMAGE_PROVIDER == "openai":
+        return bool(
+            os.getenv("OPENAI_API_KEY", "").strip()
+            or os.getenv("OPENAI_API_KEY_2", "").strip()
+        )
     if IMAGE_PROVIDER == "openrouter":
         return bool(os.getenv("OPENROUTER_API_KEY", "").strip())
     return bool(os.getenv("HF_TOKEN", "").strip())
@@ -801,7 +829,9 @@ def generate_openai_image_bytes(prompt):
 
 
 def generate_hf_image_bytes(prompt):
-    """依 IMAGE_PROVIDER 路由圖片；預設 OpenRouter，HF 保留為手動備援。"""
+    """依 IMAGE_PROVIDER 路由圖片；預設 OpenAI，OpenRouter/HF 保留為可切換路由。"""
+    if IMAGE_PROVIDER == "openai":
+        return generate_openai_image_bytes(prompt)
     if IMAGE_PROVIDER == "openrouter":
         try:
             return generate_openrouter_image_bytes(prompt)
