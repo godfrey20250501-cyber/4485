@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 from core import (
     CHANNEL_HISTORY_LIMIT,
     GLOBAL_DAILY_LIMIT,
+    IMAGE_PROVIDER,
     HF_IMAGE_DAILY_HARD_LIMIT,
     HF_IMAGE_ESTIMATED_COST_USD,
     HF_IMAGE_HEIGHT,
@@ -23,6 +24,7 @@ from core import (
     HF_IMAGE_PROVIDER,
     HF_IMAGE_PROMPT_MAX_CHARS,
     HF_IMAGE_WIDTH,
+    OPENROUTER_IMAGE_MODEL,
     OFFICIAL_GUILD_ID,
     ask_hybrid_ai,
     check_and_update_dual_usage,
@@ -41,6 +43,7 @@ from core import (
     get_quota_status,
     get_user_affection_score,
     generate_hf_image_bytes,
+    image_provider_key_configured,
     get_hf_image_quota_status,
     init_usage_db,
     is_safety_valve_triggered,
@@ -154,7 +157,7 @@ def _build_personalized_image_prompt(user_prompt, prior_user_messages):
 
 async def _generate_personalized_image(guild_id, user_id, user_prompt):
     """共用 slash/@生圖流程；個人記憶和圖片額度均獨立且有安全上限。"""
-    if not os.getenv("HF_TOKEN", "").strip():
+    if not image_provider_key_configured():
         return {"status": "token_missing"}
 
     prior_messages = await asyncio.to_thread(load_personal_image_context, guild_id, user_id, 4)
@@ -203,7 +206,7 @@ async def _generate_personalized_image(guild_id, user_id, user_prompt):
 def _image_generation_status_message(result):
     status = result.get("status")
     if status == "token_missing":
-        return "管理員尚未設定 Hugging Face 的 HF_TOKEN，生圖功能目前未啟用喵。"
+        return "管理員尚未設定目前圖片路由所需的 API Key，生圖功能目前未啟用喵。"
     if status == "need_prompt":
         return "請加上圖片描述，或先與本喵對話讓個人記憶有可參考的內容喵。"
     if status == "monthly_limit":
@@ -215,9 +218,9 @@ def _image_generation_status_message(result):
     if status == "storage_unavailable":
         return "免費生圖額度資料庫目前無法確認；為避免超出免費上限，本次不會呼叫模型喵。"
     if status == "provider_error" and result.get("http_status") in (401, 403):
-        return "Hugging Face 權限不足；請管理員確認 HF_TOKEN 權限及 FLUX.1-schnell 模型存取條件喵。"
+        return "圖片供應商權限不足；請管理員確認目前路由的 API Key 與模型存取條件喵。"
     if status == "provider_error" and result.get("http_status") in (402, 429):
-        return "Hugging Face 免費 credit 不足或服務限流；本喵不會重試或切換供應商喵。"
+        return "圖片供應商額度不足或服務限流；本喵不會重試或切換供應商喵。"
     return "圖片生成失敗；為避免重複消耗額度，本次不會自動重試。請管理員查看 Render log 喵。"
 
 
@@ -491,7 +494,7 @@ class HelpSelect(Select):
                 "個人/群組對話記憶只保存 @本喵或回覆本喵的互動。另有最近對話緩衝：每個文字頻道最近 100 則真人訊息會自動保存，超過時淘汰最舊訊息；不會自動送給 AI。\n\n"
                 "用 `/清除記憶` 刪除自己的記憶；管理員也可清除目前頻道共享記憶。群組記憶啟用時，該頻道內大家的互動會成為共同上下文。\n\n"
                 "傳送 PNG、JPEG 或 WebP 圖片並 @本喵或回覆本喵即可分析；每次最多 2 張、每張 4 MiB。"
-                "附圖分析只走既有的免費文字/視覺路由；不可用時不會回退付費模型。生圖是另一項功能，使用 `/生成圖片`，並消耗有限的 Hugging Face 免費 credit。"
+                "附圖分析只走既有的免費文字/視覺路由；不可用時不會回退付費模型。生圖是另一項功能，使用 `/生成圖片`，目前走 OpenRouter 圖片 API。"
             )
         elif selected == "history":
             embed.title = "🔎 最近訊息保存與按需查閱"
@@ -506,10 +509,10 @@ class HelpSelect(Select):
                 f"使用 `/生成圖片 提示詞` 生成一張 {HF_IMAGE_WIDTH}×{HF_IMAGE_HEIGHT} 圖片；"
                 "也可以使用 `/個人化生成圖片`，或 `@本喵 生圖：描述`。"
                 f"全伺服器每月總共最多 {HF_IMAGE_MONTHLY_LIMIT} 張（不是每位使用者各 {HF_IMAGE_MONTHLY_LIMIT} 張），每日最多 {HF_IMAGE_DAILY_HARD_LIMIT} 張；"
-                f"按目前 fal.ai 價格估算，每張約 US${HF_IMAGE_ESTIMATED_COST_USD:.3f}，月度 Bot 上限約 US${HF_IMAGE_MONTHLY_LIMIT * HF_IMAGE_ESTIMATED_COST_USD:.2f}。\n\n"
-                "只經 Hugging Face routed `fal-ai` provider 呼叫 FLUX.1-schnell，不自動換供應商或重試；額度預留保存在 MongoDB，資料庫不可用時會停止生圖。"
-                "Hugging Face 免費帳戶目前提供每月 US$0.10 credits（官方可能調整）；需在 Hugging Face 帳戶接受模型條款並使用具 Inference Providers 權限的 `HF_TOKEN`。"
-                "重要：HF 會先用免費 credit，若免費額度耗盡而帳戶有已購買 credits，HF 可能扣用該餘額；API 無法由程式強制只扣免費額度。請用沒有已購買 credits、也不供其他程式共用的專用帳戶。免費額度耗盡且無付費餘額時請等下月重置。機器人不保存提示詞或圖片。使用 `/生圖額度` 可查詢 Bot 本月與今日用量。"
+                f"目前圖片路由：`{IMAGE_PROVIDER}`，模型：`{OPENROUTER_IMAGE_MODEL if IMAGE_PROVIDER == 'openrouter' else HF_IMAGE_MODEL}`。\n\n"
+                "目前預設使用 OpenRouter 的 `inclusionai/ming-image-0.1-design`，模型端點目前標示輸出價格為 US$0，但免費狀態、供應商限流與政策可能調整；每次請以 API 回傳的 usage.cost 為準。"
+                "額度預留保存在 MongoDB，資料庫不可用時會停止生圖；不自動切換供應商或重試。Hugging Face 仍可透過 Render 設定 `IMAGE_PROVIDER=huggingface` 作為手動備援。"
+                "機器人不保存提示詞或圖片。使用 `/生圖額度` 可查詢 Bot 本月與今日用量。"
             )
         elif selected == "codeai":
             embed.title = "💻 Manus 代碼 AI"
@@ -614,7 +617,7 @@ async def clear_memory(interaction: discord.Interaction, 範圍: app_commands.Ch
 
 @bot.tree.command(
     name="生成圖片",
-    description="用有限 Hugging Face 免費額度生成一張圖片",
+    description="用有限圖片額度生成一張圖片",
     guild=GUILD_OBJECT,
 )
 @app_commands.describe(提示詞="描述你想生成的圖片，最多 500 字")
@@ -626,9 +629,9 @@ async def generate_image(interaction: discord.Interaction, 提示詞: str):
     if len(prompt) > 500:
         await interaction.response.send_message("圖片描述最多 500 字喵。", ephemeral=True)
         return
-    if not os.getenv("HF_TOKEN", "").strip():
+    if not image_provider_key_configured():
         await interaction.response.send_message(
-            "管理員尚未設定 Hugging Face 的 HF_TOKEN，生圖功能目前未啟用喵。",
+            "管理員尚未設定目前圖片路由所需的 API Key，生圖功能目前未啟用喵。",
             ephemeral=True,
         )
         return
@@ -660,9 +663,9 @@ async def generate_image(interaction: discord.Interaction, 提示詞: str):
             attachments=[upload],
         )
         logger.info(
-            "HF 生圖成功：provider=%s model=%s month_used=%s/%s",
-            HF_IMAGE_PROVIDER,
-            HF_IMAGE_MODEL,
+            "圖片生成成功：route=%s model=%s month_used=%s/%s",
+            IMAGE_PROVIDER,
+            OPENROUTER_IMAGE_MODEL if IMAGE_PROVIDER == "openrouter" else HF_IMAGE_MODEL,
             used_month,
             HF_IMAGE_MONTHLY_LIMIT,
         )
@@ -670,16 +673,16 @@ async def generate_image(interaction: discord.Interaction, 提示詞: str):
         response = getattr(exc, "response", None)
         status_code = getattr(response, "status_code", None)
         logger.error(
-            "HF 生圖失敗：provider=%s model=%s status=%s exception=%s",
-            HF_IMAGE_PROVIDER,
-            HF_IMAGE_MODEL,
+            "圖片生成失敗：route=%s model=%s status=%s exception=%s",
+            IMAGE_PROVIDER,
+            OPENROUTER_IMAGE_MODEL if IMAGE_PROVIDER == "openrouter" else HF_IMAGE_MODEL,
             status_code,
             type(exc).__name__,
         )
         if status_code in (401, 403):
-            message = "Hugging Face 權限不足；請管理員確認 HF_TOKEN 權限，並接受 FLUX.1-schnell 模型條款喵。"
+            message = "圖片供應商權限不足；請管理員確認目前路由的 API Key 與模型存取條件喵。"
         elif status_code in (402, 429):
-            message = "Hugging Face 免費 credit 不足或服務限流；本喵不會重試或切換供應商，請稍後再查額度喵。"
+            message = "圖片供應商額度不足或服務限流；本喵不會重試或切換供應商，請稍後再查額度喵。"
         else:
             message = "圖片生成失敗；為避免重複消耗免費額度，本次不會自動重試。請管理員查看 Render log 喵。"
         await interaction.edit_original_response(content=message)
@@ -736,7 +739,7 @@ async def image_quota(interaction: discord.Interaction):
             "🎨 **全伺服器生圖額度**\n"
             f"本月：`{used_month} / {quota['monthly_limit']}` 張（全伺服器合計）\n"
             f"今日：`{used_today} / {quota['daily_limit']}` 張\n"
-            "每月額度於 UTC 月份切換時重新計算；Hugging Face 帳戶 credit 另行計算。"
+            "每月額度於 UTC 月份切換時重新計算；圖片供應商的帳戶額度另行計算。"
         )
     )
 
@@ -748,21 +751,19 @@ async def image_quota(interaction: discord.Interaction):
 )
 @app_commands.describe(需求="請描述要寫的程式、使用語言、功能與輸入輸出需求，最多 4000 字")
 async def code_ai(interaction: discord.Interaction, 需求: str):
+    # Discord 互動必須在約 3 秒內先確認；Manus API 可能需要較久，故必須最先 defer。
+    await interaction.response.defer(thinking=True)
     prompt = (需求 or "").strip()
     if not prompt:
-        await interaction.response.send_message("請輸入要撰寫的程式需求喵。", ephemeral=True)
+        await interaction.edit_original_response(content="請輸入要撰寫的程式需求喵。")
         return
     if len(prompt) > 4000:
-        await interaction.response.send_message("程式需求最多 4000 字喵。", ephemeral=True)
+        await interaction.edit_original_response(content="程式需求最多 4000 字喵。")
         return
     if not os.getenv("MANUS_API_KEY", "").strip():
-        await interaction.response.send_message(
-            "管理員尚未設定 MANUS_API_KEY，代碼 AI 目前未啟用喵。",
-            ephemeral=True,
-        )
+        await interaction.edit_original_response(content="管理員尚未設定 MANUS_API_KEY，代碼 AI 目前未啟用喵。")
         return
 
-    await interaction.response.defer(thinking=True)
     try:
         history = await asyncio.to_thread(
             load_conversation_memory,
@@ -1081,10 +1082,11 @@ async def on_ready():
         bool(os.getenv("MANUS_API_KEY", "").strip()),
     )
     logger.info(
-        "有限額度生圖：HF_TOKEN=%s provider=%s model=%s resolution=%sx%s monthly=%s/%s daily=%s；額度儲存需要 MongoDB",
+        "有限額度生圖：route=%s openrouter_key=%s hf_key=%s model=%s resolution=%sx%s monthly=%s/%s daily=%s；額度儲存需要 MongoDB",
+        IMAGE_PROVIDER,
+        bool(os.getenv("OPENROUTER_API_KEY", "").strip()),
         bool(os.getenv("HF_TOKEN", "").strip()),
-        HF_IMAGE_PROVIDER,
-        HF_IMAGE_MODEL,
+        OPENROUTER_IMAGE_MODEL if IMAGE_PROVIDER == "openrouter" else HF_IMAGE_MODEL,
         HF_IMAGE_WIDTH,
         HF_IMAGE_HEIGHT,
         HF_IMAGE_MONTHLY_LIMIT,
