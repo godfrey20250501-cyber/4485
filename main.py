@@ -131,15 +131,10 @@ _COMMAND_SYNC_LOCK = asyncio.Lock()
 
 
 async def _force_refresh_guild_commands():
-    """短暫清除官方伺服器遠端指令，再把目前程式指令重新同步。"""
+    """安全同步目前程式指令，不先清空遠端伺服器指令。"""
     async with _COMMAND_SYNC_LOCK:
-        current_commands = list(bot.tree.get_commands(guild=GUILD_OBJECT))
-        bot.tree.clear_commands(guild=GUILD_OBJECT)
-        await bot.tree.sync(guild=GUILD_OBJECT)
-        for command in current_commands:
-            bot.tree.add_command(command, guild=GUILD_OBJECT, override=True)
         synced = await bot.tree.sync(guild=GUILD_OBJECT)
-        # 順便清掉同一 App 遺留的全域指令，避免 Discord 顯示重複或舊版本。
+        # 只清掉同一 App 的全域舊指令；不碰官方伺服器目前已同步的指令。
         bot.tree.clear_commands(guild=None)
         await bot.tree.sync()
         return [command.name for command in synced]
@@ -483,7 +478,7 @@ class AdminPanelView(View):
             _remember_admin_log("COMMANDS_REFRESHED", f"count={len(synced_names)} by={interaction.user.id}")
             await interaction.edit_original_response(
                 content=(
-                    f"已清除官方伺服器的舊斜線指令並重新同步，共 {len(synced_names)} 個指令。\n"
+                    f"已安全重新同步官方伺服器斜線指令，共 {len(synced_names)} 個指令；未先清空遠端指令。\n"
                     "如果 Discord 選單仍未更新，請關閉並重新開啟 Discord，或重新進入伺服器；這是 Discord 客戶端快取，不是 Bot 額度問題。"
                 ),
                 view=self,
