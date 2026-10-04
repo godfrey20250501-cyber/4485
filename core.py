@@ -880,6 +880,17 @@ def get_quota_status(user_id):
     return global_remaining, user_remaining, global_used, user_used
 
 
+def reset_user_chat_quota(user_id):
+    """重置指定使用者今天的聊天額度；全服額度與圖片全服額度不受影響。"""
+    today = _today()
+    with _db() as conn:
+        deleted = conn.execute(
+            "DELETE FROM user_usage WHERE user_id=? AND log_date=?",
+            (int(user_id), today),
+        ).rowcount
+    return int(deleted or 0)
+
+
 def check_and_update_dual_usage(user_id):
     """在一個 SQLite 寫入交易內檢查並扣次，避免多個訊息同時超額。"""
     today = _today()
