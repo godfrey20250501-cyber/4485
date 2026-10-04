@@ -68,7 +68,7 @@ else:
             _OPENROUTER_DEFAULT_IMAGE_MODEL,
         )
 OPENAI_IMAGE_BASE = os.getenv("OPENAI_IMAGE_BASE", "https://api.openai.com/v1").strip().rstrip("/")
-OPENAI_IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-1").strip()
+OPENAI_IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-2.5-flare").strip()
 OPENAI_IMAGE_FALLBACK = os.getenv("OPENAI_IMAGE_FALLBACK", "false").strip().lower() in {
     "1", "true", "yes", "on",
 }
