@@ -97,7 +97,7 @@ UPDATE_LOG_TEXT = (
     "• `/管理員`：設定監控身分組、監控頻道、豁免身分組與監控開關。\n"
     "• 身分組監控：只記錄／通知，不自動 Ban；通知附上該使用者最近 10 則已保存對話。\n"
     "• 對話額度：可由 Admin 重置指定使用者今日聊天計數。\n"
-    "• 語音辨識：`/語音辨識` 上傳音訊轉文字；每人每日 5 分鐘、全服每日 30 分鐘、單檔 25 MB。\n"
+    "• 語音辨識：在 `@AI`／回覆 AI 的訊息附上音訊；可與圖片同時送入 AI，每人每日 5 分鐘、全服每日 30 分鐘、單檔 25 MB。\n"
     "• 圖片額度：維持全伺服器共用的每日／每月保護。"
 )
 MAX_IMAGES_PER_MESSAGE = 2
@@ -731,6 +731,42 @@ async def _prepare_image_payloads(attachments):
     return image_payloads
 
 
+def _is_audio_attachment(attachment):
+    mime_type = (
+        attachment.content_type
+        or mimetypes.guess_type(attachment.filename)[0]
+        or ""
+    ).split(";")[0].lower()
+    extension = os.path.splitext(str(attachment.filename).lower())[1]
+    return mime_type.startswith("audio/") or extension in {".mp3", ".wav", ".m4a", ".mp4", ".ogg", ".opus", ".webm", ".flac"}
+
+
+async def _transcribe_audio_attachment(attachment, user_id):
+    if int(getattr(attachment, "size", 0) or 0) > AUDIO_MAX_FILE_BYTES:
+        raise ValueError("語音檔不能超過 25 MB 喵。")
+    raw = await attachment.read()
+    if len(raw) > AUDIO_MAX_FILE_BYTES:
+        raise ValueError("語音檔不能超過 25 MB 喵。")
+    try:
+        duration = await asyncio.to_thread(inspect_audio_duration, raw, attachment.filename)
+    except ValueError:
+        raise ValueError("無法讀取語音長度；請改用 mp3、wav、m4a 或 ogg 格式喵。")
+    reserved_seconds = max(1, math.ceil(duration))
+    reserved, status, user_used, global_used = await asyncio.to_thread(
+        reserve_audio_seconds, user_id, reserved_seconds
+    )
+    if not reserved:
+        if status == "user_daily_limit":
+            raise ValueError(f"你今天的語音額度已用完（每人每日 5 分鐘，目前約 {user_used // 60} 分鐘）喵。")
+        raise ValueError(f"全伺服器今日語音額度已用完（每日 30 分鐘，目前約 {global_used // 60} 分鐘）喵。")
+    try:
+        transcript = await asyncio.to_thread(transcribe_audio_bytes, raw, attachment.filename)
+        return transcript, reserved_seconds
+    except Exception:
+        await asyncio.to_thread(refund_audio_seconds, user_id, reserved_seconds)
+        raise
+
+
 def _history_record_from_message(guild_id, channel, item):
     author = getattr(item.author, "display_name", getattr(item.author, "name", "使用者"))
     body = (getattr(item, "clean_content", "") or getattr(item, "content", "") or "").strip()
@@ -876,7 +912,7 @@ class HelpSelect(Select):
             discord.SelectOption(label="雙重限額與安全閥", description="查看個人、全服額度與自動安全閥", emoji="📊", value="quota"),
             discord.SelectOption(label="對話記憶與圖片", description="設定個人/群組記憶並傳圖提問", emoji="🧠", value="memory"),
             discord.SelectOption(label="查閱頻道訊息", description="明確指定頻道、成員或訊息連結查閱近期對話", emoji="🔎", value="history"),
-            discord.SelectOption(label="語音辨識", description="上傳語音檔轉成文字與每日額度", emoji="🎙️", value="voice"),
+            discord.SelectOption(label="圖片與語音 AI", description="@AI 同時看圖片與聽語音", emoji="🎙️", value="voice"),
             discord.SelectOption(label="生成圖片", description="使用每月有限的免費額度生成圖片", emoji="🎨", value="genimage"),
             discord.SelectOption(label="代碼 AI", description="使用 Manus AI 產生完整程式碼與套件清單", emoji="💻", value="codeai"),
             discord.SelectOption(label="管理員功能與診斷", description="/admin Code、/log 與自動 Ban 安全狀態", emoji="🛠️", value="admin"),
@@ -921,9 +957,9 @@ class HelpSelect(Select):
                 "你與 bot 都必須有該頻道的「檢視頻道」及「讀取訊息歷史」權限。保存的原文只在你明確要求查閱時傳給 AI 服務商，不會每則訊息都送給 AI。"
             )
         elif selected == "voice":
-            embed.title = "🎙️ 上傳語音辨識"
+            embed.title = "🎙️ 圖片與語音 AI"
             embed.description = (
-                "使用 `/語音辨識` 並上傳 mp3、wav、m4a、ogg、opus、webm、flac 或 mp4 語音檔，Bot 會使用 Groq Whisper 轉成文字。\n\n"
+                "在同一則訊息中 `@AI`（或回覆 AI）並附上圖片與語音檔，Bot 會先用 Groq Whisper 轉錄語音，再把圖片與語音文字一起交給 AI。\n\n"
                 "• 每位使用者每日最多 5 分鐘。\n"
                 "• 全伺服器每日最多 30 分鐘。\n"
                 "• 單檔最多 25 MB。\n"
@@ -1194,74 +1230,6 @@ async def clear_memory(interaction: discord.Interaction, 範圍: app_commands.Ch
         )
         reply = f"已清除本頻道共享記憶（刪除 {deleted} 則內容）喵。若群組記憶仍開啟，之後的對話會重新儲存。"
     await interaction.edit_original_response(content=reply)
-
-
-@bot.tree.command(
-    name="語音辨識",
-    description="上傳語音檔轉成文字（每人每日 5 分鐘、全服每日 30 分鐘）",
-    guild=GUILD_OBJECT,
-)
-@app_commands.describe(語音檔="上傳 mp3、wav、m4a、ogg、webm 或 mp4 語音檔")
-async def transcribe_voice(interaction: discord.Interaction, 語音檔: discord.Attachment):
-    if interaction.guild_id is None:
-        await interaction.response.send_message("請在伺服器中使用此指令喵。", ephemeral=True)
-        return
-    filename = str(語音檔.filename or "audio").strip()
-    allowed_extensions = {".mp3", ".wav", ".m4a", ".mp4", ".ogg", ".opus", ".webm", ".flac"}
-    extension = os.path.splitext(filename.lower())[1]
-    if extension not in allowed_extensions:
-        await interaction.response.send_message(
-            "不支援這個檔案格式；請上傳 mp3、wav、m4a、ogg、opus、webm、flac 或 mp4。",
-            ephemeral=True,
-        )
-        return
-    if int(getattr(語音檔, "size", 0) or 0) > AUDIO_MAX_FILE_BYTES:
-        await interaction.response.send_message("語音檔不能超過 25 MB。", ephemeral=True)
-        return
-
-    await interaction.response.defer(thinking=True)
-    try:
-        audio_bytes = await 語音檔.read()
-        if len(audio_bytes) > AUDIO_MAX_FILE_BYTES:
-            await interaction.edit_original_response(content="語音檔不能超過 25 MB。")
-            return
-        duration = await asyncio.to_thread(inspect_audio_duration, audio_bytes, filename)
-        reserved_seconds = max(1, math.ceil(duration))
-    except ValueError:
-        await interaction.edit_original_response(content="無法讀取語音長度；請改用常見的 mp3、wav、m4a 或 ogg 格式。")
-        return
-    except Exception as exc:
-        _remember_admin_log("AUDIO_READ_ERROR", f"type={type(exc).__name__}")
-        logger.exception("語音檔讀取失敗：type=%s", type(exc).__name__)
-        await interaction.edit_original_response(content="語音檔讀取失敗，請稍後再試。")
-        return
-
-    reserved, status, user_used, global_used = await asyncio.to_thread(
-        reserve_audio_seconds, interaction.user.id, reserved_seconds
-    )
-    if not reserved:
-        if status == "user_daily_limit":
-            message = f"你今天的語音額度已不足；每位使用者每日最多 5 分鐘，目前已使用約 {user_used // 60} 分鐘。"
-        else:
-            message = f"本伺服器今天的語音額度已不足；全服每日最多 30 分鐘，目前已使用約 {global_used // 60} 分鐘。"
-        await interaction.edit_original_response(content=message)
-        return
-
-    try:
-        transcript = await asyncio.to_thread(transcribe_audio_bytes, audio_bytes, filename)
-        await interaction.edit_original_response(
-            content=(
-                f"語音辨識完成（約 {reserved_seconds // 60} 分 {reserved_seconds % 60} 秒）。\n"
-                f"本次使用後：你今日約 {user_used // 60} 分鐘、全服約 {global_used // 60} 分鐘。\n\n"
-                f"**辨識文字**\n{transcript[:3500]}"
-            )
-        )
-        logger.info("語音辨識成功：user=%s seconds=%s model=%s", interaction.user.id, reserved_seconds, os.getenv("GROQ_AUDIO_MODEL", "whisper-large-v3-turbo"))
-    except Exception as exc:
-        await asyncio.to_thread(refund_audio_seconds, interaction.user.id, reserved_seconds)
-        _remember_admin_log("AUDIO_TRANSCRIBE_ERROR", f"type={type(exc).__name__}")
-        logger.exception("語音辨識失敗：type=%s，已回補秒數=%s", type(exc).__name__, reserved_seconds)
-        await interaction.edit_original_response(content="語音辨識失敗，已回補本次預留的語音額度；請稍後再試。")
 
 
 @bot.tree.command(
@@ -1584,7 +1552,12 @@ async def on_message(message: discord.Message):
             ((attachment.content_type or mimetypes.guess_type(attachment.filename)[0] or "").startswith("image/"))
             for attachment in message.attachments
         )
-        if is_mentioned and not clean_content and not is_reply and not has_image_attachment:
+        audio_attachments = [attachment for attachment in message.attachments if _is_audio_attachment(attachment)]
+        if len(audio_attachments) > 1:
+            await message.reply("一則訊息目前最多附上一個語音檔喵；圖片可以同時附上。", mention_author=False)
+            return
+        has_audio_attachment = bool(audio_attachments)
+        if is_mentioned and not clean_content and not is_reply and not has_image_attachment and not has_audio_attachment:
             await message.reply(
                 "👀 找本喵嗎？直接 `@我` 或回覆本喵的訊息來聊天喵！可以使用 `/查看當前額度` 檢查剩餘次數！",
                 mention_author=False,
@@ -1612,7 +1585,30 @@ async def on_message(message: discord.Message):
             await message.reply(str(exc), mention_author=False)
             return
 
+        audio_transcript = ""
+        audio_seconds = 0
+        if audio_attachments:
+            try:
+                audio_transcript, audio_seconds = await _transcribe_audio_attachment(audio_attachments[0], user_id)
+            except ValueError as exc:
+                await message.reply(str(exc), mention_author=False)
+                return
+            except Exception as exc:
+                _remember_admin_log("AUDIO_TRANSCRIBE_ERROR", f"type={type(exc).__name__}")
+                logger.exception("@AI 訊息語音辨識失敗：type=%s", type(exc).__name__)
+                await message.reply("語音辨識失敗，已回補本次語音額度；請稍後再試喵。", mention_author=False)
+                return
+
         user_text = clean_content or ("請描述並分析我附上的圖片。" if image_payloads else message.content)
+        if audio_transcript:
+            user_text = (
+                (user_text + "\n\n" if user_text else "")
+                + "【使用者語音轉錄文字】\n"
+                + audio_transcript[:6000]
+                + "\n【請將以上語音文字視為使用者本次要求】"
+            )
+        if image_payloads and audio_transcript:
+            user_text = "請同時分析附上的圖片，並依照以下語音內容回答：\n" + user_text
         conversation_history = load_conversation_memory(message.guild.id, user_id, message.channel.id)
         async with message.channel.typing():
             ai_reply = await ask_hybrid_ai(
@@ -1626,6 +1622,8 @@ async def on_message(message: discord.Message):
         memory_user_text = user_text
         if image_payloads:
             memory_user_text += " [附圖：" + ", ".join(image["filename"] for image in image_payloads) + "]"
+        if audio_transcript:
+            memory_user_text += f" [附語音轉錄：約 {audio_seconds} 秒] {audio_transcript[:1000]}"
         save_conversation_turn(
             message.guild.id,
             user_id,
