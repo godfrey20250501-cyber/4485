@@ -67,6 +67,7 @@ from core import (
     reset_hf_image_quota,
     reset_user_chat_quota,
     get_openai_image_fallback,
+    get_image_model_label,
     set_openai_image_fallback,
     save_conversation_turn,
     transcribe_audio_bytes,
@@ -210,7 +211,7 @@ def _admin_status_text():
     return (
         "管理員模式已啟用（只對目前程序工作階段有效）。\n"
         f"全伺服器 Admin 面板：`{'開啟' if _ADMIN_PANEL_ENABLED else '關閉'}`\n"
-        f"圖片路由：`{IMAGE_PROVIDER}` / `{OPENAI_IMAGE_MODEL if IMAGE_PROVIDER == 'openai' else OPENROUTER_IMAGE_MODEL if IMAGE_PROVIDER == 'openrouter' else HF_IMAGE_MODEL}`\n"
+        f"圖片路由：`{IMAGE_PROVIDER}` / `{get_image_model_label()}`\n"
         f"OpenAI 備援：`{'開啟' if get_openai_image_fallback() else '關閉'}`\n"
         f"OpenRouter Key 1/2：`{bool(os.getenv('OPENROUTER_API_KEY', '').strip())}` / `{bool(os.getenv('OPENROUTER_API_KEY_2', '').strip())}`\n"
         f"OpenAI Key 1/2：`{bool(os.getenv('OPENAI_API_KEY', '').strip())}` / `{bool(os.getenv('OPENAI_API_KEY_2', '').strip())}`\n"
@@ -615,7 +616,7 @@ async def _generate_personalized_image(guild_id, user_id, user_prompt):
         logger.error(
             "圖片生成失敗：route=%s model=%s status=%s exception=%s detail=%s",
             IMAGE_PROVIDER,
-            OPENAI_IMAGE_MODEL if IMAGE_PROVIDER == "openai" else OPENROUTER_IMAGE_MODEL if IMAGE_PROVIDER == "openrouter" else HF_IMAGE_MODEL,
+            get_image_model_label(),
             status_code,
             type(exc).__name__,
             str(exc)[:160].replace("\n", " "),
@@ -985,7 +986,7 @@ class HelpSelect(Select):
                 f"使用 `/生成圖片 提示詞` 生成一張 {HF_IMAGE_WIDTH}×{HF_IMAGE_HEIGHT} 圖片；"
                 "也可以在 `@本喵 生圖：描述` 的對話中自動參考個人記憶。"
                 f"全伺服器每月總共最多 {HF_IMAGE_MONTHLY_LIMIT} 張（不是每位使用者各 {HF_IMAGE_MONTHLY_LIMIT} 張），每日最多 {HF_IMAGE_DAILY_HARD_LIMIT} 張；"
-                f"目前圖片路由：`{IMAGE_PROVIDER}`，模型：`{OPENAI_IMAGE_MODEL if IMAGE_PROVIDER == 'openai' else OPENROUTER_IMAGE_MODEL if IMAGE_PROVIDER == 'openrouter' else HF_IMAGE_MODEL}`。\n\n"
+                f"目前圖片路由：`{IMAGE_PROVIDER}`，模型：`{get_image_model_label()}`。\n\n"
                 "目前預設使用 OpenRouter 的 `inclusionai/ming-image-0.1-design`，模型端點目前標示輸出價格為 US$0，但免費狀態、供應商限流與政策可能調整；每次請以 API 回傳的 usage.cost 為準。"
                 f"額度預留保存在 MongoDB，資料庫不可用時會停止生圖；目前 OpenAI 路由模型為 `{OPENAI_IMAGE_MODEL}`（可能收費）。若切換回 OpenRouter，才會使用 OpenAI 備援開關；Hugging Face 仍可透過 Render 設定 `IMAGE_PROVIDER=huggingface` 作為手動備援。"
                 "機器人不保存生成圖片。使用 `/生圖額度` 可查詢 Bot 本月與今日用量。"
@@ -1295,7 +1296,7 @@ async def generate_image(interaction: discord.Interaction, 提示詞: str):
         logger.info(
             "圖片生成成功：route=%s model=%s month_used=%s/%s",
             IMAGE_PROVIDER,
-            OPENAI_IMAGE_MODEL if IMAGE_PROVIDER == "openai" else OPENROUTER_IMAGE_MODEL if IMAGE_PROVIDER == "openrouter" else HF_IMAGE_MODEL,
+            get_image_model_label(),
             used_month,
             HF_IMAGE_MONTHLY_LIMIT,
         )
@@ -1310,7 +1311,7 @@ async def generate_image(interaction: discord.Interaction, 提示詞: str):
         logger.error(
             "圖片生成失敗：route=%s model=%s status=%s exception=%s detail=%s",
             IMAGE_PROVIDER,
-            OPENAI_IMAGE_MODEL if IMAGE_PROVIDER == "openai" else OPENROUTER_IMAGE_MODEL if IMAGE_PROVIDER == "openrouter" else HF_IMAGE_MODEL,
+            get_image_model_label(),
             status_code,
             type(exc).__name__,
             str(exc)[:160].replace("\n", " "),
@@ -1778,7 +1779,7 @@ async def on_ready():
         bool(os.getenv("OPENAI_API_KEY", "").strip()),
         bool(os.getenv("OPENAI_API_KEY_2", "").strip()),
         bool(os.getenv("HF_TOKEN", "").strip()),
-        OPENAI_IMAGE_MODEL if IMAGE_PROVIDER == "openai" else OPENROUTER_IMAGE_MODEL if IMAGE_PROVIDER == "openrouter" else HF_IMAGE_MODEL,
+        get_image_model_label(),
         HF_IMAGE_WIDTH,
         HF_IMAGE_HEIGHT,
         HF_IMAGE_MONTHLY_LIMIT,
