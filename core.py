@@ -53,6 +53,9 @@ MEMORY_MESSAGE_MAX_CHARS = 1200
 REFERENCE_CONTEXT_MAX_CHARS = 6000
 CHANNEL_HISTORY_LIMIT = 100
 IMAGE_PROVIDER = os.getenv("IMAGE_PROVIDER", "auto").strip().lower()
+FELO_IMAGE_BASE = os.getenv("FELO_IMAGE_BASE", "https://openapi.felo.ai/api/v1").strip().rstrip("/")
+FELO_IMAGE_MODEL = os.getenv("FELO_IMAGE_MODEL", "gpt-image-2").strip()
+FELO_IMAGE_AGENT_MODEL = os.getenv("FELO_IMAGE_AGENT_MODEL", "gpt-5.5").strip()
 OPENROUTER_IMAGE_BASE = os.getenv("OPENROUTER_IMAGE_BASE", "https://openrouter.ai/api/v1").strip().rstrip("/")
 _OPENROUTER_DEFAULT_IMAGE_MODEL = "inclusionai/ming-image-0.1-design"
 _OPENROUTER_CONFIGURED_IMAGE_MODEL = os.getenv("OPENROUTER_IMAGE_MODEL", "").strip()
@@ -68,7 +71,7 @@ else:
             _OPENROUTER_DEFAULT_IMAGE_MODEL,
         )
 OPENAI_IMAGE_BASE = os.getenv("OPENAI_IMAGE_BASE", "https://api.openai.com/v1").strip().rstrip("/")
-OPENAI_IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-2.5-flare").strip()
+OPENAI_IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-2").strip()
 OPENAI_IMAGE_FALLBACK = os.getenv("OPENAI_IMAGE_FALLBACK", "false").strip().lower() in {
     "1", "true", "yes", "on",
 }
@@ -722,6 +725,8 @@ def _finalize_generated_image(image_bytes, media_type="image/png"):
 
 
 def image_provider_key_configured():
+    if IMAGE_PROVIDER in {"auto", "felo"} and os.getenv("FELO_API_KEY", "").strip():
+        return True
     if IMAGE_PROVIDER in {"auto", "openai"}:
         if IMAGE_PROVIDER == "auto" and (
             os.getenv("OPENROUTER_API_KEY", "").strip()
@@ -740,12 +745,70 @@ def image_provider_key_configured():
 def get_image_model_label():
     """供狀態與日誌顯示目前圖片路由，不暴露任何 API Key。"""
     if IMAGE_PROVIDER == "auto":
-        return f"auto (OpenAI:{OPENAI_IMAGE_MODEL} -> OpenRouter:{OPENROUTER_IMAGE_MODEL})"
+        return (
+            f"auto (Felo:{FELO_IMAGE_MODEL}/{FELO_IMAGE_AGENT_MODEL}"
+            f" -> OpenAI:{OPENAI_IMAGE_MODEL} -> OpenRouter:{OPENROUTER_IMAGE_MODEL})"
+        )
+    if IMAGE_PROVIDER == "felo":
+        return f"{FELO_IMAGE_MODEL}/{FELO_IMAGE_AGENT_MODEL}"
     if IMAGE_PROVIDER == "openai":
         return OPENAI_IMAGE_MODEL
     if IMAGE_PROVIDER == "openrouter":
         return OPENROUTER_IMAGE_MODEL
     return HF_IMAGE_MODEL
+
+
+def _extract_felo_image_result(data):
+    """從 Felo Responses 相容回應中取出 image_generation_call 的 base64 結果。"""
+    for item in data.get("output") or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "image_generation_call" and item.get("result"):
+            return item["result"]
+    raise RuntimeError("FELO_IMAGE_RESPONSE_EMPTY")
+
+
+def generate_felo_image_bytes(prompt):
+    """透過 Felo OpenAPI Responses API 的 image_generation 工具產生 GPT Image 2。"""
+    token = os.getenv("FELO_API_KEY", "").strip()
+    if not token:
+        raise RuntimeError("FELO_API_KEY_NOT_CONFIGURED")
+    strengthened_prompt = _strengthen_image_prompt(prompt)
+    response = requests.post(
+        f"{FELO_IMAGE_BASE}/responses",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": FELO_IMAGE_AGENT_MODEL,
+            "input": f"Generate an image from this user request. Return the image, not an explanation: {strengthened_prompt[:HF_IMAGE_PROMPT_MAX_CHARS]}",
+            "tools": [{
+                "type": "image_generation",
+                "model": FELO_IMAGE_MODEL,
+                "size": "1024x1024",
+                "quality": "auto",
+                "action": "generate",
+            }],
+            "tool_choice": {"type": "image_generation"},
+            "stream": False,
+        },
+        timeout=(10, 180),
+    )
+    if not response.ok:
+        raise RuntimeError(f"FELO_IMAGE_HTTP_{response.status_code}")
+    data = response.json()
+    if data.get("status") == "failed":
+        error = data.get("error") or {}
+        raise RuntimeError(f"FELO_IMAGE_FAILED_{str(error.get('code', 'UNKNOWN'))[:60]}")
+    encoded = _extract_felo_image_result(data)
+    if encoded.startswith("data:") and "," in encoded:
+        encoded = encoded.split(",", 1)[1]
+    try:
+        image_bytes = base64.b64decode(encoded, validate=True)
+    except (ValueError, TypeError) as exc:
+        raise RuntimeError("FELO_IMAGE_BASE64_INVALID") from exc
+    return _finalize_generated_image(image_bytes, "image/png")
 
 
 def generate_openrouter_image_bytes(prompt):
@@ -845,9 +908,11 @@ def generate_openai_image_bytes(prompt):
 
 
 def generate_hf_image_bytes(prompt):
-    """依 IMAGE_PROVIDER 路由圖片；auto 會依序嘗試 OpenAI、OpenRouter。"""
+    """依 IMAGE_PROVIDER 路由圖片；auto 會依序嘗試 Felo、OpenAI、OpenRouter。"""
     if IMAGE_PROVIDER == "auto":
         providers = []
+        if os.getenv("FELO_API_KEY", "").strip():
+            providers.append(("felo", generate_felo_image_bytes))
         if os.getenv("OPENAI_API_KEY", "").strip() or os.getenv("OPENAI_API_KEY_2", "").strip():
             providers.append(("openai", generate_openai_image_bytes))
         if os.getenv("OPENROUTER_API_KEY", "").strip() or os.getenv("OPENROUTER_API_KEY_2", "").strip():
@@ -862,6 +927,8 @@ def generate_hf_image_bytes(prompt):
                 errors.append(f"{provider_name}:{type(exc).__name__}:{str(exc)[:80]}")
                 logger.warning("自動圖片路由 %s 失敗，嘗試下一個路由：%s", provider_name, str(exc)[:120])
         raise RuntimeError("IMAGE_AUTO_ALL_PROVIDERS_FAILED|" + "|".join(errors))
+    if IMAGE_PROVIDER == "felo":
+        return generate_felo_image_bytes(prompt)
     if IMAGE_PROVIDER == "openai":
         return generate_openai_image_bytes(prompt)
     if IMAGE_PROVIDER == "openrouter":
