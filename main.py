@@ -32,6 +32,8 @@ from core import (
     HF_IMAGE_PROVIDER,
     HF_IMAGE_PROMPT_MAX_CHARS,
     HF_IMAGE_WIDTH,
+    FELO_IMAGE_MODEL,
+    FELO_IMAGE_AGENT_MODEL,
     OPENROUTER_IMAGE_MODEL,
     OPENAI_IMAGE_MODEL,
     OFFICIAL_GUILD_ID,
@@ -987,8 +989,8 @@ class HelpSelect(Select):
                 "也可以在 `@本喵 生圖：描述` 的對話中自動參考個人記憶。"
                 f"全伺服器每月總共最多 {HF_IMAGE_MONTHLY_LIMIT} 張（不是每位使用者各 {HF_IMAGE_MONTHLY_LIMIT} 張），每日最多 {HF_IMAGE_DAILY_HARD_LIMIT} 張；"
                 f"目前圖片路由：`{IMAGE_PROVIDER}`，模型：`{get_image_model_label()}`。\n\n"
-                "目前預設使用 OpenRouter 的 `inclusionai/ming-image-0.1-design`，模型端點目前標示輸出價格為 US$0，但免費狀態、供應商限流與政策可能調整；每次請以 API 回傳的 usage.cost 為準。"
-                f"額度預留保存在 MongoDB，資料庫不可用時會停止生圖；目前 OpenAI 路由模型為 `{OPENAI_IMAGE_MODEL}`（可能收費）。若切換回 OpenRouter，才會使用 OpenAI 備援開關；Hugging Face 仍可透過 Render 設定 `IMAGE_PROVIDER=huggingface` 作為手動備援。"
+                "自動路由會依序嘗試 Felo OpenAPI 的 GPT Image 2、OpenAI Images API，再嘗試 OpenRouter；供應商額度與費用以各平台帳戶及 API 回應為準。"
+                f"額度預留保存在 MongoDB，資料庫不可用時會停止生圖；Felo 模型為 `{FELO_IMAGE_MODEL}`，代理模型為 `{FELO_IMAGE_AGENT_MODEL}`。Hugging Face 仍可透過 Render 設定 `IMAGE_PROVIDER=huggingface` 作為手動備援。"
                 "機器人不保存生成圖片。使用 `/生圖額度` 可查詢 Bot 本月與今日用量。"
             )
         elif selected == "codeai":
@@ -1771,8 +1773,9 @@ async def on_ready():
         bool(os.getenv("MANUS_API_KEY", "").strip()),
     )
     logger.info(
-        "有限額度生圖：route=%s openrouter_key=%s openrouter_key_2=%s openai_fallback=%s openai_key=%s openai_key_2=%s hf_key=%s model=%s resolution=%sx%s monthly=%s/%s daily=%s；額度儲存需要 MongoDB",
+        "有限額度生圖：route=%s felo_key=%s openrouter_key=%s openrouter_key_2=%s openai_fallback=%s openai_key=%s openai_key_2=%s hf_key=%s model=%s resolution=%sx%s monthly=%s/%s daily=%s；額度儲存需要 MongoDB",
         IMAGE_PROVIDER,
+        bool(os.getenv("FELO_API_KEY", "").strip()),
         bool(os.getenv("OPENROUTER_API_KEY", "").strip()),
         bool(os.getenv("OPENROUTER_API_KEY_2", "").strip()),
         get_openai_image_fallback(),
